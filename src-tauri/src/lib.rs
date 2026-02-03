@@ -483,9 +483,13 @@ async fn fork_session(
     let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
 
     // Build command
-    let command = match &session_id {
-        Some(id) => format!("claude --resume {}", id),
-        None => "claude".to_string(),
+    // Use --fork-session for same-directory forks so the new window gets full
+    // context but its own session ID. Skip it when a ticket creates a new directory
+    // since Claude won't find the session there.
+    let command = match (&session_id, &ticket_key) {
+        (Some(id), None) => format!("claude --resume {} --fork-session", id),
+        (Some(id), Some(_)) => format!("claude --resume {}", id),
+        (None, _) => "claude".to_string(),
     };
 
     // Find the .app bundle: current exe is inside twapp.app/Contents/MacOS/app
