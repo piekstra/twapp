@@ -36,6 +36,7 @@ struct AppConfig {
 // Shared PTY state
 struct PtyState {
     writer: Option<Box<dyn Write + Send>>,
+    master: Option<Box<dyn portable_pty::MasterPty + Send>>,
     reader_running: bool,
     last_output_time: std::time::Instant,
     total_bytes_read: usize,
@@ -45,6 +46,7 @@ impl Default for PtyState {
     fn default() -> Self {
         Self {
             writer: None,
+            master: None,
             reader_running: false,
             last_output_time: std::time::Instant::now(),
             total_bytes_read: 0,
@@ -94,10 +96,11 @@ fn spawn_shell(
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    // Store writer in state
+    // Store writer and master in state
     {
         let mut pty_state = state.lock();
         pty_state.writer = Some(writer);
+        pty_state.master = Some(pair.master);
         pty_state.reader_running = true;
     }
 
@@ -240,12 +243,21 @@ fn write_to_pty(
 
 #[tauri::command]
 fn resize_pty(
-    _state: tauri::State<'_, Arc<Mutex<PtyState>>>,
-    _rows: u16,
-    _cols: u16,
+    state: tauri::State<'_, Arc<Mutex<PtyState>>>,
+    rows: u16,
+    cols: u16,
 ) -> Result<(), String> {
-    // Note: portable-pty doesn't expose resize through the writer
-    // This would need the master pair stored - simplified for now
+    let pty_state = state.lock();
+    if let Some(ref master) = pty_state.master {
+        master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
