@@ -502,16 +502,25 @@ fn restart_session(
     let session_id = config.session_id.clone();
 
     std::thread::spawn(move || {
-        // Send Ctrl+C to kill current claude process
+        // Send Ctrl+C first to cancel any pending input/operation
         {
             let mut pty_state = state_clone.lock();
             if let Some(ref mut writer) = pty_state.writer {
                 let _ = writer.write_all(b"\x03");
             }
         }
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
-        // Wait for claude to exit and shell prompt to appear
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        // Send /exit to quit Claude cleanly
+        {
+            let mut pty_state = state_clone.lock();
+            if let Some(ref mut writer) = pty_state.writer {
+                let _ = writer.write_all(b"/exit\n");
+            }
+        }
+
+        // Wait for Claude to exit and shell prompt to appear
+        std::thread::sleep(std::time::Duration::from_millis(2000));
 
         // Re-launch claude with resume
         let cmd = match session_id {
