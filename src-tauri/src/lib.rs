@@ -678,27 +678,6 @@ pub fn run() {
                 let _ = window.set_title(&title);
             }
 
-            // Override the app's bundle name so Mission Control shows the
-            // session name for fullscreen spaces instead of "twapp"
-            #[cfg(target_os = "macos")]
-            {
-                use objc2_foundation::{NSBundle, NSString};
-                use objc2::runtime::AnyObject;
-                use objc2::msg_send;
-
-                let bundle = NSBundle::mainBundle();
-                let dict: Option<&AnyObject> = unsafe {
-                    msg_send![&bundle, infoDictionary]
-                };
-                if let Some(dict) = dict {
-                    let key = NSString::from_str("CFBundleName");
-                    let val = NSString::from_str(&title);
-                    let _: () = unsafe {
-                        msg_send![dict, setObject: &*val, forKey: &*key]
-                    };
-                }
-            }
-
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
