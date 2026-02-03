@@ -184,6 +184,14 @@ function App() {
         cols: dims?.cols ?? null,
       }).catch(console.error);
 
+      // Load persisted notes
+      invoke<Note[]>("load_notes")
+        .then((saved) => {
+          if (saved?.length) setNotes(saved);
+          notesLoaded.current = true;
+        })
+        .catch(() => { notesLoaded.current = true; });
+
       // Fetch ticket info if available
       invoke<TicketInfo | null>("get_ticket_info")
         .then((info) => { if (info) setTicket(info); })
@@ -226,6 +234,17 @@ function App() {
     }, 150);
     return () => clearTimeout(timeout);
   }, [sidebarWidth]);
+
+  // Persist notes to disk whenever they change
+  const notesLoaded = useRef(false);
+  useEffect(() => {
+    // Skip the initial empty state before notes are loaded
+    if (!notesLoaded.current) {
+      if (notes.length > 0) notesLoaded.current = true;
+      else return;
+    }
+    invoke("save_notes", { notes }).catch(console.error);
+  }, [notes]);
 
   // Poll ticket file mtime every 5s to detect external changes
   useEffect(() => {

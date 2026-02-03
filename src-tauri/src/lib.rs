@@ -247,6 +247,36 @@ fn resolve_ticket_path(config: &AppConfig) -> Option<std::path::PathBuf> {
     None
 }
 
+fn resolve_notes_path(config: &AppConfig) -> std::path::PathBuf {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let base = std::path::Path::new(cwd);
+    // Use instance name to isolate notes when multiple sessions share a directory
+    if config.name != "twapp" {
+        let safe_name = config.name.replace('/', "-").replace(' ', "-");
+        base.join(format!(".twapp-notes-{}.json", safe_name))
+    } else {
+        base.join(".twapp-notes.json")
+    }
+}
+
+#[tauri::command]
+fn load_notes(config: tauri::State<'_, AppConfig>) -> Result<serde_json::Value, String> {
+    let path = resolve_notes_path(config.inner());
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| e.to_string())
+    } else {
+        Ok(serde_json::json!([]))
+    }
+}
+
+#[tauri::command]
+fn save_notes(notes: serde_json::Value, config: tauri::State<'_, AppConfig>) -> Result<(), String> {
+    let path = resolve_notes_path(config.inner());
+    std::fs::write(&path, serde_json::to_string_pretty(&notes).unwrap())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_ticket_info(config: tauri::State<'_, AppConfig>) -> Result<Option<serde_json::Value>, String> {
     match resolve_ticket_path(config.inner()) {
@@ -601,6 +631,8 @@ pub fn run() {
             link_ticket,
             fork_session,
             restart_session,
+            load_notes,
+            save_notes,
         ])
         .setup(move |app| {
             // Set window title from config
