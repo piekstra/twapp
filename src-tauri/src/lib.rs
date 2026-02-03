@@ -649,11 +649,7 @@ pub fn run() {
     let config = AppConfig::parse();
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
-    let title = if config.name == "twapp" {
-        "twapp".to_string()
-    } else {
-        format!("twapp - {}", config.name)
-    };
+    let title = config.name.clone();
 
     tauri::Builder::default()
         .manage(pty_state)
