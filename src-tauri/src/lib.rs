@@ -277,6 +277,35 @@ fn save_notes(notes: serde_json::Value, config: tauri::State<'_, AppConfig>) -> 
         .map_err(|e| e.to_string())
 }
 
+fn resolve_session_path(config: &AppConfig) -> std::path::PathBuf {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    std::path::Path::new(cwd).join(".twapp-session.json")
+}
+
+fn read_session_id(config: &AppConfig) -> Option<String> {
+    let path = resolve_session_path(config);
+    if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|v| v["session_id"].as_str().map(String::from))
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+fn get_session_info(config: tauri::State<'_, AppConfig>) -> Result<Option<serde_json::Value>, String> {
+    let path = resolve_session_path(config.inner());
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 fn get_ticket_info(config: tauri::State<'_, AppConfig>) -> Result<Option<serde_json::Value>, String> {
     match resolve_ticket_path(config.inner()) {
@@ -482,11 +511,14 @@ async fn fork_session(
     // Pick random color
     let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
 
+    // Resolve session ID: parameter first, then session file fallback
+    let resolved_session_id = session_id.or_else(|| read_session_id(config.inner()));
+
     // Build command
     // Use --fork-session for same-directory forks so the new window gets full
     // context but its own session ID. Skip it when a ticket creates a new directory
     // since Claude won't find the session there.
-    let command = match (&session_id, &ticket_key) {
+    let command = match (&resolved_session_id, &ticket_key) {
         (Some(id), None) => format!("claude --resume {} --fork-session", id),
         (Some(id), Some(_)) => format!("claude --resume {}", id),
         (None, _) => "claude".to_string(),
@@ -510,7 +542,7 @@ async fn fork_session(
         app_args.push("--ticket".to_string());
         app_args.push(tf.clone());
     }
-    if let Some(ref sid) = session_id {
+    if let Some(ref sid) = resolved_session_id {
         app_args.push("--session-id".to_string());
         app_args.push(sid.clone());
     }
@@ -538,7 +570,8 @@ fn restart_session(
     config: tauri::State<'_, AppConfig>,
 ) -> Result<(), String> {
     let state_clone = Arc::clone(&state);
-    let session_id = config.session_id.clone();
+    // Resolve session ID: CLI arg first, then session file fallback
+    let session_id = config.session_id.clone().or_else(|| read_session_id(config.inner()));
 
     std::thread::spawn(move || {
         // Send Ctrl+C first to cancel any pending input/operation
@@ -637,6 +670,7 @@ pub fn run() {
             restart_session,
             load_notes,
             save_notes,
+            get_session_info,
         ])
         .setup(move |app| {
             // Set window title from config
