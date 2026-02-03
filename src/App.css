@@ -109,9 +109,27 @@ body,
   overflow: hidden;
 }
 
-.sidebar-header {
-  padding: 16px;
+.sidebar-title {
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.sidebar-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .sidebar-header h2 {
@@ -120,6 +138,38 @@ body,
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.session-badge {
+  font-size: 10px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.sidebar-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sidebar-action-button {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sidebar-action-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Note Input */
@@ -194,6 +244,27 @@ body,
 .note-time {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.note-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.note-send {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+
+.note-send:hover {
+  color: var(--accent);
 }
 
 .note-delete {
@@ -358,6 +429,181 @@ body,
 
 .ticket-link:hover {
   text-decoration: underline;
+}
+
+/* Ticket Empty State */
+.ticket-empty {
+  padding: 0 12px 12px;
+}
+
+.ticket-empty-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.ticket-link-form {
+  display: flex;
+  gap: 6px;
+}
+
+.ticket-link-input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.ticket-link-input:focus {
+  border-color: var(--accent);
+}
+
+.ticket-link-input::placeholder {
+  color: var(--text-muted);
+}
+
+.ticket-link-button {
+  padding: 6px 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.ticket-link-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.ticket-link-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ticket-link-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 6px;
+}
+
+.ticket-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.ticket-hint code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+/* Fork Form */
+.fork-form {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.fork-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.fork-form-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.fork-form-close:hover {
+  color: var(--text-primary);
+}
+
+.fork-input {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.fork-input:focus {
+  border-color: var(--accent);
+}
+
+.fork-input::placeholder {
+  color: var(--text-muted);
+}
+
+.fork-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-bottom: 6px;
+}
+
+.fork-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.fork-cancel {
+  padding: 5px 10px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fork-cancel:hover {
+  border-color: var(--text-secondary);
+}
+
+.fork-submit {
+  padding: 5px 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fork-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.fork-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Scrollbar styling */

@@ -15,6 +15,7 @@ interface AppConfig {
   command: string | null;
   prefill: string | null;
   ticket: string | null;
+  session_id: string | null;
 }
 
 interface TicketInfo {
@@ -96,6 +97,22 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
   const [ticketExpanded, setTicketExpanded] = useState(false);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+
+  // Ticket linking state
+  const [linkTicketKey, setLinkTicketKey] = useState("");
+  const [linkingTicket, setLinkingTicket] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  // Ticket file polling
+  const lastTicketMtime = useRef<number | null>(null);
+
+  // Fork dialog state
+  const [showForkDialog, setShowForkDialog] = useState(false);
+  const [forkTicketKey, setForkTicketKey] = useState("");
+  const [forkSessionId, setForkSessionId] = useState("");
+  const [forking, setForking] = useState(false);
+  const [forkError, setForkError] = useState<string | null>(null);
 
   // Initialize terminal and PTY
   useEffect(() => {
@@ -123,11 +140,21 @@ function App() {
       console.warn("WebGL renderer not available, using DOM renderer");
     }
 
-    requestAnimationFrame(() => {
-      fit.fit();
+    terminalInstance.current = term;
+
+    // Let xterm.js tell us when dimensions actually change
+    term.onResize(({ cols, rows }) => {
+      invoke("resize_pty", { rows, cols }).catch(console.error);
     });
 
-    terminalInstance.current = term;
+    // Debounced fit — avoids mid-stream resizes during drag/window resize
+    let fitTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedFit = () => {
+      if (fitTimer) clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => fit.fit(), 150);
+    };
+
+    requestAnimationFrame(() => fit.fit());
 
     // Listen for system theme changes (terminal only — sidebar uses config color)
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -138,6 +165,8 @@ function App() {
 
     // Fetch app config from backend, then spawn shell
     invoke<AppConfig>("get_app_config").then((config) => {
+      setAppConfig(config);
+
       // Apply theme accent color to sidebar/chrome
       if (config.color) {
         applyThemeColor(config.color);
@@ -148,11 +177,19 @@ function App() {
         cwd: config.cwd || null,
         command: config.command || null,
         prefill: config.prefill || null,
+      }).then(() => {
+        // Sync PTY to actual terminal dimensions now that the shell exists
+        fit.fit();
       }).catch(console.error);
 
       // Fetch ticket info if available
       invoke<TicketInfo | null>("get_ticket_info")
         .then((info) => { if (info) setTicket(info); })
+        .catch(console.error);
+
+      // Get initial ticket file mtime for polling baseline
+      invoke<number | null>("get_ticket_file_mtime")
+        .then((mtime) => { lastTicketMtime.current = mtime; })
         .catch(console.error);
     }).catch(console.error);
 
@@ -166,20 +203,12 @@ function App() {
       invoke("write_to_pty", { data }).catch(console.error);
     });
 
-    // Handle resize
-    const handleResize = () => {
-      fit.fit();
-      const dims = fit.proposeDimensions();
-      if (dims) {
-        invoke("resize_pty", { rows: dims.rows, cols: dims.cols }).catch(
-          console.error
-        );
-      }
-    };
-    window.addEventListener("resize", handleResize);
+    // Handle window resize with debounce
+    window.addEventListener("resize", debouncedFit);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", debouncedFit);
+      if (fitTimer) clearTimeout(fitTimer);
       mediaQuery.removeEventListener("change", handleThemeChange);
       unlistenPromise.then((unlisten) => unlisten());
       term.dispose();
@@ -188,13 +217,67 @@ function App() {
     };
   }, []);
 
-  // Refit terminal when sidebar changes
+  // Refit terminal when sidebar changes (debounced to avoid mid-stream reflow)
   useEffect(() => {
     const timeout = setTimeout(() => {
       fitAddon.current?.fit();
-    }, 10);
+    }, 150);
     return () => clearTimeout(timeout);
   }, [sidebarWidth]);
+
+  // Poll ticket file mtime every 5s to detect external changes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      invoke<number | null>("get_ticket_file_mtime")
+        .then((mtime) => {
+          if (mtime !== null && mtime !== lastTicketMtime.current) {
+            lastTicketMtime.current = mtime;
+            invoke<TicketInfo | null>("get_ticket_info")
+              .then((info) => { if (info) setTicket(info); })
+              .catch(console.error);
+          }
+        })
+        .catch(console.error);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleLinkTicket = async () => {
+    const key = linkTicketKey.trim();
+    if (!key) return;
+    setLinkingTicket(true);
+    setLinkError(null);
+    try {
+      const info = await invoke<TicketInfo>("link_ticket", { key });
+      setTicket(info);
+      setLinkTicketKey("");
+      // Update mtime baseline
+      const mtime = await invoke<number | null>("get_ticket_file_mtime");
+      lastTicketMtime.current = mtime;
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLinkingTicket(false);
+    }
+  };
+
+  const handleFork = async () => {
+    setForking(true);
+    setForkError(null);
+    try {
+      await invoke<string>("fork_session", {
+        ticketKey: forkTicketKey.trim() || null,
+        sessionId: forkSessionId.trim() || null,
+      });
+      setShowForkDialog(false);
+      setForkTicketKey("");
+      setForkSessionId("");
+    } catch (e) {
+      setForkError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setForking(false);
+    }
+  };
 
   const addNote = () => {
     if (!newNote.trim()) return;
@@ -250,9 +333,93 @@ function App() {
 
       {/* Sidebar */}
       <div className="sidebar" style={{ width: sidebarWidth }}>
+        {appConfig && appConfig.name !== "twapp" && (
+          <div className="sidebar-title">{appConfig.name}</div>
+        )}
         <div className="sidebar-header">
-          <h2>Notes</h2>
+          <div className="sidebar-header-row">
+            <h2>Notes</h2>
+            <div className="sidebar-header-actions">
+              <button
+                className="sidebar-action-button"
+                onClick={() => {
+                  invoke("restart_session").catch(console.error);
+                }}
+                title="Restart Claude session"
+              >
+                Restart
+              </button>
+              <button
+                className="sidebar-action-button"
+                onClick={() => setShowForkDialog(true)}
+                title="Fork session"
+              >
+                Fork
+              </button>
+            </div>
+          </div>
+          {appConfig?.session_id && (
+            <div
+              className="session-badge"
+              title={appConfig.session_id}
+            >
+              Session: {appConfig.session_id.length > 12
+                ? appConfig.session_id.slice(0, 12) + "..."
+                : appConfig.session_id}
+            </div>
+          )}
         </div>
+
+        {/* Fork Dialog */}
+        {showForkDialog && (
+          <div className="fork-form">
+            <div className="fork-form-header">
+              <span>Fork Session</span>
+              <button
+                className="fork-form-close"
+                onClick={() => {
+                  setShowForkDialog(false);
+                  setForkError(null);
+                }}
+              >
+                x
+              </button>
+            </div>
+            <input
+              type="text"
+              className="fork-input"
+              placeholder="Ticket (e.g. MON-1234)"
+              value={forkTicketKey}
+              onChange={(e) => setForkTicketKey(e.target.value)}
+            />
+            <input
+              type="text"
+              className="fork-input"
+              placeholder="Session ID (optional)"
+              value={forkSessionId}
+              onChange={(e) => setForkSessionId(e.target.value)}
+            />
+            {forkError && <div className="fork-error">{forkError}</div>}
+            <div className="fork-actions">
+              <button
+                className="fork-cancel"
+                onClick={() => {
+                  setShowForkDialog(false);
+                  setForkError(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="fork-submit"
+                onClick={handleFork}
+                disabled={forking}
+              >
+                {forking ? "Forking..." : "Fork"}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="note-input">
           <textarea
@@ -273,12 +440,24 @@ function App() {
             <div key={note.id} className="note">
               <div className="note-header">
                 <span className="note-time">{formatTime(note.timestamp)}</span>
-                <button
-                  className="note-delete"
-                  onClick={() => deleteNote(note.id)}
-                >
-                  ×
-                </button>
+                <div className="note-actions">
+                  <button
+                    className="note-send"
+                    onClick={() => {
+                      invoke("write_to_pty", { data: note.text + "\n" }).catch(console.error);
+                      deleteNote(note.id);
+                    }}
+                    title="Send to terminal"
+                  >
+                    ↵
+                  </button>
+                  <button
+                    className="note-delete"
+                    onClick={() => deleteNote(note.id)}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               <div className="note-text">{note.text}</div>
             </div>
@@ -293,11 +472,11 @@ function App() {
         </div>
 
         {/* Ticket Info Panel */}
-        {ticket && (
-          <div className="ticket-panel">
-            <div className="ticket-header">
-              <h2>Ticket</h2>
-            </div>
+        <div className="ticket-panel">
+          <div className="ticket-header">
+            <h2>Ticket</h2>
+          </div>
+          {ticket ? (
             <div className="ticket-content">
               <div className="ticket-badges">
                 <span className="ticket-key">{ticket.key}</span>
@@ -338,8 +517,36 @@ function App() {
                 </a>
               )}
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="ticket-empty">
+              <div className="ticket-empty-label">No ticket linked</div>
+              <div className="ticket-link-form">
+                <input
+                  type="text"
+                  className="ticket-link-input"
+                  placeholder="MON-1234"
+                  value={linkTicketKey}
+                  onChange={(e) => setLinkTicketKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleLinkTicket();
+                  }}
+                  disabled={linkingTicket}
+                />
+                <button
+                  className="ticket-link-button"
+                  onClick={handleLinkTicket}
+                  disabled={linkingTicket || !linkTicketKey.trim()}
+                >
+                  {linkingTicket ? "..." : "Link"}
+                </button>
+              </div>
+              {linkError && <div className="ticket-link-error">{linkError}</div>}
+              <div className="ticket-hint">
+                Or run: <code>twapp ticket link MON-1234</code>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
