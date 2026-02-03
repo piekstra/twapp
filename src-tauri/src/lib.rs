@@ -649,17 +649,11 @@ pub fn run() {
     let config = AppConfig::parse();
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
-    let title = config.name.clone();
-
-    // Set macOS process name so Mission Control shows the session name
-    // instead of the generic app name "twapp"
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_foundation::{NSProcessInfo, NSString};
-        let process_info = NSProcessInfo::processInfo();
-        let name = NSString::from_str(&title);
-        process_info.setProcessName(&name);
-    }
+    let title = if config.name == "twapp" {
+        "twapp".to_string()
+    } else {
+        format!("twapp - {}", config.name)
+    };
 
     tauri::Builder::default()
         .manage(pty_state)
@@ -679,9 +673,27 @@ pub fn run() {
             get_session_info,
         ])
         .setup(move |app| {
-            // Set window title from config
+            // Set window title — this controls the Mission Control fullscreen space label
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&title);
+            }
+
+            // Also set via NSApplication to ensure Mission Control picks it up
+            #[cfg(target_os = "macos")]
+            {
+                use objc2_app_kit::NSApplication;
+                use objc2_foundation::{MainThreadMarker, NSProcessInfo, NSString};
+                let process_info = NSProcessInfo::processInfo();
+                process_info.setProcessName(&NSString::from_str(&title));
+
+                // Set the main menu title — Mission Control derives the
+                // fullscreen space label from the app menu title
+                if let Some(mtm) = MainThreadMarker::new() {
+                    let ns_app = NSApplication::sharedApplication(mtm);
+                    if let Some(menu) = ns_app.mainMenu() {
+                        menu.setTitle(&NSString::from_str(&title));
+                    }
+                }
             }
 
             if cfg!(debug_assertions) {
