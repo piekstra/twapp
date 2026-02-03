@@ -312,6 +312,24 @@ body,
 
 .ticket-header {
   padding: 12px 16px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ticket-change-button {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ticket-change-button:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
 }
 
 .ticket-header h2 {

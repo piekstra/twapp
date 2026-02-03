@@ -496,6 +496,15 @@ function App() {
         <div className="ticket-panel">
           <div className="ticket-header">
             <h2>Ticket</h2>
+            {ticket && (
+              <button
+                className="ticket-change-button"
+                onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                title="Change ticket"
+              >
+                Change
+              </button>
+            )}
           </div>
           {ticket ? (
             <div className="ticket-content">
