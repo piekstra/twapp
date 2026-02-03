@@ -678,21 +678,24 @@ pub fn run() {
                 let _ = window.set_title(&title);
             }
 
-            // Also set via NSApplication to ensure Mission Control picks it up
+            // Override the app's bundle name so Mission Control shows the
+            // session name for fullscreen spaces instead of "twapp"
             #[cfg(target_os = "macos")]
             {
-                use objc2_app_kit::NSApplication;
-                use objc2_foundation::{MainThreadMarker, NSProcessInfo, NSString};
-                let process_info = NSProcessInfo::processInfo();
-                process_info.setProcessName(&NSString::from_str(&title));
+                use objc2_foundation::{NSBundle, NSString};
+                use objc2::runtime::AnyObject;
+                use objc2::msg_send;
 
-                // Set the main menu title — Mission Control derives the
-                // fullscreen space label from the app menu title
-                if let Some(mtm) = MainThreadMarker::new() {
-                    let ns_app = NSApplication::sharedApplication(mtm);
-                    if let Some(menu) = ns_app.mainMenu() {
-                        menu.setTitle(&NSString::from_str(&title));
-                    }
+                let bundle = NSBundle::mainBundle();
+                let dict: Option<&AnyObject> = unsafe {
+                    msg_send![&bundle, infoDictionary]
+                };
+                if let Some(dict) = dict {
+                    let key = NSString::from_str("CFBundleName");
+                    let val = NSString::from_str(&title);
+                    let _: () = unsafe {
+                        msg_send![dict, setObject: &*val, forKey: &*key]
+                    };
                 }
             }
 
