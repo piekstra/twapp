@@ -28,3 +28,6 @@ portable-pty = "0.9"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "process"] }
 parking_lot = "0.12"
 rand = "0.9"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication"] }

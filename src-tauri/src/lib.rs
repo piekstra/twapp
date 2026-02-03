@@ -651,6 +651,16 @@ pub fn run() {
 
     let title = config.name.clone();
 
+    // Set macOS process name so Mission Control shows the session name
+    // instead of the generic app name "twapp"
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSProcessInfo, NSString};
+        let process_info = NSProcessInfo::processInfo();
+        let name = NSString::from_str(&title);
+        process_info.setProcessName(&name);
+    }
+
     tauri::Builder::default()
         .manage(pty_state)
         .manage(config)
