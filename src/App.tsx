@@ -172,14 +172,16 @@ function App() {
         applyThemeColor(config.color);
       }
 
-      // Spawn shell with config-driven cwd and command
+      // Get actual terminal dimensions before spawning so PTY starts at the right size
+      fit.fit();
+      const dims = fit.proposeDimensions();
+
       invoke("spawn_shell", {
         cwd: config.cwd || null,
         command: config.command || null,
         prefill: config.prefill || null,
-      }).then(() => {
-        // Sync PTY to actual terminal dimensions now that the shell exists
-        fit.fit();
+        rows: dims?.rows ?? null,
+        cols: dims?.cols ?? null,
       }).catch(console.error);
 
       // Fetch ticket info if available

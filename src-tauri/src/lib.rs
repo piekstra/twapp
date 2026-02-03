@@ -71,13 +71,15 @@ fn spawn_shell(
     cwd: Option<String>,
     command: Option<String>,
     prefill: Option<String>,
+    rows: Option<u16>,
+    cols: Option<u16>,
 ) -> Result<(), String> {
     let pty_system = native_pty_system();
 
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: rows.unwrap_or(24),
+            cols: cols.unwrap_or(80),
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -88,6 +90,9 @@ fn spawn_shell(
 
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-l"); // Login shell
+
+    // Ensure TERM is set — GUI apps don't inherit it
+    cmd.env("TERM", "xterm-256color");
 
     // Set working directory
     if let Some(dir) = cwd {
