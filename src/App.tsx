@@ -40,6 +40,22 @@ interface Note {
   timestamp: number;
 }
 
+interface QuickPrompt {
+  id: string;
+  title: string;
+  text: string;
+}
+
+interface PromptSection {
+  id: string;
+  title: string;
+  prompts: QuickPrompt[];
+}
+
+interface PromptStore {
+  sections: PromptSection[];
+}
+
 const lightTheme = {
   background: "#f5f5f7",
   foreground: "#1d1d1f",
@@ -117,6 +133,21 @@ function App() {
   const [forkSessionId, setForkSessionId] = useState("");
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<string | null>(null);
+
+  // Quick Prompts state
+  const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
+  const [projectPrompts, setProjectPrompts] = useState<PromptStore>({ sections: [] });
+  const [promptsExpanded, setPromptsExpanded] = useState(true);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [editingPrompt, setEditingPrompt] = useState<{
+    mode: "new-section" | "new-prompt" | "edit-prompt" | "edit-section";
+    scope: "global" | "project";
+    sectionId: string | null;
+    promptId: string | null;
+    title: string;
+    text: string;
+  } | null>(null);
+  const promptsLoaded = useRef(false);
 
   // Initialize terminal and PTY
   useEffect(() => {
@@ -196,6 +227,16 @@ function App() {
         })
         .catch(() => { notesLoaded.current = true; });
 
+      // Load quick prompts (global + project)
+      Promise.all([
+        invoke<PromptStore>("load_global_prompts"),
+        invoke<PromptStore>("load_project_prompts"),
+      ]).then(([global, project]) => {
+        setGlobalPrompts(global || { sections: [] });
+        setProjectPrompts(project || { sections: [] });
+        promptsLoaded.current = true;
+      }).catch(() => { promptsLoaded.current = true; });
+
       // Fetch ticket info if available
       invoke<TicketInfo | null>("get_ticket_info")
         .then((info) => { if (info) setTicket(info); })
@@ -249,6 +290,17 @@ function App() {
     }
     invoke("save_notes", { notes }).catch(console.error);
   }, [notes]);
+
+  // Persist prompts to disk whenever they change
+  useEffect(() => {
+    if (!promptsLoaded.current) return;
+    invoke("save_global_prompts", { data: globalPrompts }).catch(console.error);
+  }, [globalPrompts]);
+
+  useEffect(() => {
+    if (!promptsLoaded.current) return;
+    invoke("save_project_prompts", { data: projectPrompts }).catch(console.error);
+  }, [projectPrompts]);
 
   // Poll ticket file mtime every 5s to detect external changes
   useEffect(() => {
@@ -366,6 +418,189 @@ function App() {
     }
     setEditingNoteId(null);
     setEditingText("");
+  };
+
+  // Quick Prompts CRUD
+  const getPromptSetter = (scope: "global" | "project") =>
+    scope === "global" ? setGlobalPrompts : setProjectPrompts;
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const startNewSection = (scope: "global" | "project") => {
+    setEditingPrompt({ mode: "new-section", scope, sectionId: null, promptId: null, title: "", text: "" });
+  };
+
+  const startNewPrompt = (scope: "global" | "project", sectionId: string) => {
+    setEditingPrompt({ mode: "new-prompt", scope, sectionId, promptId: null, title: "", text: "" });
+  };
+
+  const startEditPrompt = (scope: "global" | "project", sectionId: string, prompt: QuickPrompt) => {
+    setEditingPrompt({ mode: "edit-prompt", scope, sectionId, promptId: prompt.id, title: prompt.title, text: prompt.text });
+  };
+
+  const startEditSection = (scope: "global" | "project", section: PromptSection) => {
+    setEditingPrompt({ mode: "edit-section", scope, sectionId: section.id, promptId: null, title: section.title, text: "" });
+  };
+
+  const savePromptEdit = () => {
+    if (!editingPrompt) return;
+    const { mode, scope, sectionId, promptId, title, text } = editingPrompt;
+    const setter = getPromptSetter(scope);
+
+    if (mode === "new-section" && title.trim()) {
+      const section: PromptSection = { id: crypto.randomUUID(), title: title.trim(), prompts: [] };
+      setter((prev) => ({ sections: [...prev.sections, section] }));
+      // Auto-expand the new section
+      setExpandedSections((prev) => new Set(prev).add(`${scope}-${section.id}`));
+    } else if (mode === "edit-section" && sectionId && title.trim()) {
+      setter((prev) => ({
+        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, title: title.trim() } : s)),
+      }));
+    } else if (mode === "new-prompt" && sectionId && title.trim() && text.trim()) {
+      const prompt: QuickPrompt = { id: crypto.randomUUID(), title: title.trim(), text: text.trim() };
+      setter((prev) => ({
+        sections: prev.sections.map((s) =>
+          s.id === sectionId ? { ...s, prompts: [...s.prompts, prompt] } : s
+        ),
+      }));
+    } else if (mode === "edit-prompt" && sectionId && promptId && title.trim() && text.trim()) {
+      setter((prev) => ({
+        sections: prev.sections.map((s) =>
+          s.id === sectionId
+            ? { ...s, prompts: s.prompts.map((p) => (p.id === promptId ? { ...p, title: title.trim(), text: text.trim() } : p)) }
+            : s
+        ),
+      }));
+    }
+    setEditingPrompt(null);
+  };
+
+  const deleteSection = (scope: "global" | "project", sectionId: string) => {
+    getPromptSetter(scope)((prev) => ({
+      sections: prev.sections.filter((s) => s.id !== sectionId),
+    }));
+  };
+
+  const deletePrompt = (scope: "global" | "project", sectionId: string, promptId: string) => {
+    getPromptSetter(scope)((prev) => ({
+      sections: prev.sections.map((s) =>
+        s.id === sectionId ? { ...s, prompts: s.prompts.filter((p) => p.id !== promptId) } : s
+      ),
+    }));
+  };
+
+  const sendPrompt = (text: string) => {
+    invoke("write_to_pty", { data: text + "\n" }).catch(console.error);
+  };
+
+  const renderPromptSections = (sections: PromptSection[], scope: "global" | "project") => {
+    return sections.map((section) => {
+      const sectionKey = `${scope}-${section.id}`;
+      const isExpanded = expandedSections.has(sectionKey);
+      return (
+        <div key={sectionKey} className="prompt-section">
+          <div className="prompt-section-header" onClick={() => toggleSection(sectionKey)}>
+            <span className={`prompt-chevron ${isExpanded ? "expanded" : ""}`}>&#9654;</span>
+            {editingPrompt?.mode === "edit-section" && editingPrompt.sectionId === section.id && editingPrompt.scope === scope ? (
+              <input
+                className="prompt-inline-input"
+                value={editingPrompt.title}
+                onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") savePromptEdit();
+                  if (e.key === "Escape") setEditingPrompt(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                autoFocus
+              />
+            ) : (
+              <span className="prompt-section-title">{section.title}</span>
+            )}
+            <span className={`prompt-scope-badge scope-${scope}`}>{scope === "global" ? "G" : "P"}</span>
+            <div className="prompt-section-actions">
+              {editingPrompt?.mode === "edit-section" && editingPrompt.sectionId === section.id && editingPrompt.scope === scope ? (
+                <button className="prompt-action-btn" onClick={(e) => { e.stopPropagation(); savePromptEdit(); }} title="Save">&#10003;</button>
+              ) : (
+                <button className="prompt-action-btn" onClick={(e) => { e.stopPropagation(); startEditSection(scope, section); }} title="Rename">&#9998;</button>
+              )}
+              <button className="prompt-action-btn prompt-action-delete" onClick={(e) => { e.stopPropagation(); deleteSection(scope, section.id); }} title="Delete section">&times;</button>
+            </div>
+          </div>
+          {isExpanded && (
+            <div className="prompt-section-items">
+              {section.prompts.map((prompt) => (
+                <div key={prompt.id} className="prompt-item">
+                  {editingPrompt?.mode === "edit-prompt" && editingPrompt.promptId === prompt.id && editingPrompt.scope === scope ? (
+                    <div className="prompt-edit-form" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        placeholder="Title"
+                        value={editingPrompt.title}
+                        onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                        autoFocus
+                      />
+                      <textarea
+                        placeholder="Prompt text..."
+                        value={editingPrompt.text}
+                        onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && e.metaKey) savePromptEdit();
+                          if (e.key === "Escape") setEditingPrompt(null);
+                        }}
+                      />
+                      <div className="prompt-edit-form-actions">
+                        <button className="prompt-form-cancel" onClick={() => setEditingPrompt(null)}>Cancel</button>
+                        <button className="prompt-form-save" onClick={savePromptEdit}>Save</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="prompt-item-title" title={prompt.text}>{prompt.title}</span>
+                      <div className="prompt-item-actions">
+                        <button className="prompt-action-btn" onClick={() => sendPrompt(prompt.text)} title="Send to terminal">&#8629;</button>
+                        <button className="prompt-action-btn" onClick={() => startEditPrompt(scope, section.id, prompt)} title="Edit">&#9998;</button>
+                        <button className="prompt-action-btn prompt-action-delete" onClick={() => deletePrompt(scope, section.id, prompt.id)} title="Delete">&times;</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+              {editingPrompt?.mode === "new-prompt" && editingPrompt.sectionId === section.id && editingPrompt.scope === scope ? (
+                <div className="prompt-edit-form">
+                  <input
+                    placeholder="Title"
+                    value={editingPrompt.title}
+                    onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                    autoFocus
+                  />
+                  <textarea
+                    placeholder="Prompt text..."
+                    value={editingPrompt.text}
+                    onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && e.metaKey) savePromptEdit();
+                      if (e.key === "Escape") setEditingPrompt(null);
+                    }}
+                  />
+                  <div className="prompt-edit-form-actions">
+                    <button className="prompt-form-cancel" onClick={() => setEditingPrompt(null)}>Cancel</button>
+                    <button className="prompt-form-save" onClick={savePromptEdit}>Save</button>
+                  </div>
+                </div>
+              ) : (
+                <button className="prompt-add-item" onClick={() => startNewPrompt(scope, section.id)}>+ Add prompt</button>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    });
   };
 
   const formatTime = (ts: number) => {
@@ -594,6 +829,73 @@ function App() {
               No notes yet.
               <br />
               <span>⌘+Enter to add</span>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Prompts Panel */}
+        <div className="prompts-panel">
+          <div className="prompts-header" onClick={() => setPromptsExpanded(!promptsExpanded)}>
+            <h2>
+              <span className={`prompt-chevron ${promptsExpanded ? "expanded" : ""}`}>&#9654;</span>
+              Quick Prompts
+            </h2>
+            <button
+              className="sidebar-action-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                startNewSection("global");
+              }}
+              title="Add section"
+            >
+              +
+            </button>
+          </div>
+          {promptsExpanded && (
+            <div className="prompts-content">
+              {editingPrompt?.mode === "new-section" ? (
+                <div className="prompt-edit-form">
+                  <input
+                    placeholder="Section name"
+                    value={editingPrompt.title}
+                    onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") savePromptEdit();
+                      if (e.key === "Escape") setEditingPrompt(null);
+                    }}
+                    autoFocus
+                  />
+                  <div className="prompt-edit-form-scope">
+                    <label>
+                      <input
+                        type="radio"
+                        name="new-section-scope"
+                        checked={editingPrompt.scope === "global"}
+                        onChange={() => setEditingPrompt({ ...editingPrompt, scope: "global" })}
+                      />
+                      Global
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="new-section-scope"
+                        checked={editingPrompt.scope === "project"}
+                        onChange={() => setEditingPrompt({ ...editingPrompt, scope: "project" })}
+                      />
+                      Project
+                    </label>
+                  </div>
+                  <div className="prompt-edit-form-actions">
+                    <button className="prompt-form-cancel" onClick={() => setEditingPrompt(null)}>Cancel</button>
+                    <button className="prompt-form-save" onClick={savePromptEdit}>Save</button>
+                  </div>
+                </div>
+              ) : null}
+              {renderPromptSections(globalPrompts.sections, "global")}
+              {renderPromptSections(projectPrompts.sections, "project")}
+              {globalPrompts.sections.length === 0 && projectPrompts.sections.length === 0 && !editingPrompt && (
+                <div className="prompts-empty">No prompts yet. Click + to add a section.</div>
+              )}
             </div>
           )}
         </div>
