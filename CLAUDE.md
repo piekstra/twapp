@@ -38,6 +38,6 @@ npx tsc --noEmit
 
 - **Tauri commands**: `invoke<ReturnType>("command_name", { args })` from frontend, `#[tauri::command]` in Rust
 - **State persistence**: `useEffect` hooks auto-save to disk on state change, guarded by `loaded` refs to skip initial empty state
-- **PTY injection**: `invoke("write_to_pty", { data: text + "\n" })` writes directly to terminal stdin
+- **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition

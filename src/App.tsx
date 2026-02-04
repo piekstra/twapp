@@ -498,7 +498,7 @@ function App() {
   };
 
   const sendPrompt = (text: string) => {
-    invoke("write_to_pty", { data: text + "\n" }).catch(console.error);
+    invoke("write_to_pty", { data: text }).catch(console.error);
   };
 
   const renderPromptSections = (sections: PromptSection[], scope: "global" | "project") => {
@@ -803,7 +803,7 @@ function App() {
                   <button
                     className="note-send"
                     onClick={() => {
-                      invoke("write_to_pty", { data: note.text + "\n" }).catch(console.error);
+                      invoke("write_to_pty", { data: note.text }).catch(console.error);
                       deleteNote(note.id);
                     }}
                     title="Send to terminal"
