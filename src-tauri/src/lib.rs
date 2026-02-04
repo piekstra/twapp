@@ -114,18 +114,37 @@ fn spawn_shell(
         pty_state.reader_running = true;
     }
 
-    // Spawn reader thread to forward output to frontend
+    // Spawn reader thread to forward output to frontend.
+    // Multi-byte UTF-8 characters (emoji, box-drawing, Unicode spinners)
+    // can be split across reads.  We buffer incomplete trailing bytes and
+    // only emit valid UTF-8 to avoid replacement-character corruption.
     let app_handle = app.clone();
     let state_clone = Arc::clone(&state);
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut pending = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_handle.emit("pty-output", data);
-                    // Track output timing for settling detection
+                    pending.extend_from_slice(&buf[..n]);
+
+                    let valid_len = match std::str::from_utf8(&pending) {
+                        Ok(_) => pending.len(),
+                        Err(e) => e.valid_up_to(),
+                    };
+
+                    if valid_len > 0 {
+                        // Safety: we just validated this range is valid UTF-8
+                        let data = std::str::from_utf8(&pending[..valid_len])
+                            .unwrap()
+                            .to_string();
+                        let _ = app_handle.emit("pty-output", data);
+                    }
+
+                    // Keep any incomplete trailing bytes for next read
+                    pending = pending[valid_len..].to_vec();
+
                     let mut pty_state = state_clone.lock();
                     pty_state.last_output_time = std::time::Instant::now();
                     pty_state.total_bytes_read += n;
