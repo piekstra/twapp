@@ -636,7 +636,8 @@ body,
 
 .prompt-edit-form textarea {
   min-height: 60px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   font-family: "SF Mono", "Fira Code", monospace;
 }
 

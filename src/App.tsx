@@ -549,7 +549,12 @@ function App() {
                       <textarea
                         placeholder="Prompt text..."
                         value={editingPrompt.text}
-                        onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                        onChange={(e) => {
+                          setEditingPrompt({ ...editingPrompt, text: e.target.value });
+                          e.target.style.height = "auto";
+                          e.target.style.height = e.target.scrollHeight + "px";
+                        }}
+                        ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && e.metaKey) savePromptEdit();
                           if (e.key === "Escape") setEditingPrompt(null);
@@ -583,7 +588,12 @@ function App() {
                   <textarea
                     placeholder="Prompt text..."
                     value={editingPrompt.text}
-                    onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                    onChange={(e) => {
+                      setEditingPrompt({ ...editingPrompt, text: e.target.value });
+                      e.target.style.height = "auto";
+                      e.target.style.height = e.target.scrollHeight + "px";
+                    }}
+                    ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && e.metaKey) savePromptEdit();
                       if (e.key === "Escape") setEditingPrompt(null);
@@ -631,7 +641,7 @@ function App() {
 
           const onMouseMove = (e: MouseEvent) => {
             const delta = startX - e.clientX;
-            setSidebarWidth(Math.max(200, Math.min(500, startWidth + delta)));
+            setSidebarWidth(Math.max(200, Math.min(800, startWidth + delta)));
           };
 
           const onMouseUp = () => {
