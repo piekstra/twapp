@@ -419,7 +419,7 @@ function App() {
             <input
               type="text"
               className="fork-input"
-              placeholder="Ticket (e.g. MON-1234)"
+              placeholder="MON-1234 or owner/repo#123"
               value={forkTicketKey}
               onChange={(e) => setForkTicketKey(e.target.value)}
             />
@@ -562,7 +562,7 @@ function App() {
                 <input
                   type="text"
                   className="ticket-link-input"
-                  placeholder="MON-1234"
+                  placeholder="MON-1234 or owner/repo#123"
                   value={linkTicketKey}
                   onChange={(e) => setLinkTicketKey(e.target.value)}
                   onKeyDown={(e) => {
@@ -580,7 +580,7 @@ function App() {
               </div>
               {linkError && <div className="ticket-link-error">{linkError}</div>}
               <div className="ticket-hint">
-                Or run: <code>twapp ticket link MON-1234</code>
+                Or run: <code>twapp ticket link MON-1234</code> or <code>owner/repo#123</code>
               </div>
             </div>
           )}
