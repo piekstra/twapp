@@ -5,6 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import Markdown from "react-markdown";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor } from "./color";
@@ -150,6 +151,26 @@ function App() {
   } | null>(null);
   const promptsLoaded = useRef(false);
 
+  const reloadNotes = () => {
+    invoke<Note[]>("load_notes")
+      .then((saved) => {
+        setNotes(saved || []);
+        notesLoaded.current = true;
+      })
+      .catch(console.error);
+  };
+
+  const reloadPrompts = () => {
+    Promise.all([
+      invoke<PromptStore>("load_global_prompts"),
+      invoke<PromptStore>("load_project_prompts"),
+    ]).then(([global, project]) => {
+      setGlobalPrompts(global || { sections: [] });
+      setProjectPrompts(project || { sections: [] });
+      promptsLoaded.current = true;
+    }).catch(console.error);
+  };
+
   // Initialize terminal and PTY
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -220,23 +241,9 @@ function App() {
         cols: dims?.cols ?? null,
       }).catch(console.error);
 
-      // Load persisted notes
-      invoke<Note[]>("load_notes")
-        .then((saved) => {
-          if (saved?.length) setNotes(saved);
-          notesLoaded.current = true;
-        })
-        .catch(() => { notesLoaded.current = true; });
-
-      // Load quick prompts (global + project)
-      Promise.all([
-        invoke<PromptStore>("load_global_prompts"),
-        invoke<PromptStore>("load_project_prompts"),
-      ]).then(([global, project]) => {
-        setGlobalPrompts(global || { sections: [] });
-        setProjectPrompts(project || { sections: [] });
-        promptsLoaded.current = true;
-      }).catch(() => { promptsLoaded.current = true; });
+      // Load persisted notes and prompts
+      reloadNotes();
+      reloadPrompts();
 
       // Fetch ticket info if available
       invoke<TicketInfo | null>("get_ticket_info")
@@ -761,14 +768,15 @@ function App() {
         )}
 
         {/* Notes Section */}
-        <div className="notes-section-header" onClick={() => setNotesExpanded(!notesExpanded)}>
-          <h2>
+        <div className="notes-section-header">
+          <h2 onClick={() => setNotesExpanded(!notesExpanded)}>
             <span className={`prompt-chevron ${notesExpanded ? "expanded" : ""}`}>&#9654;</span>
             Notes
             {!notesExpanded && notes.length > 0 && (
               <span className="notes-count">{notes.length}</span>
             )}
           </h2>
+          <button className="section-refresh-btn" onClick={reloadNotes} title="Refresh notes from disk">&#8635;</button>
         </div>
 
         {notesExpanded && (
@@ -843,7 +851,7 @@ function App() {
                   autoFocus
                 />
               ) : (
-                <div className="note-text">{note.text}</div>
+                <div className="note-text"><Markdown>{note.text}</Markdown></div>
               )}
             </div>
           ))}
@@ -863,16 +871,25 @@ function App() {
               <span className={`prompt-chevron ${promptsExpanded ? "expanded" : ""}`}>&#9654;</span>
               Quick Prompts
             </h2>
-            <button
-              className="sidebar-action-button"
-              onClick={(e) => {
-                e.stopPropagation();
-                startNewSection("global");
-              }}
-              title="Add section"
-            >
-              +
-            </button>
+            <div className="prompts-header-actions">
+              <button
+                className="section-refresh-btn"
+                onClick={(e) => { e.stopPropagation(); reloadPrompts(); }}
+                title="Refresh prompts from disk"
+              >
+                &#8635;
+              </button>
+              <button
+                className="sidebar-action-button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startNewSection("global");
+                }}
+                title="Add section"
+              >
+                +
+              </button>
+            </div>
           </div>
           {promptsExpanded && (
             <div className="prompts-content">

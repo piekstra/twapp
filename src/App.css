@@ -204,10 +204,12 @@ body,
 /* Notes Section Header (collapsible) */
 .notes-section-header {
   padding: 8px 16px;
-  cursor: pointer;
   user-select: none;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .notes-section-header h2 {
@@ -219,6 +221,24 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+}
+
+.section-refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.5;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.section-refresh-btn:hover {
+  opacity: 1;
+  color: var(--accent);
 }
 
 .notes-count {
@@ -394,8 +414,55 @@ body,
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.note-text p {
+  margin: 0 0 4px 0;
+}
+
+.note-text p:last-child {
+  margin-bottom: 0;
+}
+
+.note-text code {
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.note-text pre {
+  background: var(--bg-primary);
+  padding: 6px 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+
+.note-text pre code {
+  background: none;
+  padding: 0;
+}
+
+.note-text ul, .note-text ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.note-text h1, .note-text h2, .note-text h3,
+.note-text h4, .note-text h5, .note-text h6 {
+  margin: 4px 0 2px 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.note-text blockquote {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-color);
+  color: var(--text-secondary);
 }
 
 .notes-empty {
@@ -439,6 +506,12 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.prompts-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .prompt-chevron {
