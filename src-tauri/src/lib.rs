@@ -675,6 +675,7 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(pty_state)
         .manage(config)
         .invoke_handler(tauri::generate_handler![

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor } from "./color";
@@ -538,9 +539,7 @@ function App() {
                   rel="noopener noreferrer"
                   onClick={(e) => {
                     e.preventDefault();
-                    invoke("tauri://open-url", { url: ticket.url }).catch(() => {
-                      window.open(ticket.url!, "_blank");
-                    });
+                    openUrl(ticket.url!).catch(console.error);
                   }}
                 >
                   Open in {ticket.source === "github" ? "GitHub" : "Jira"}

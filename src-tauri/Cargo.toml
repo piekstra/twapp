@@ -28,3 +28,4 @@ portable-pty = "0.9"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "process"] }
 parking_lot = "0.12"
 rand = "0.9"
+tauri-plugin-opener = "2"
