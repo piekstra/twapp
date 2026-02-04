@@ -113,6 +113,7 @@ function App() {
   const [newNote, setNewNote] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [notesExpanded, setNotesExpanded] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [reloading, setReloading] = useState(false);
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
@@ -650,7 +651,6 @@ function App() {
         )}
         <div className="sidebar-header">
           <div className="sidebar-header-row">
-            <h2>Notes</h2>
             <div className="sidebar-header-actions">
               <button
                 className="sidebar-action-button"
@@ -750,21 +750,34 @@ function App() {
           </div>
         )}
 
-        <div className="note-input">
-          <textarea
-            value={newNote}
-            onChange={(e) => setNewNote(e.target.value)}
-            placeholder="Add a note..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && e.metaKey) {
-                addNote();
-              }
-            }}
-          />
-          <button onClick={addNote}>Add</button>
+        {/* Notes Section */}
+        <div className="notes-section-header" onClick={() => setNotesExpanded(!notesExpanded)}>
+          <h2>
+            <span className={`prompt-chevron ${notesExpanded ? "expanded" : ""}`}>&#9654;</span>
+            Notes
+            {!notesExpanded && notes.length > 0 && (
+              <span className="notes-count">{notes.length}</span>
+            )}
+          </h2>
         </div>
 
-        <div className="notes-list">
+        {notesExpanded && (
+          <div className="note-input">
+            <textarea
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              placeholder="Add a note..."
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && e.metaKey) {
+                  addNote();
+                }
+              }}
+            />
+            <button onClick={addNote}>Add</button>
+          </div>
+        )}
+
+        <div className={`notes-list ${notesExpanded ? "" : "collapsed"}`}>
           {notes.map((note) => (
             <div key={note.id} className="note">
               <div className="note-header">
