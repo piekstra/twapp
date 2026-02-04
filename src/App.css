@@ -141,14 +141,30 @@ body,
 }
 
 .session-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-family: "SF Mono", "Fira Code", monospace;
   color: var(--text-muted);
   margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: default;
+}
+
+.copy-session-button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.copy-session-button:hover {
+  opacity: 1;
 }
 
 .sidebar-header-actions {

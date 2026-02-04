@@ -388,6 +388,15 @@ function App() {
               Session: {appConfig.session_id.length > 12
                 ? appConfig.session_id.slice(0, 12) + "..."
                 : appConfig.session_id}
+              <button
+                className="copy-session-button"
+                title="Copy session ID"
+                onClick={() => {
+                  navigator.clipboard.writeText(appConfig.session_id!);
+                }}
+              >
+                &#x2398;
+              </button>
             </div>
           )}
         </div>
