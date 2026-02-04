@@ -95,7 +95,10 @@ function App() {
 
   const [notes, setNotes] = useState<Note[]>([]);
   const [newNote, setNewNote] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [reloading, setReloading] = useState(false);
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
   const [ticketExpanded, setTicketExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
@@ -264,6 +267,38 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const [rebuildStatus, setRebuildStatus] = useState("");
+
+  const handleDevReload = () => {
+    if (reloading) return;
+    setReloading(true);
+    setRebuildStatus("Starting build...");
+    invoke<string>("dev_reload")
+      .then(() => {
+        // Poll the log file for progress
+        const poll = setInterval(() => {
+          invoke<string>("read_rebuild_log")
+            .then((log) => {
+              if (!log) return;
+              // Show last non-empty line as status
+              const lines = log.trim().split("\n").filter(Boolean);
+              const last = lines[lines.length - 1] || "";
+              setRebuildStatus(last.slice(0, 80));
+            })
+            .catch(() => {
+              clearInterval(poll);
+            });
+        }, 1000);
+        // Stop polling after 5 min max
+        setTimeout(() => clearInterval(poll), 300000);
+      })
+      .catch((err) => {
+        console.error("dev_reload failed:", err);
+        setRebuildStatus(`Error: ${err}`);
+        setTimeout(() => setReloading(false), 3000);
+      });
+  };
+
   const handleLinkTicket = async () => {
     const key = linkTicketKey.trim();
     if (!key) return;
@@ -316,6 +351,23 @@ function App() {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   };
 
+  const startEditNote = (note: Note) => {
+    setEditingNoteId(note.id);
+    setEditingText(note.text);
+  };
+
+  const saveEditNote = () => {
+    if (!editingNoteId) return;
+    const trimmed = editingText.trim();
+    if (trimmed) {
+      setNotes((prev) =>
+        prev.map((n) => (n.id === editingNoteId ? { ...n, text: trimmed } : n))
+      );
+    }
+    setEditingNoteId(null);
+    setEditingText("");
+  };
+
   const formatTime = (ts: number) => {
     return new Date(ts).toLocaleTimeString([], {
       hour: "2-digit",
@@ -327,6 +379,9 @@ function App() {
     <div className="app">
       {/* Terminal */}
       <div className="terminal-container">
+        {reloading && (
+          <div className="reload-banner">{rebuildStatus || "Rebuilding..."}</div>
+        )}
         <div ref={terminalRef} className="terminal" />
       </div>
 
@@ -377,6 +432,14 @@ function App() {
                 title="Fork session"
               >
                 Fork
+              </button>
+              <button
+                className="sidebar-action-button rebuild-button"
+                onClick={handleDevReload}
+                disabled={reloading}
+                title="Rebuild from source and relaunch"
+              >
+                {reloading ? "Building..." : "Rebuild"}
               </button>
             </div>
           </div>
@@ -472,6 +535,23 @@ function App() {
               <div className="note-header">
                 <span className="note-time">{formatTime(note.timestamp)}</span>
                 <div className="note-actions">
+                  {editingNoteId === note.id ? (
+                    <button
+                      className="note-edit-save"
+                      onClick={saveEditNote}
+                      title="Save"
+                    >
+                      ✓
+                    </button>
+                  ) : (
+                    <button
+                      className="note-edit"
+                      onClick={() => startEditNote(note)}
+                      title="Edit"
+                    >
+                      ✎
+                    </button>
+                  )}
                   <button
                     className="note-send"
                     onClick={() => {
@@ -490,7 +570,23 @@ function App() {
                   </button>
                 </div>
               </div>
-              <div className="note-text">{note.text}</div>
+              {editingNoteId === note.id ? (
+                <textarea
+                  className="note-edit-input"
+                  value={editingText}
+                  onChange={(e) => setEditingText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && e.metaKey) saveEditNote();
+                    if (e.key === "Escape") {
+                      setEditingNoteId(null);
+                      setEditingText("");
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <div className="note-text">{note.text}</div>
+              )}
             </div>
           ))}
           {notes.length === 0 && (

@@ -630,6 +630,43 @@ fn restart_session(
 }
 
 #[tauri::command]
+fn dev_reload(config: tauri::State<'_, AppConfig>) -> Result<String, String> {
+    let cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+    let pid = std::process::id();
+
+    // Log file so the user can see build progress/errors
+    let log_path = std::path::Path::new(&cwd).join(".twapp-rebuild.log");
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Failed to create log file: {}", e))?;
+    let log_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Failed to clone log file: {}", e))?;
+
+    // Spawn via login shell so PATH includes cargo, npm, etc.
+    let cmd = format!("twapp dev-reload --pid {} --cwd '{}'", pid, cwd.replace('\'', "'\\''"));
+    std::process::Command::new("/bin/zsh")
+        .args(["-lc", &cmd])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_err))
+        .spawn()
+        .map_err(|e| format!("Failed to spawn dev-reload: {}", e))?;
+
+    Ok(log_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn read_rebuild_log(config: tauri::State<'_, AppConfig>) -> Result<String, String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let log_path = std::path::Path::new(cwd).join(".twapp-rebuild.log");
+    if log_path.exists() {
+        std::fs::read_to_string(&log_path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
+#[tauri::command]
 fn write_to_pty(
     state: tauri::State<'_, Arc<Mutex<PtyState>>>,
     data: String,
@@ -688,6 +725,8 @@ pub fn run() {
             link_ticket,
             fork_session,
             restart_session,
+            dev_reload,
+            read_rebuild_log,
             load_notes,
             save_notes,
             get_session_info,
