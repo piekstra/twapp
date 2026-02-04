@@ -655,6 +655,10 @@ body,
   cursor: pointer;
 }
 
+.prompt-edit-form-scope input[type="radio"] {
+  margin: 0;
+}
+
 .prompt-edit-form-actions {
   display: flex;
   gap: 6px;
