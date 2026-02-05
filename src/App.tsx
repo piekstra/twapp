@@ -574,7 +574,7 @@ function App() {
                     </div>
                   ) : (
                     <>
-                      <span className="prompt-item-title" title={prompt.text}>{prompt.title}</span>
+                      <span className="prompt-item-title" title={prompt.text} onClick={() => sendPrompt(prompt.text)}>{prompt.title}</span>
                       <div className="prompt-item-actions">
                         <button className="prompt-action-btn" onClick={() => sendPrompt(prompt.text)} title="Send to terminal">&#8629;</button>
                         <button className="prompt-action-btn" onClick={() => startEditPrompt(scope, section.id, prompt)} title="Edit">&#9998;</button>

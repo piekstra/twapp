@@ -618,7 +618,11 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
+}
+
+.prompt-item-title:hover {
+  text-decoration: underline;
 }
 
 .prompt-item-actions {
