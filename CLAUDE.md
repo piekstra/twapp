@@ -1,11 +1,13 @@
-# twapp-gui Development
+# twapp Development
 
 ## Architecture
 
-Tauri app (Rust backend + React/TypeScript frontend) providing a terminal wrapper with sidebar panels for notes, quick prompts, and ticket info.
+Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
 
-- **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app
-- **Backend**: `src-tauri/src/lib.rs` - Tauri commands for PTY, notes, prompts, tickets
+- **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app with sidebar panels
+- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets
+- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.)
+- **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
 - **Config**: `src-tauri/tauri.conf.json`
 
 ## Dev Process
@@ -25,7 +27,7 @@ This catches alignment issues, spacing problems, and CSS bugs that aren't visibl
 
 ```bash
 npm run tauri build
-twapp install-gui src-tauri/target/release/app
+twapp install-gui src-tauri/target/release/twapp
 ```
 
 ### TypeScript Check
@@ -34,8 +36,28 @@ twapp install-gui src-tauri/target/release/app
 npx tsc --noEmit
 ```
 
+### Versioning
+
+Bump the version with every change before committing:
+
+```bash
+./scripts/bump-version.sh 0.3.0
+```
+
+This updates `package.json`, `Cargo.toml`, and `tauri.conf.json` in sync.
+
+To release: push a version tag after merging to main:
+
+```bash
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+This triggers the release workflow which builds and publishes a GitHub release with the .app bundle.
+
 ## Key Patterns
 
+- **CLI/GUI parity**: The CLI (`src-tauri/src/cli/`) and GUI (`src-tauri/src/gui.rs` + `src/App.tsx`) often implement the same operations. When modifying one, check if the other needs a matching change. Examples: fork, ticket link/refresh, session management. Not all features need parity (some are UI-only like theme switching) but session-related operations should stay in sync.
 - **Tauri commands**: `invoke<ReturnType>("command_name", { args })` from frontend, `#[tauri::command]` in Rust
 - **State persistence**: `useEffect` hooks auto-save to disk on state change, guarded by `loaded` refs to skip initial empty state
 - **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)

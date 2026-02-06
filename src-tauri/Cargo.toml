@@ -1,17 +1,15 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
+name = "twapp"
+version = "0.3.0"
+description = "Terminal wrapper for Claude work sessions"
 authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
-name = "app_lib"
+name = "twapp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -29,3 +27,10 @@ tokio = { version = "1", features = ["sync", "rt-multi-thread", "process"] }
 parking_lot = "0.12"
 rand = "0.9"
 tauri-plugin-opener = "2"
+
+# CLI dependencies
+serde_yaml = "0.9"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+plist = "1"

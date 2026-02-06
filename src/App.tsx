@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
 import Markdown from "react-markdown";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
@@ -125,14 +127,11 @@ function App() {
   const [linkTicketKey, setLinkTicketKey] = useState("");
   const [linkingTicket, setLinkingTicket] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
-
-  // Ticket file polling
-  const lastTicketMtime = useRef<number | null>(null);
+  const [refreshingTicket, setRefreshingTicket] = useState(false);
 
   // Fork dialog state
   const [showForkDialog, setShowForkDialog] = useState(false);
   const [forkTicketKey, setForkTicketKey] = useState("");
-  const [forkSessionId, setForkSessionId] = useState("");
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<string | null>(null);
 
@@ -150,6 +149,13 @@ function App() {
     text: string;
   } | null>(null);
   const promptsLoaded = useRef(false);
+
+  // App version
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  // Actions dropdown
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   const reloadNotes = () => {
     invoke<Note[]>("load_notes")
@@ -183,6 +189,12 @@ function App() {
       cursorBlink: true,
       cursorStyle: "block",
       allowProposedApi: true,
+      // Handle OSC 8 hyperlinks (e.g. from Claude CLI output)
+      linkHandler: {
+        activate: (_event, uri) => {
+          openUrl(uri).catch(console.error);
+        },
+      },
     });
 
     const fit = new FitAddon();
@@ -196,6 +208,13 @@ function App() {
     } catch {
       console.warn("WebGL renderer not available, using DOM renderer");
     }
+
+    // Clickable links - CMD+Click opens in browser
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        openUrl(uri).catch(console.error);
+      })
+    );
 
     terminalInstance.current = term;
 
@@ -221,6 +240,9 @@ function App() {
     mediaQuery.addEventListener("change", handleThemeChange);
 
     // Fetch app config from backend, then spawn shell
+    // Load app version
+    getVersion().then(setAppVersion).catch(console.error);
+
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
 
@@ -250,10 +272,6 @@ function App() {
         .then((info) => { if (info) setTicket(info); })
         .catch(console.error);
 
-      // Get initial ticket file mtime for polling baseline
-      invoke<number | null>("get_ticket_file_mtime")
-        .then((mtime) => { lastTicketMtime.current = mtime; })
-        .catch(console.error);
     }).catch(console.error);
 
     // Listen for PTY output
@@ -310,22 +328,34 @@ function App() {
     invoke("save_project_prompts", { data: projectPrompts }).catch(console.error);
   }, [projectPrompts]);
 
-  // Poll ticket file mtime every 5s to detect external changes
+  // Close actions dropdown on outside click
   useEffect(() => {
-    const interval = setInterval(() => {
-      invoke<number | null>("get_ticket_file_mtime")
-        .then((mtime) => {
-          if (mtime !== null && mtime !== lastTicketMtime.current) {
-            lastTicketMtime.current = mtime;
-            invoke<TicketInfo | null>("get_ticket_info")
-              .then((info) => { if (info) setTicket(info); })
-              .catch(console.error);
-          }
-        })
-        .catch(console.error);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!actionsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [actionsOpen]);
+
+  const handleRestartTerminal = async () => {
+    await invoke("kill_pty");
+    terminalInstance.current?.reset();
+    const dims = fitAddon.current?.proposeDimensions();
+    const sessionId = appConfig?.session_id;
+    const resumeCmd = sessionId
+      ? `claude --resume ${sessionId}`
+      : "claude -c";
+    await invoke("spawn_shell", {
+      cwd: appConfig?.cwd || null,
+      command: resumeCmd,
+      prefill: null,
+      rows: dims?.rows ?? null,
+      cols: dims?.cols ?? null,
+    });
+  };
 
   const [rebuildStatus, setRebuildStatus] = useState("");
 
@@ -368,13 +398,22 @@ function App() {
       const info = await invoke<TicketInfo>("link_ticket", { key });
       setTicket(info);
       setLinkTicketKey("");
-      // Update mtime baseline
-      const mtime = await invoke<number | null>("get_ticket_file_mtime");
-      lastTicketMtime.current = mtime;
     } catch (e) {
       setLinkError(e instanceof Error ? e.message : String(e));
     } finally {
       setLinkingTicket(false);
+    }
+  };
+
+  const handleRefreshTicket = async () => {
+    setRefreshingTicket(true);
+    try {
+      const info = await invoke<TicketInfo>("refresh_ticket");
+      setTicket(info);
+    } catch (e) {
+      console.error("Failed to refresh ticket:", e);
+    } finally {
+      setRefreshingTicket(false);
     }
   };
 
@@ -384,11 +423,9 @@ function App() {
     try {
       await invoke<string>("fork_session", {
         ticketKey: forkTicketKey.trim() || null,
-        sessionId: forkSessionId.trim() || null,
       });
       setShowForkDialog(false);
       setForkTicketKey("");
-      setForkSessionId("");
     } catch (e) {
       setForkError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -663,46 +700,51 @@ function App() {
 
       {/* Sidebar */}
       <div className="sidebar" style={{ width: sidebarWidth }}>
-        {appConfig && appConfig.name !== "twapp" && (
-          <div className="sidebar-title">{appConfig.name}</div>
+        {(appConfig?.name !== "twapp" || appVersion) && (
+          <div className="sidebar-title">
+            <span className="sidebar-title-text">{appConfig?.name !== "twapp" ? appConfig?.name : ""}</span>
+            {appVersion && <span className="sidebar-version">v{appVersion}</span>}
+          </div>
         )}
         <div className="sidebar-header">
           <div className="sidebar-header-row">
             <div className="sidebar-header-actions">
-              <button
-                className="sidebar-action-button"
-                onClick={() => {
-                  invoke("restart_session").catch(console.error);
-                }}
-                title="Restart Claude session"
-              >
-                Restart
-              </button>
-              <button
-                className="sidebar-action-button"
-                onClick={() => setShowForkDialog(true)}
-                title="Fork session"
-              >
-                Fork
-              </button>
-              <button
-                className="sidebar-action-button rebuild-button"
-                onClick={handleDevReload}
-                disabled={reloading}
-                title="Rebuild from source and relaunch"
-              >
-                {reloading ? "Building..." : "Rebuild"}
-              </button>
+              <div className="actions-dropdown" ref={actionsRef}>
+                <button
+                  className="sidebar-action-button"
+                  onClick={() => setActionsOpen(!actionsOpen)}
+                >
+                  Actions &#9662;
+                </button>
+                {actionsOpen && (
+                  <div className="actions-menu">
+                    <button className="actions-menu-item" onClick={() => { setActionsOpen(false); handleRestartTerminal(); }}>
+                      Restart Terminal
+                    </button>
+                    <button className="actions-menu-item" onClick={() => { setActionsOpen(false); invoke("reload_app"); }}>
+                      Reload App
+                    </button>
+                    <div className="actions-menu-separator" />
+                    <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setShowForkDialog(true); }}>
+                      Fork Session...
+                    </button>
+                    <div className="actions-menu-separator" />
+                    <button
+                      className="actions-menu-item"
+                      onClick={() => { setActionsOpen(false); handleDevReload(); }}
+                      disabled={reloading}
+                    >
+                      {reloading ? "Building..." : "Rebuild"}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           {appConfig?.session_id && (
-            <div
-              className="session-badge"
-              title={appConfig.session_id}
-            >
-              Session: {appConfig.session_id.length > 12
-                ? appConfig.session_id.slice(0, 12) + "..."
-                : appConfig.session_id}
+            <div className="session-badge" title={appConfig.session_id}>
+              <span className="session-badge-label">Session:</span>
+              <span className="session-badge-id">{appConfig.session_id}</span>
               <button
                 className="copy-session-button"
                 title="Copy session ID"
@@ -710,7 +752,7 @@ function App() {
                   navigator.clipboard.writeText(appConfig.session_id!);
                 }}
               >
-                &#x2398;
+                📋
               </button>
             </div>
           )}
@@ -731,19 +773,24 @@ function App() {
                 x
               </button>
             </div>
+            <p className="fork-explanation">
+              Creates a new session with context from your current one.
+              Each session gets its own independent ID.
+            </p>
+            {appConfig?.session_id && (
+              <div className="fork-session-info">
+                <div className="fork-session-row">
+                  <span className="fork-label">Current session:</span>
+                  <span className="fork-id">{appConfig.session_id.slice(0, 12)}</span>
+                </div>
+              </div>
+            )}
             <input
               type="text"
               className="fork-input"
-              placeholder="MON-1234 or owner/repo#123"
+              placeholder="Ticket (optional) — e.g. MON-1234"
               value={forkTicketKey}
               onChange={(e) => setForkTicketKey(e.target.value)}
-            />
-            <input
-              type="text"
-              className="fork-input"
-              placeholder="Session ID (optional)"
-              value={forkSessionId}
-              onChange={(e) => setForkSessionId(e.target.value)}
             />
             {forkError && <div className="fork-error">{forkError}</div>}
             <div className="fork-actions">
@@ -945,13 +992,23 @@ function App() {
           <div className="ticket-header">
             <h2>Ticket</h2>
             {ticket && (
-              <button
-                className="ticket-change-button"
-                onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
-                title="Change ticket"
-              >
-                Change
-              </button>
+              <div className="ticket-header-actions">
+                <button
+                  className="ticket-refresh-button"
+                  onClick={handleRefreshTicket}
+                  disabled={refreshingTicket}
+                  title="Refresh ticket details"
+                >
+                  {refreshingTicket ? "..." : "Refresh"}
+                </button>
+                <button
+                  className="ticket-change-button"
+                  onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                  title="Change ticket"
+                >
+                  Change
+                </button>
+              </div>
             )}
           </div>
           {ticket ? (
@@ -1023,6 +1080,7 @@ function App() {
             </div>
           )}
         </div>
+
       </div>
     </div>
   );
