@@ -1,5 +1,33 @@
 # twapp Development
 
+## Usage Reference
+
+This section is the authoritative reference for twapp usage across all Claude sessions. The global `~/.claude/CLAUDE.md` points here for twapp details.
+
+**Key commands:** `work`, `resume`, `sessions`, `note`, `permissions`, `ticket`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
+
+Run `twapp <command> --help` for details.
+
+**Binary location:** `~/.config/twapp/bin/twapp` (symlink to `~/.config/twapp/twapp.app/Contents/MacOS/twapp`)
+
+**Config files:**
+- Session data: `.twapp-session.json` in working directory
+- Notes: `.twapp-notes[-name].json` in working directory
+- Default permissions: `~/.config/twapp/default-permissions.json`
+- Global config: `~/.config/twapp/config.yaml`
+
+**Session workflows:**
+- `twapp work <ticket>` — New session, new ID
+- `twapp resume` — Continue existing session (same ID, same directory)
+- `twapp resume --fork` — Fork in current directory (new ID, keeps context)
+- `twapp work <ticket> -s <id> --claude-cwd <dir>` — Fork to new directory (new ID, keeps context)
+
+When to use each:
+- **work**: Starting fresh on a new ticket
+- **resume**: Coming back to a session after closing the window
+- **resume --fork**: Splitting a session that grew too broad (same repo)
+- **work -s**: Forking off to work on a related issue in a different repo/directory
+
 ## Architecture
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
