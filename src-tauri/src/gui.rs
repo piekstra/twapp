@@ -819,6 +819,25 @@ fn read_rebuild_log(config: tauri::State<'_, GuiArgs>) -> Result<String, String>
 }
 
 #[tauri::command]
+fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
+    let file_path = std::path::Path::new(&path);
+    let resolved = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        let cwd = config.cwd.as_deref().unwrap_or(".");
+        std::path::Path::new(cwd).join(file_path)
+    };
+    if !resolved.exists() {
+        return Err(format!("File not found: {}", resolved.display()));
+    }
+    let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
+    if metadata.len() > 2 * 1024 * 1024 {
+        return Err("File too large (max 2MB)".to_string());
+    }
+    std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn install_update(download_url: String) -> Result<String, String> {
     let tmp_dir = std::env::temp_dir().join(format!("twapp-update-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
@@ -975,6 +994,7 @@ pub fn run(args: GuiArgs) {
             kill_pty,
             dev_reload,
             read_rebuild_log,
+            read_file,
             reload_app,
             load_notes,
             save_notes,

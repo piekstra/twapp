@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor } from "./color";
@@ -165,6 +166,11 @@ function App() {
   const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
   const [updateIsLatest, setUpdateIsLatest] = useState(false);
 
+  // File preview
+  const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -251,6 +257,83 @@ function App() {
     }
   };
 
+  // File preview
+  const filePreviewRef = useRef<(filePath: string) => void>(() => {});
+  const handleFilePreview = async (filePath: string) => {
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const content = await invoke<string>("read_file", { path: filePath });
+      setPreviewFile({ path: filePath, content });
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : String(e));
+      setPreviewFile({ path: filePath, content: "" });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+  filePreviewRef.current = handleFilePreview;
+
+  const isFilePath = (text: string): boolean =>
+    /^[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+$/.test(text.trim());
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markdownComponents: any = {
+    code({ children, className, ...rest }: React.HTMLAttributes<HTMLElement>) {
+      const text = String(children).replace(/\n$/, "");
+      if (!className && isFilePath(text)) {
+        return (
+          <code
+            {...rest}
+            className="file-link"
+            title="⌘+click to preview"
+            onClick={(e: React.MouseEvent) => {
+              if (e.metaKey) {
+                e.preventDefault();
+                handleFilePreview(text);
+              }
+            }}
+          >
+            {children}
+          </code>
+        );
+      }
+      return <code {...rest} className={className}>{children}</code>;
+    },
+    a({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+      if (href && !href.startsWith("http") && !href.startsWith("mailto:") && !href.startsWith("#")) {
+        return (
+          <a
+            {...rest}
+            href={href}
+            className="file-link"
+            title="⌘+click to preview"
+            onClick={(e: React.MouseEvent) => {
+              if (e.metaKey) {
+                e.preventDefault();
+                handleFilePreview(href);
+              }
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+      return (
+        <a
+          {...rest}
+          href={href}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            if (href) openUrl(href).catch(console.error);
+          }}
+        >
+          {children}
+        </a>
+      );
+    },
+  };
+
   // Initialize terminal and PTY
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -289,6 +372,40 @@ function App() {
         openUrl(uri).catch(console.error);
       })
     );
+
+    // File path links - CMD+Click opens preview overlay
+    const filePathRegex = /(?:^|[\s"'`(,])(\/[a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+(?::[0-9]+)?|[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+(?::[0-9]+)?)/g;
+    term.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const line = term.buffer.active.getLine(bufferLineNumber - 1);
+        if (!line) { callback(undefined); return; }
+        const text = line.translateToString();
+        const links: import("@xterm/xterm").ILink[] = [];
+        let match;
+        while ((match = filePathRegex.exec(text)) !== null) {
+          const filePath = match[1];
+          // Skip URLs and very short matches
+          if (filePath.includes("://") || filePath.length < 4) continue;
+          const startX = match.index + match[0].indexOf(filePath) + 1; // 1-based
+          links.push({
+            range: {
+              start: { x: startX, y: bufferLineNumber },
+              end: { x: startX + filePath.length - 1, y: bufferLineNumber },
+            },
+            text: filePath,
+            decorations: { pointerCursor: true, underline: true },
+            activate(event, linkText) {
+              // Strip :lineNumber suffix for file reading
+              const cleanPath = linkText.replace(/:\d+$/, "");
+              if (event.metaKey) {
+                filePreviewRef.current(cleanPath);
+              }
+            },
+          });
+        }
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
 
     terminalInstance.current = term;
 
@@ -416,6 +533,19 @@ function App() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
+
+  // Close file preview on Escape
+  useEffect(() => {
+    if (!previewFile) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPreviewFile(null);
+        setPreviewError(null);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [previewFile]);
 
   const handleRestartTerminal = async () => {
     await invoke("kill_pty");
@@ -847,7 +977,7 @@ function App() {
             {updateInfo ? (
               <>
                 <div className="update-notes">
-                  <Markdown>{updateInfo.releaseNotes}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{updateInfo.releaseNotes}</Markdown>
                 </div>
                 <a
                   className="update-release-link"
@@ -1082,7 +1212,7 @@ function App() {
                   autoFocus
                 />
               ) : (
-                <div className="note-text"><Markdown>{note.text}</Markdown></div>
+                <div className="note-text"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{note.text}</Markdown></div>
               )}
             </div>
           ))}
@@ -1266,6 +1396,36 @@ function App() {
         </div>
 
       </div>
+
+      {/* File Preview Overlay */}
+      {(previewFile || previewLoading) && (
+        <div className="file-preview-overlay" onClick={() => { setPreviewFile(null); setPreviewError(null); }}>
+          <div className="file-preview-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="file-preview-header">
+              <span className="file-preview-path">{previewFile?.path ?? ""}</span>
+              <button
+                className="file-preview-close"
+                onClick={() => { setPreviewFile(null); setPreviewError(null); }}
+              >
+                x
+              </button>
+            </div>
+            <div className="file-preview-content">
+              {previewLoading ? (
+                <div className="file-preview-loading">Loading...</div>
+              ) : previewError ? (
+                <div className="file-preview-error">{previewError}</div>
+              ) : previewFile?.path.endsWith(".md") ? (
+                <div className="file-preview-markdown">
+                  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{previewFile.content}</Markdown>
+                </div>
+              ) : (
+                <pre className="file-preview-code">{previewFile?.content}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
