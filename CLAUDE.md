@@ -38,22 +38,9 @@ npx tsc --noEmit
 
 ### Versioning
 
-Bump the version with every change before committing:
+**Automatic**: CI auto-increments the patch version, commits, builds, and creates a GitHub release on every push to main. No manual version bumping or tagging needed.
 
-```bash
-./scripts/bump-version.sh 0.3.0
-```
-
-This updates `package.json`, `Cargo.toml`, and `tauri.conf.json` in sync.
-
-To release: push a version tag after merging to main:
-
-```bash
-git tag v0.3.0
-git push origin v0.3.0
-```
-
-This triggers the release workflow which builds and publishes a GitHub release with the .app bundle.
+**Manual override**: To bump minor/major versions, run `./scripts/bump-version.sh <version>` before committing. CI will increment from whatever version it finds.
 
 ## Key Patterns
 
