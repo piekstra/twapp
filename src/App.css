@@ -21,23 +21,21 @@
   --scrollbar-thumb-hover: #a0a0a0;
 }
 
-/* Dark theme */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16162a;
-    --bg-terminal: #1a1a2e;
-    --border-color: #2a2a4e;
-    --border-hover: #4a4a7e;
-    --text-primary: #eee;
-    --text-secondary: #aaa;
-    --text-muted: #666;
-    --accent: #4dabf7;
-    --accent-hover: #339af0;
-    --danger: #ff6b6b;
-    --scrollbar-thumb: #3a3a5e;
-    --scrollbar-thumb-hover: #4a4a7e;
-  }
+/* Dark theme (toggled via JS class) */
+:root.dark {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16162a;
+  --bg-terminal: #1a1a2e;
+  --border-color: #2a2a4e;
+  --border-hover: #4a4a7e;
+  --text-primary: #eee;
+  --text-secondary: #aaa;
+  --text-muted: #666;
+  --accent: #4dabf7;
+  --accent-hover: #339af0;
+  --danger: #ff6b6b;
+  --scrollbar-thumb: #3a3a5e;
+  --scrollbar-thumb-hover: #4a4a7e;
 }
 
 html,
@@ -1588,4 +1586,50 @@ a.file-link {
   border: none;
   border-top: 1px solid var(--border-color);
   margin: 16px 0;
+}
+
+/* Dark mode overrides — muted fills for buttons, semi-transparent badges */
+
+:root.dark .note-input button,
+:root.dark .ticket-link-button,
+:root.dark .prompt-form-save,
+:root.dark .fork-submit,
+:root.dark .update-install-button {
+  background: #1e4976;
+}
+
+:root.dark .note-input button:hover,
+:root.dark .ticket-link-button:hover:not(:disabled),
+:root.dark .prompt-form-save:hover,
+:root.dark .fork-submit:hover:not(:disabled),
+:root.dark .update-install-button:hover:not(:disabled) {
+  background: #265d8f;
+}
+
+:root.dark .scope-global {
+  background: rgba(77, 171, 247, 0.18);
+  color: #4dabf7;
+}
+
+:root.dark .notes-count {
+  background: rgba(77, 171, 247, 0.18);
+  color: #4dabf7;
+}
+
+:root.dark .ticket-status {
+  background: rgba(77, 171, 247, 0.2);
+  color: #4dabf7;
+}
+
+:root.dark .ticket-status-done,
+:root.dark .ticket-status-deployed,
+:root.dark .ticket-status-closed {
+  background: rgba(105, 219, 124, 0.18);
+  color: #69db7c;
+}
+
+:root.dark .ticket-status-in-progress,
+:root.dark .ticket-status-in-code-review {
+  background: rgba(77, 171, 247, 0.2);
+  color: #4dabf7;
 }

@@ -4,6 +4,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use rand::Rng;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use tauri::menu::{CheckMenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Args, Debug, Clone, serde::Serialize)]
@@ -935,6 +936,18 @@ async fn install_update(download_url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_theme_preference() -> String {
+    crate::cli::config::get_theme_preference()
+}
+
+#[tauri::command]
+fn set_theme_preference(mode: String, app: AppHandle) -> Result<(), String> {
+    crate::cli::config::set_theme_preference(&mode)?;
+    app.emit("theme-changed", &mode).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn write_to_pty(
     state: tauri::State<'_, Arc<Mutex<PtyState>>>,
     data: String,
@@ -987,7 +1000,8 @@ pub fn run(args: GuiArgs) {
             resize_pty,
             get_app_config,
             get_ticket_info,
-
+            get_theme_preference,
+            set_theme_preference,
             link_ticket,
             refresh_ticket,
             fork_session,
@@ -1010,6 +1024,78 @@ pub fn run(args: GuiArgs) {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&title);
             }
+
+            // Build macOS menu with View > Appearance theme toggle
+            let current_theme = crate::cli::config::get_theme_preference();
+
+            let light_item = CheckMenuItemBuilder::with_id("theme-light", "Light")
+                .checked(current_theme == "light")
+                .build(app)?;
+            let dark_item = CheckMenuItemBuilder::with_id("theme-dark", "Dark")
+                .checked(current_theme == "dark")
+                .build(app)?;
+            let system_item = CheckMenuItemBuilder::with_id("theme-system", "System")
+                .checked(current_theme == "system")
+                .build(app)?;
+
+            let app_menu = SubmenuBuilder::new(app, "twapp")
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+
+            let view_menu = SubmenuBuilder::new(app, "View")
+                .item(&PredefinedMenuItem::fullscreen(app, None)?)
+                .separator()
+                .items(&[&light_item, &dark_item, &system_item])
+                .build()?;
+
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .item(&PredefinedMenuItem::close_window(app, None)?)
+                .build()?;
+
+            let menu = tauri::menu::MenuBuilder::new(app)
+                .item(&app_menu)
+                .item(&edit_menu)
+                .item(&view_menu)
+                .item(&window_menu)
+                .build()?;
+
+            app.set_menu(menu)?;
+
+            // Handle menu events (theme switching)
+            let light_clone = light_item.clone();
+            let dark_clone = dark_item.clone();
+            let system_clone = system_item.clone();
+            app.on_menu_event(move |app_handle, event| {
+                let mode = match event.id().0.as_str() {
+                    "theme-light" => "light",
+                    "theme-dark" => "dark",
+                    "theme-system" => "system",
+                    _ => return,
+                };
+
+                let _ = crate::cli::config::set_theme_preference(mode);
+                let _ = light_clone.set_checked(mode == "light");
+                let _ = dark_clone.set_checked(mode == "dark");
+                let _ = system_clone.set_checked(mode == "system");
+                let _ = app_handle.emit("theme-changed", mode);
+            });
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

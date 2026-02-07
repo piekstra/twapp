@@ -175,6 +175,10 @@ function App() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  // Theme mode
+  type ThemeMode = "light" | "dark" | "system";
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+
   const reloadNotes = () => {
     invoke<Note[]>("load_notes")
       .then((saved) => {
@@ -423,24 +427,12 @@ function App() {
 
     requestAnimationFrame(() => fit.fit());
 
-    // Listen for system theme changes (terminal only — sidebar uses config color)
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleThemeChange = (e: MediaQueryListEvent) => {
-      term.options.theme = e.matches ? darkTheme : lightTheme;
-    };
-    mediaQuery.addEventListener("change", handleThemeChange);
-
     // Fetch app config from backend, then spawn shell
     // Load app version
     getVersion().then(setAppVersion).catch(console.error);
 
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
-
-      // Apply theme accent color to sidebar/chrome
-      if (config.color) {
-        applyThemeColor(config.color);
-      }
 
       // Get actual terminal dimensions before spawning so PTY starts at the right size
       fit.fit();
@@ -484,13 +476,51 @@ function App() {
     return () => {
       window.removeEventListener("resize", debouncedFit);
       if (fitTimer) clearTimeout(fitTimer);
-      mediaQuery.removeEventListener("change", handleThemeChange);
       unlistenPromise.then((unlisten) => unlisten());
       term.dispose();
       terminalInstance.current = null;
       fitAddon.current = null;
     };
   }, []);
+
+  // Load theme preference from backend + listen for menu events
+  useEffect(() => {
+    invoke<string>("get_theme_preference")
+      .then((mode) => setThemeMode(mode as ThemeMode))
+      .catch(() => {});
+
+    const unlisten = listen<string>("theme-changed", (event) => {
+      setThemeMode(event.payload as ThemeMode);
+    });
+
+    return () => { unlisten.then((u) => u()); };
+  }, []);
+
+  // Apply theme whenever themeMode or accent color changes
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyTheme = () => {
+      const isDark = themeMode === "dark" || (themeMode === "system" && mediaQuery.matches);
+
+      document.documentElement.classList.toggle("dark", isDark);
+
+      if (terminalInstance.current) {
+        terminalInstance.current.options.theme = isDark ? darkTheme : lightTheme;
+      }
+
+      if (appConfig?.color) {
+        applyThemeColor(appConfig.color, isDark);
+      }
+    };
+
+    applyTheme();
+
+    // Re-apply when system preference changes (only relevant in system mode)
+    const handler = () => applyTheme();
+    mediaQuery.addEventListener("change", handler);
+    return () => mediaQuery.removeEventListener("change", handler);
+  }, [themeMode, appConfig?.color]);
 
   // Refit terminal when sidebar changes (debounced to avoid mid-stream reflow)
   useEffect(() => {

@@ -48,6 +48,46 @@ fn expand_path(path: &str) -> PathBuf {
     }
 }
 
+pub fn get_theme_preference() -> String {
+    let path = config_file();
+    if !path.exists() {
+        return "system".to_string();
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(theme) = yaml.get("theme").and_then(|v| v.as_str()) {
+                return theme.to_string();
+            }
+        }
+    }
+    "system".to_string()
+}
+
+pub fn set_theme_preference(mode: &str) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("theme".to_string()),
+            serde_yaml::Value::String(mode.to_string()),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 impl GlobalConfig {
     pub fn load() -> Result<Self, String> {
         let path = config_file();
