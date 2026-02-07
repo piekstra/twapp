@@ -102,7 +102,7 @@ Ticket integration requires external CLIs. twapp shells out to these tools and p
 | Tool | Used for | Tested with |
 |------|----------|-------------|
 | [gh](https://cli.github.com/) | GitHub issue linking | v2.86+ |
-| [jtk](https://github.com/open-cli-collective/jtk) | Jira ticket linking/creation | v0.2+ |
+| [jtk](https://github.com/open-cli-collective/atlassian-cli) | Jira ticket linking/creation | v0.2+ |
 
 Everything else twapp uses (`curl`, `tar`, `codesign`, etc.) ships with macOS.
 
