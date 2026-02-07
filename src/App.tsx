@@ -485,8 +485,21 @@ function App() {
   const handleRefreshTicket = async () => {
     setRefreshingTicket(true);
     try {
-      const info = await invoke<TicketInfo>("refresh_ticket");
-      setTicket(info);
+      if (!ticket) {
+        // No ticket in UI — try reading from disk (CLI may have linked one)
+        const info = await invoke<TicketInfo | null>("get_ticket_info");
+        if (info) {
+          setTicket(info);
+          // Also refresh from remote to get latest status
+          try {
+            const updated = await invoke<TicketInfo>("refresh_ticket");
+            setTicket(updated);
+          } catch (_) { /* disk version is fine */ }
+        }
+      } else {
+        const info = await invoke<TicketInfo>("refresh_ticket");
+        setTicket(info);
+      }
     } catch (e) {
       console.error("Failed to refresh ticket:", e);
     } finally {
@@ -736,10 +749,22 @@ function App() {
   };
 
   const formatTime = (ts: number) => {
-    return new Date(ts).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const now = new Date();
+    const date = new Date(ts);
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 1 && now.getDate() === date.getDate()) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    if (diffDays < 7) {
+      const days = diffDays || 1; // crossed midnight but < 24h
+      return `${days}d ago`;
+    }
+    if (now.getFullYear() === date.getFullYear()) {
+      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+    }
+    return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
 
   return (
@@ -1150,16 +1175,16 @@ function App() {
         <div className="ticket-panel">
           <div className="ticket-header">
             <h2>Ticket</h2>
-            {ticket && (
-              <div className="ticket-header-actions">
-                <button
-                  className="ticket-refresh-button"
-                  onClick={handleRefreshTicket}
-                  disabled={refreshingTicket}
-                  title="Refresh ticket details"
-                >
-                  {refreshingTicket ? "..." : "Refresh"}
-                </button>
+            <div className="ticket-header-actions">
+              <button
+                className="ticket-refresh-button"
+                onClick={handleRefreshTicket}
+                disabled={refreshingTicket}
+                title={ticket ? "Refresh ticket details" : "Check for linked ticket"}
+              >
+                {refreshingTicket ? "..." : "Refresh"}
+              </button>
+              {ticket && (
                 <button
                   className="ticket-change-button"
                   onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
@@ -1167,8 +1192,8 @@ function App() {
                 >
                   Change
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           {ticket ? (
             <div className="ticket-content">
