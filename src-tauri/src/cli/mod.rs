@@ -2,6 +2,7 @@ pub mod app_bundle;
 pub mod config;
 pub mod notes;
 pub mod permissions;
+pub mod prompts;
 pub mod session;
 pub mod theme;
 pub mod ticket;
@@ -52,6 +53,11 @@ pub enum Commands {
     Note {
         #[command(subcommand)]
         command: NoteCommands,
+    },
+    /// Manage quick prompts
+    Prompt {
+        #[command(subcommand)]
+        command: PromptCommands,
     },
     /// Manage default permissions
     Permissions {
@@ -156,6 +162,46 @@ pub enum NoteCommands {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum PromptCommands {
+    /// List prompts
+    List {
+        /// Show global prompts instead of project prompts
+        #[arg(long)]
+        global: bool,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Add a prompt
+    Add {
+        /// Prompt title
+        title: String,
+        /// Prompt text
+        text: String,
+        /// Target section (created if missing, default: "General")
+        #[arg(long)]
+        section: Option<String>,
+        /// Add to global prompts instead of project prompts
+        #[arg(long)]
+        global: bool,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Remove a prompt by ID prefix
+    Remove {
+        /// Prompt ID (or unique prefix)
+        id: String,
+        /// Remove from global prompts instead of project prompts
+        #[arg(long)]
+        global: bool,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum PermissionCommands {
     /// Show default permissions
     List,
@@ -207,6 +253,21 @@ pub fn run(cmd: Commands) -> i32 {
             NoteCommands::List { dir } => notes::cmd_note_list(dir.as_deref()),
             NoteCommands::Remove { note_id, dir } => {
                 notes::cmd_note_remove(&note_id, dir.as_deref())
+            }
+        },
+        Commands::Prompt { command } => match command {
+            PromptCommands::List { global, dir } => {
+                prompts::cmd_prompt_list(global, dir.as_deref())
+            }
+            PromptCommands::Add {
+                title,
+                text,
+                section,
+                global,
+                dir,
+            } => prompts::cmd_prompt_add(&title, &text, section.as_deref(), global, dir.as_deref()),
+            PromptCommands::Remove { id, global, dir } => {
+                prompts::cmd_prompt_remove(&id, global, dir.as_deref())
             }
         },
         Commands::Permissions { command } => match command {

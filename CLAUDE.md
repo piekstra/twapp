@@ -4,7 +4,7 @@
 
 This section is the authoritative reference for twapp usage across all Claude sessions. The global `~/.claude/CLAUDE.md` points here for twapp details.
 
-**Key commands:** `work`, `resume`, `sessions`, `note`, `permissions`, `ticket`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
+**Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
 
 Run `twapp <command> --help` for details.
 
@@ -78,3 +78,4 @@ npx tsc --noEmit
 - **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
+- **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
