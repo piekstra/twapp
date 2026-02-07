@@ -1,6 +1,6 @@
 [package]
 name = "twapp"
-version = "0.3.0"
+version = "0.4.1"
 description = "Terminal wrapper for Claude work sessions"
 authors = ["you"]
 license = ""

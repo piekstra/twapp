@@ -150,8 +150,20 @@ function App() {
   } | null>(null);
   const promptsLoaded = useRef(false);
 
-  // App version
+  // App version + updates
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{
+    latestVersion: string;
+    releaseNotes: string;
+    releaseUrl: string;
+    downloadUrl: string;
+  } | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const updateLastChecked = useRef(0);
+  const [showUpdatePanel, setShowUpdatePanel] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
+  const [updateIsLatest, setUpdateIsLatest] = useState(false);
 
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -175,6 +187,68 @@ function App() {
       setProjectPrompts(project || { sections: [] });
       promptsLoaded.current = true;
     }).catch(console.error);
+  };
+
+  const isNewerVersion = (current: string, latest: string): boolean => {
+    const c = current.split(".").map(Number);
+    const l = latest.split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      if (l[i] > c[i]) return true;
+      if (l[i] < c[i]) return false;
+    }
+    return false;
+  };
+
+  const checkForUpdate = async (force = false) => {
+    if (!appVersion) return;
+    if (!force && Date.now() - updateLastChecked.current < 30 * 60 * 1000) return;
+
+    setUpdateError(null);
+    try {
+      const res = await fetch(
+        "https://api.github.com/repos/piekstra/twapp/releases/latest"
+      );
+      if (!res.ok) {
+        if (res.status === 403) return; // Rate limited — silent
+        throw new Error(`GitHub API returned ${res.status}`);
+      }
+      const data = await res.json();
+      const latestTag = (data.tag_name as string).replace(/^v/, "");
+      updateLastChecked.current = Date.now();
+
+      if (isNewerVersion(appVersion, latestTag)) {
+        const asset = data.assets?.find(
+          (a: { name: string }) => a.name === "twapp-macos-aarch64.tar.gz"
+        );
+        setUpdateInfo({
+          latestVersion: latestTag,
+          releaseNotes: data.body || "No release notes available.",
+          releaseUrl: data.html_url,
+          downloadUrl: asset?.browser_download_url || "",
+        });
+      } else {
+        setUpdateInfo(null);
+        setUpdateIsLatest(true);
+      }
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!updateInfo?.downloadUrl) return;
+    setUpdateInstalling(true);
+    setUpdateInstallError(null);
+    try {
+      await invoke<string>("install_update", {
+        downloadUrl: updateInfo.downloadUrl,
+      });
+      await invoke("reload_app");
+    } catch (e) {
+      setUpdateInstallError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdateInstalling(false);
+    }
   };
 
   // Initialize terminal and PTY
@@ -271,6 +345,9 @@ function App() {
       invoke<TicketInfo | null>("get_ticket_info")
         .then((info) => { if (info) setTicket(info); })
         .catch(console.error);
+
+      // Check for updates after a brief delay
+      setTimeout(() => checkForUpdate(), 5000);
 
     }).catch(console.error);
 
@@ -703,9 +780,91 @@ function App() {
         {(appConfig?.name !== "twapp" || appVersion) && (
           <div className="sidebar-title">
             <span className="sidebar-title-text">{appConfig?.name !== "twapp" ? appConfig?.name : ""}</span>
-            {appVersion && <span className="sidebar-version">v{appVersion}</span>}
+            {appVersion && (
+              <span
+                className={`sidebar-version${updateInfo ? " has-update" : ""}`}
+                onClick={() => { setShowUpdatePanel(!showUpdatePanel); checkForUpdate(); }}
+                title={updateInfo ? `Update available: v${updateInfo.latestVersion}` : `v${appVersion}`}
+              >
+                v{appVersion}
+                {updateInfo && <span className="update-dot" />}
+                {updateIsLatest && !updateInfo && <span className="update-latest-badge">(latest)</span>}
+              </span>
+            )}
           </div>
         )}
+        {/* Update Panel */}
+        {showUpdatePanel && (
+          <div className="update-panel">
+            <div className="update-panel-header">
+              <span>Update</span>
+              <button
+                className="update-panel-close"
+                onClick={() => setShowUpdatePanel(false)}
+              >
+                x
+              </button>
+            </div>
+            <div className="update-versions">
+              <div className="update-version-row">
+                <span className="update-label">Current:</span>
+                <span className="update-value">v{appVersion}</span>
+              </div>
+              {updateInfo && (
+                <div className="update-version-row">
+                  <span className="update-label">Latest:</span>
+                  <span className="update-value update-latest">
+                    v{updateInfo.latestVersion}
+                  </span>
+                </div>
+              )}
+            </div>
+            {updateInfo ? (
+              <>
+                <div className="update-notes">
+                  <Markdown>{updateInfo.releaseNotes}</Markdown>
+                </div>
+                <a
+                  className="update-release-link"
+                  href={updateInfo.releaseUrl}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(updateInfo.releaseUrl).catch(console.error);
+                  }}
+                >
+                  View on GitHub
+                </a>
+                {updateInstallError && (
+                  <div className="update-install-error">
+                    {updateInstallError}
+                  </div>
+                )}
+                <button
+                  className="update-install-button"
+                  onClick={handleInstallUpdate}
+                  disabled={updateInstalling || !updateInfo.downloadUrl}
+                >
+                  {updateInstalling ? "Installing..." : "Update & Restart"}
+                </button>
+              </>
+            ) : updateError ? (
+              <div className="update-error-state">
+                <span className="update-error-text">
+                  Could not check for updates
+                </span>
+                <button
+                  className="update-retry-button"
+                  onClick={() => checkForUpdate(true)}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <div className="update-up-to-date">Up to date</div>
+            )}
+          </div>
+        )}
+
         <div className="sidebar-header">
           <div className="sidebar-header-row">
             <div className="sidebar-header-actions">

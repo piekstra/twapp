@@ -1228,4 +1228,187 @@ body,
   font-family: "SF Mono", "Fira Code", monospace;
   color: var(--text-muted);
   opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.sidebar-version:hover {
+  opacity: 1;
+}
+
+.sidebar-version.has-update {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.update-latest-badge {
+  margin-left: 3px;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Update Panel */
+.update-panel {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.update-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.update-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.update-panel-close:hover {
+  color: var(--text-primary);
+}
+
+.update-versions {
+  margin-bottom: 10px;
+}
+
+.update-version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.update-label {
+  color: var(--text-muted);
+  min-width: 55px;
+}
+
+.update-value {
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-secondary);
+}
+
+.update-latest {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.update-notes {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.update-notes p {
+  margin: 0 0 4px 0;
+}
+
+.update-notes a {
+  color: var(--accent);
+}
+
+.update-release-link {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.update-release-link:hover {
+  text-decoration: underline;
+}
+
+.update-install-button {
+  width: 100%;
+  padding: 8px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.update-install-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.update-install-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.update-install-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.update-error-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.update-error-text {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.update-retry-button {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.update-retry-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.update-up-to-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px 0;
 }
