@@ -66,9 +66,9 @@ npx tsc --noEmit
 
 ### Versioning
 
-**Automatic**: CI auto-increments the patch version, commits, builds, and creates a GitHub release on every push to main. No manual version bumping or tagging needed.
+**Automatic**: CI derives version from `version.txt` (major.minor) + run number (patch), injects into build files without committing, builds, tags, and creates a GitHub release. No commits pushed back to main.
 
-**Manual override**: To bump minor/major versions, run `./scripts/bump-version.sh <version>` before committing. CI will increment from whatever version it finds.
+**Manual override**: To bump minor/major, update `version.txt` (e.g., `0.5` → `0.6` or `1.0`). Patch is always the CI run number.
 
 ## Key Patterns
 

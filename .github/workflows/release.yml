@@ -42,22 +42,13 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Bump patch version
+      - name: Determine version
         id: bump
         run: |
-          current=$(node -p "require('./package.json').version")
-          IFS='.' read -r major minor patch <<< "$current"
-          new_version="${major}.${minor}.$((patch + 1))"
-          ./scripts/bump-version.sh "$new_version"
-          echo "version=$new_version" >> "$GITHUB_OUTPUT"
-
-      - name: Commit version bump
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-          git commit -m "v${{ steps.bump.outputs.version }}: bump version [skip ci]"
-          git push
+          BASE_VERSION=$(cat version.txt | tr -d '\n')
+          VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          ./scripts/bump-version.sh "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
       - run: npm run tauri build
@@ -72,6 +63,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin "v${{ steps.bump.outputs.version }}"
           gh release create "v${{ steps.bump.outputs.version }}" \
             twapp-macos-aarch64.tar.gz \
             --title "v${{ steps.bump.outputs.version }}" \
