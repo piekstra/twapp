@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "twapp",
   "version": "0.4.7",
-  "identifier": "com.signalft.twapp",
+  "identifier": "com.piekstra.twapp",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

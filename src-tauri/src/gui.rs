@@ -647,7 +647,7 @@ async fn fork_session(
         window_name = ticket_key_str.to_string();
         ticket_key_for_session = Some(ticket_key_str.to_string());
 
-        // Create work directory under parent of current cwd (~/Dev/ equivalent)
+        // Create work directory under parent of current cwd
         let parent = std::path::Path::new(&work_dir)
             .parent()
             .unwrap_or(std::path::Path::new(&work_dir));

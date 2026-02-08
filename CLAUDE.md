@@ -2,7 +2,7 @@
 
 ## Usage Reference
 
-This section is the authoritative reference for twapp usage across all Claude sessions. The global `~/.claude/CLAUDE.md` points here for twapp details.
+This section is the authoritative reference for twapp usage across all Claude sessions.
 
 **Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
 

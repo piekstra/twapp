@@ -215,7 +215,7 @@ twapp install-gui /tmp/twapp.app
 
 ```yaml
 defaults:
-  work_directory: ~/Dev
+  work_directory: ~/projects
   jira_project: PROJ
   github_repo: owner/repo
 ```
@@ -250,7 +250,7 @@ twapp install-gui src-tauri/target/release/twapp  # install locally
 npx tsc --noEmit                                # type check
 ```
 
-**Versioning:** CI auto-increments the patch version on every push to main. For minor/major bumps, run `./scripts/bump-version.sh <version>` before pushing.
+**Versioning:** CI derives the version from `version.txt` (major.minor) + run number (patch). To bump minor/major, update `version.txt`.
 
 ## Contributing
 
