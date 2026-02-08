@@ -1224,8 +1224,8 @@ fn cmd_setup_cert() -> i32 {
             println!();
             println!("Next steps:");
             println!("1. Run 'twapp install-gui <path>' to re-sign the app bundle");
-            println!("2. Grant Full Disk Access once: System Settings > Privacy & Security");
-            println!("   > Full Disk Access > add twapp.app");
+            println!("2. Grant Full Disk Access: System Settings > Privacy & Security > Full Disk Access");
+            println!("   Click +, press Cmd+Shift+G, type ~/.config/twapp/ and select twapp.app");
             println!("   After that, no more permission prompts for any twapp session.");
             return 0;
         }

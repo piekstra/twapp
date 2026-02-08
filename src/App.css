@@ -1588,6 +1588,148 @@ a.file-link {
   margin: 16px 0;
 }
 
+/* File preview header actions */
+.file-preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.file-preview-toggle,
+.file-preview-search-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-preview-toggle:hover,
+.file-preview-search-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+/* Preview search bar */
+.file-preview-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+}
+
+.file-preview-search-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+}
+
+.file-preview-search-input:focus {
+  border-color: var(--accent);
+}
+
+.file-preview-search-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  min-width: 60px;
+  text-align: center;
+}
+
+.file-preview-search-nav {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.file-preview-search-nav:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+/* Search match highlighting */
+.search-highlight {
+  background: rgba(255, 204, 0, 0.3);
+  border-radius: 2px;
+}
+
+.search-highlight-active {
+  background: rgba(255, 204, 0, 0.7);
+  border-radius: 2px;
+  outline: 1px solid #ffcc00;
+}
+
+/* JSON viewer */
+.file-preview-json {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.json-tree {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-key { color: #0451a5; }
+.json-string { color: #a31515; }
+.json-number { color: #098658; }
+.json-boolean { color: #0000ff; }
+.json-null { color: #0000ff; }
+.json-bracket { color: var(--text-secondary); }
+.json-colon { color: var(--text-secondary); }
+.json-comma { color: var(--text-secondary); }
+
+.json-collapse-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: inline-block;
+  width: 14px;
+}
+
+.json-collapsed-indicator {
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: pointer;
+  margin: 0 4px;
+  font-size: 11px;
+}
+
+.json-collapsed-indicator:hover {
+  color: var(--text-secondary);
+}
+
+.json-children {
+  display: block;
+}
+
+.json-entry {
+  display: block;
+}
+
+:root.dark .json-key { color: #9cdcfe; }
+:root.dark .json-string { color: #ce9178; }
+:root.dark .json-number { color: #b5cea8; }
+:root.dark .json-boolean { color: #569cd6; }
+:root.dark .json-null { color: #569cd6; }
+
 /* Dark mode overrides — muted fills for buttons, semi-transparent badges */
 
 :root.dark .note-input button,

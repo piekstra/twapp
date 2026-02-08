@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -170,6 +170,14 @@ function App() {
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [jsonRawView, setJsonRawView] = useState(false);
+  const [jsonCollapsed, setJsonCollapsed] = useState<Set<string>>(new Set());
+  const [previewSearchOpen, setPreviewSearchOpen] = useState(false);
+  const [previewSearchQuery, setPreviewSearchQuery] = useState("");
+  const [previewSearchIndex, setPreviewSearchIndex] = useState(0);
+  const [previewSearchCount, setPreviewSearchCount] = useState(0);
+  const previewSearchInputRef = useRef<HTMLInputElement>(null);
+  const previewContentRef = useRef<HTMLDivElement>(null);
 
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -266,6 +274,12 @@ function App() {
   const handleFilePreview = async (filePath: string) => {
     setPreviewLoading(true);
     setPreviewError(null);
+    setJsonRawView(false);
+    setJsonCollapsed(new Set());
+    setPreviewSearchOpen(false);
+    setPreviewSearchQuery("");
+    setPreviewSearchCount(0);
+    setPreviewSearchIndex(0);
     try {
       const content = await invoke<string>("read_file", { path: filePath });
       setPreviewFile({ path: filePath, content });
@@ -277,6 +291,95 @@ function App() {
     }
   };
   filePreviewRef.current = handleFilePreview;
+
+  const parsedJson = useMemo(() => {
+    if (!previewFile?.path.endsWith(".json")) return null;
+    try {
+      return JSON.parse(previewFile.content);
+    } catch {
+      return null;
+    }
+  }, [previewFile]);
+
+  const toggleJsonCollapse = (path: string) => {
+    setJsonCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderJsonNode = (value: any, path: string, depth: number): React.ReactNode => {
+    if (value === null) return <span className="json-null">null</span>;
+    if (typeof value === "boolean") return <span className="json-boolean">{String(value)}</span>;
+    if (typeof value === "number") return <span className="json-number">{value}</span>;
+    if (typeof value === "string") return <span className="json-string">&quot;{value}&quot;</span>;
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return <span className="json-bracket">[]</span>;
+      const collapsed = jsonCollapsed.has(path);
+      return (
+        <span>
+          <span className="json-collapse-toggle" onClick={() => toggleJsonCollapse(path)}>
+            <span className={`prompt-chevron${collapsed ? "" : " expanded"}`}>&#9654;</span>
+          </span>
+          <span className="json-bracket">[</span>
+          {collapsed ? (
+            <span className="json-collapsed-indicator" onClick={() => toggleJsonCollapse(path)}>
+              {value.length} {value.length === 1 ? "item" : "items"}
+            </span>
+          ) : (
+            <div className="json-children">
+              {value.map((item, i) => (
+                <div key={i} className="json-entry" style={{ paddingLeft: `${(depth + 1) * 16}px` }}>
+                  {renderJsonNode(item, `${path}[${i}]`, depth + 1)}
+                  {i < value.length - 1 && <span className="json-comma">,</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!collapsed && <div style={{ paddingLeft: `${depth * 16}px` }}><span className="json-bracket">]</span></div>}
+          {collapsed && <span className="json-bracket">]</span>}
+        </span>
+      );
+    }
+
+    if (typeof value === "object") {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) return <span className="json-bracket">{"{}"}</span>;
+      const collapsed = jsonCollapsed.has(path);
+      return (
+        <span>
+          <span className="json-collapse-toggle" onClick={() => toggleJsonCollapse(path)}>
+            <span className={`prompt-chevron${collapsed ? "" : " expanded"}`}>&#9654;</span>
+          </span>
+          <span className="json-bracket">{"{"}</span>
+          {collapsed ? (
+            <span className="json-collapsed-indicator" onClick={() => toggleJsonCollapse(path)}>
+              {entries.length} {entries.length === 1 ? "key" : "keys"}
+            </span>
+          ) : (
+            <div className="json-children">
+              {entries.map(([key, val], i) => (
+                <div key={key} className="json-entry" style={{ paddingLeft: `${(depth + 1) * 16}px` }}>
+                  <span className="json-key">&quot;{key}&quot;</span>
+                  <span className="json-colon">: </span>
+                  {renderJsonNode(val, `${path}.${key}`, depth + 1)}
+                  {i < entries.length - 1 && <span className="json-comma">,</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!collapsed && <div style={{ paddingLeft: `${depth * 16}px` }}><span className="json-bracket">{"}"}</span></div>}
+          {collapsed && <span className="json-bracket">{"}"}</span>}
+        </span>
+      );
+    }
+
+    return <span>{String(value)}</span>;
+  };
 
   const isFilePath = (text: string): boolean =>
     /^[a-zA-Z0-9_.][a-zA-Z0-9_./\-]*\.[a-zA-Z0-9]+$/.test(text.trim());
@@ -564,18 +667,106 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
 
-  // Close file preview on Escape
+  // File preview keyboard shortcuts (Escape, Cmd+F)
   useEffect(() => {
     if (!previewFile) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setPreviewFile(null);
-        setPreviewError(null);
+        if (previewSearchOpen) {
+          setPreviewSearchOpen(false);
+          setPreviewSearchQuery("");
+          setPreviewSearchCount(0);
+        } else {
+          setPreviewFile(null);
+          setPreviewError(null);
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        const path = previewFile?.path || "";
+        if (path.endsWith(".md") || path.endsWith(".json")) {
+          e.preventDefault();
+          e.stopPropagation();
+          setPreviewSearchOpen(true);
+          setTimeout(() => previewSearchInputRef.current?.focus(), 0);
+        }
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [previewFile]);
+  }, [previewFile, previewSearchOpen]);
+
+  // Search highlighting in file preview
+  const searchMarksRef = useRef<HTMLElement[]>([]);
+  useEffect(() => {
+    const container = previewContentRef.current;
+    if (!container) return;
+
+    // Clear previous highlights
+    container.querySelectorAll("mark.search-highlight").forEach((mark) => {
+      const parent = mark.parentNode;
+      if (parent) {
+        parent.replaceChild(document.createTextNode(mark.textContent || ""), mark);
+        parent.normalize();
+      }
+    });
+    searchMarksRef.current = [];
+
+    if (!previewSearchOpen || !previewSearchQuery) {
+      setPreviewSearchCount(0);
+      return;
+    }
+
+    const query = previewSearchQuery.toLowerCase();
+    const marks: HTMLElement[] = [];
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+
+    for (const textNode of textNodes) {
+      const text = textNode.textContent || "";
+      const lower = text.toLowerCase();
+      let idx = lower.indexOf(query);
+      if (idx === -1) continue;
+
+      const frag = document.createDocumentFragment();
+      let lastIdx = 0;
+      while (idx !== -1) {
+        if (idx > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, idx)));
+        const mark = document.createElement("mark");
+        mark.className = "search-highlight";
+        mark.textContent = text.slice(idx, idx + query.length);
+        frag.appendChild(mark);
+        marks.push(mark);
+        lastIdx = idx + query.length;
+        idx = lower.indexOf(query, lastIdx);
+      }
+      if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      textNode.parentNode?.replaceChild(frag, textNode);
+    }
+
+    searchMarksRef.current = marks;
+    setPreviewSearchCount(marks.length);
+    const clampedIdx = Math.min(previewSearchIndex, Math.max(0, marks.length - 1));
+    if (clampedIdx !== previewSearchIndex) setPreviewSearchIndex(clampedIdx);
+    if (marks[clampedIdx]) {
+      marks.forEach((m) => m.classList.remove("search-highlight-active"));
+      marks[clampedIdx].classList.add("search-highlight-active");
+      marks[clampedIdx].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewSearchQuery, previewSearchOpen, previewFile, jsonRawView, jsonCollapsed]);
+
+  const navigateSearch = (direction: 1 | -1) => {
+    const marks = searchMarksRef.current;
+    if (marks.length === 0) return;
+    const newIndex = (previewSearchIndex + direction + marks.length) % marks.length;
+    setPreviewSearchIndex(newIndex);
+    marks.forEach((m) => m.classList.remove("search-highlight-active"));
+    if (marks[newIndex]) {
+      marks[newIndex].classList.add("search-highlight-active");
+      marks[newIndex].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  };
 
   const handleRestartTerminal = async () => {
     await invoke("kill_pty");
@@ -1429,18 +1620,64 @@ function App() {
 
       {/* File Preview Overlay */}
       {(previewFile || previewLoading) && (
-        <div className="file-preview-overlay" onClick={() => { setPreviewFile(null); setPreviewError(null); }}>
+        <div className="file-preview-overlay" onClick={() => { setPreviewFile(null); setPreviewError(null); setPreviewSearchOpen(false); setPreviewSearchQuery(""); }}>
           <div className="file-preview-panel" onClick={(e) => e.stopPropagation()}>
             <div className="file-preview-header">
               <span className="file-preview-path">{previewFile?.path ?? ""}</span>
-              <button
-                className="file-preview-close"
-                onClick={() => { setPreviewFile(null); setPreviewError(null); }}
-              >
-                x
-              </button>
+              <div className="file-preview-header-actions">
+                {previewFile?.path.endsWith(".json") && parsedJson !== null && (
+                  <button
+                    className="file-preview-toggle"
+                    onClick={() => setJsonRawView(!jsonRawView)}
+                  >
+                    {jsonRawView ? "Tree" : "Raw"}
+                  </button>
+                )}
+                {previewFile && (previewFile.path.endsWith(".md") || previewFile.path.endsWith(".json")) && (
+                  <button
+                    className="file-preview-search-btn"
+                    onClick={() => {
+                      setPreviewSearchOpen(!previewSearchOpen);
+                      if (!previewSearchOpen) setTimeout(() => previewSearchInputRef.current?.focus(), 0);
+                    }}
+                  >
+                    Find
+                  </button>
+                )}
+                <button
+                  className="file-preview-close"
+                  onClick={() => { setPreviewFile(null); setPreviewError(null); }}
+                >
+                  x
+                </button>
+              </div>
             </div>
-            <div className="file-preview-content">
+            {previewSearchOpen && (
+              <div className="file-preview-search-bar">
+                <input
+                  ref={previewSearchInputRef}
+                  className="file-preview-search-input"
+                  placeholder="Search..."
+                  value={previewSearchQuery}
+                  onChange={(e) => { setPreviewSearchQuery(e.target.value); setPreviewSearchIndex(0); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); navigateSearch(-1); }
+                    else if (e.key === "Enter") { e.preventDefault(); navigateSearch(1); }
+                    else if (e.key === "Escape") { setPreviewSearchOpen(false); setPreviewSearchQuery(""); }
+                  }}
+                />
+                <span className="file-preview-search-count">
+                  {previewSearchQuery
+                    ? previewSearchCount > 0
+                      ? `${previewSearchIndex + 1} of ${previewSearchCount}`
+                      : "No matches"
+                    : ""}
+                </span>
+                <button className="file-preview-search-nav" onClick={() => navigateSearch(-1)}>&uarr;</button>
+                <button className="file-preview-search-nav" onClick={() => navigateSearch(1)}>&darr;</button>
+              </div>
+            )}
+            <div className="file-preview-content" ref={previewContentRef}>
               {previewLoading ? (
                 <div className="file-preview-loading">Loading...</div>
               ) : previewError ? (
@@ -1448,6 +1685,14 @@ function App() {
               ) : previewFile?.path.endsWith(".md") ? (
                 <div className="file-preview-markdown">
                   <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{previewFile.content}</Markdown>
+                </div>
+              ) : previewFile?.path.endsWith(".json") && parsedJson !== null ? (
+                <div className="file-preview-json">
+                  {jsonRawView ? (
+                    <pre className="file-preview-code">{JSON.stringify(parsedJson, null, 2)}</pre>
+                  ) : (
+                    <div className="json-tree">{renderJsonNode(parsedJson, "$", 0)}</div>
+                  )}
                 </div>
               ) : (
                 <pre className="file-preview-code">{previewFile?.content}</pre>

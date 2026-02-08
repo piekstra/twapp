@@ -135,14 +135,25 @@ Then `source ~/.zshrc` and verify:
 twapp --version
 ```
 
-### Code Signing (Recommended)
+### Code Signing + Full Disk Access (Recommended)
 
-Avoid repeated macOS permission prompts by creating a local signing certificate:
+Without this setup, macOS will repeatedly prompt for permission to access Apple Music, Photos, Documents, etc. This happens because Claude runs shell commands (like `find`, `ls`, `grep`) as subprocesses of twapp, and macOS attributes their filesystem access to the host app. Every protected directory traversal triggers a separate prompt.
+
+**Step 1: Code signing** — creates a stable certificate so macOS recognizes all twapp instances as the same app:
 
 ```bash
 twapp setup-cert
 twapp install-gui ~/.config/twapp/twapp.app
 ```
+
+**Step 2: Full Disk Access** — grants blanket filesystem access so no individual prompts appear:
+
+1. **System Settings > Privacy & Security > Full Disk Access**
+2. Click **+**, then press **Cmd+Shift+G** to open the path dialog
+3. Type `~/.config/twapp/` and press Enter
+4. Select **twapp.app** and click Open
+
+All twapp instances share the same bundle identifier and certificate, so FDA covers every session. You should only need to do this once.
 
 ### Optional Dependencies
 
