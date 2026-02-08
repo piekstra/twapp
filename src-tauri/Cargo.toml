@@ -34,3 +34,4 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 plist = "1"
+base64 = "0.22"

@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
@@ -178,6 +179,12 @@ function App() {
   const [previewSearchCount, setPreviewSearchCount] = useState(0);
   const previewSearchInputRef = useRef<HTMLInputElement>(null);
   const previewContentRef = useRef<HTMLDivElement>(null);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imagePan, setImagePan] = useState({ x: 0, y: 0 });
+  const imageDragging = useRef(false);
+  const imageDragStart = useRef({ x: 0, y: 0 });
+  const imagePanStart = useRef({ x: 0, y: 0 });
+  const imageContainerRef = useRef<HTMLDivElement>(null);
 
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -271,6 +278,20 @@ function App() {
 
   // File preview
   const filePreviewRef = useRef<(filePath: string) => void>(() => {});
+  const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"]);
+  const isImageFile = (path: string) => {
+    const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
+    return imageExtensions.has(ext);
+  };
+  const imageMimeType = (path: string) => {
+    const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
+    const mimes: Record<string, string> = {
+      ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+      ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+      ".ico": "image/x-icon", ".svg": "image/svg+xml",
+    };
+    return mimes[ext] || "application/octet-stream";
+  };
   const handleFilePreview = async (filePath: string) => {
     setPreviewLoading(true);
     setPreviewError(null);
@@ -280,9 +301,17 @@ function App() {
     setPreviewSearchQuery("");
     setPreviewSearchCount(0);
     setPreviewSearchIndex(0);
+    setImageZoom(1);
+    setImagePan({ x: 0, y: 0 });
     try {
-      const content = await invoke<string>("read_file", { path: filePath });
-      setPreviewFile({ path: filePath, content });
+      if (isImageFile(filePath)) {
+        const base64 = await invoke<string>("read_file_base64", { path: filePath });
+        const dataUrl = `data:${imageMimeType(filePath)};base64,${base64}`;
+        setPreviewFile({ path: filePath, content: dataUrl });
+      } else {
+        const content = await invoke<string>("read_file", { path: filePath });
+        setPreviewFile({ path: filePath, content });
+      }
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : String(e));
       setPreviewFile({ path: filePath, content: "" });
@@ -694,6 +723,47 @@ function App() {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [previewFile, previewSearchOpen]);
+
+  // Zoom (CMD+= / CMD+- / CMD+0)
+  const zoomRef = useRef(parseFloat(localStorage.getItem("twapp-zoom") || "1"));
+  useEffect(() => {
+    const applyZoom = (level: number) => {
+      zoomRef.current = level;
+      localStorage.setItem("twapp-zoom", String(level));
+      getCurrentWebview().setZoom(level).catch(() => {});
+      setTimeout(() => fitAddon.current?.fit(), 50);
+    };
+    // Restore saved zoom on mount
+    if (zoomRef.current !== 1) applyZoom(zoomRef.current);
+    const handler = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        applyZoom(Math.min(3, Math.round((zoomRef.current + 0.1) * 10) / 10));
+      } else if (e.key === "-") {
+        e.preventDefault();
+        applyZoom(Math.max(0.5, Math.round((zoomRef.current - 0.1) * 10) / 10));
+      } else if (e.key === "0") {
+        e.preventDefault();
+        applyZoom(1);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // Image preview wheel-to-zoom (non-passive for preventDefault)
+  useEffect(() => {
+    const el = imageContainerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setImageZoom((z) => Math.min(10, Math.max(0.1, Math.round((z + delta) * 10) / 10)));
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  });
 
   // Search highlighting in file preview
   const searchMarksRef = useRef<HTMLElement[]>([]);
@@ -1693,6 +1763,46 @@ function App() {
                   ) : (
                     <div className="json-tree">{renderJsonNode(parsedJson, "$", 0)}</div>
                   )}
+                </div>
+              ) : previewFile && isImageFile(previewFile.path) ? (
+                <div
+                  className="file-preview-image"
+                  ref={imageContainerRef}
+                  onMouseDown={(e) => {
+                    if (imageZoom > 1 && e.button === 0) {
+                      imageDragging.current = true;
+                      imageDragStart.current = { x: e.clientX, y: e.clientY };
+                      imagePanStart.current = { ...imagePan };
+                      e.preventDefault();
+                    }
+                  }}
+                  onMouseMove={(e) => {
+                    if (imageDragging.current) {
+                      setImagePan({
+                        x: imagePanStart.current.x + e.clientX - imageDragStart.current.x,
+                        y: imagePanStart.current.y + e.clientY - imageDragStart.current.y,
+                      });
+                    }
+                  }}
+                  onMouseUp={() => { imageDragging.current = false; }}
+                  onMouseLeave={() => { imageDragging.current = false; }}
+                  style={{ cursor: imageZoom > 1 ? (imageDragging.current ? "grabbing" : "grab") : "default" }}
+                >
+                  <img
+                    src={previewFile.content}
+                    alt={previewFile.path.split("/").pop() || "preview"}
+                    draggable={false}
+                    style={{
+                      transform: `scale(${imageZoom}) translate(${imagePan.x / imageZoom}px, ${imagePan.y / imageZoom}px)`,
+                    }}
+                  />
+                  <div className="image-zoom-controls">
+                    <button onClick={() => { setImageZoom(1); setImagePan({ x: 0, y: 0 }); }} title="Fit to view">Fit</button>
+                    <button onClick={() => setImageZoom((z) => Math.max(0.1, Math.round((z - 0.25) * 10) / 10))} title="Zoom out">-</button>
+                    <span className="image-zoom-level">{Math.round(imageZoom * 100)}%</span>
+                    <button onClick={() => setImageZoom((z) => Math.min(10, Math.round((z + 0.25) * 10) / 10))} title="Zoom in">+</button>
+                    <button onClick={() => { setImageZoom(1); setImagePan({ x: 0, y: 0 }); }} title="Actual size">1:1</button>
+                  </div>
                 </div>
               ) : (
                 <pre className="file-preview-code">{previewFile?.content}</pre>

@@ -1730,6 +1730,70 @@ a.file-link {
 :root.dark .json-boolean { color: #569cd6; }
 :root.dark .json-null { color: #569cd6; }
 
+/* Image preview */
+.file-preview-image {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  overflow: hidden;
+  background-image:
+    linear-gradient(45deg, var(--bg-secondary) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-secondary) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-secondary) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-secondary) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+
+.file-preview-image img {
+  max-width: 100%;
+  max-height: calc(80vh - 80px);
+  object-fit: contain;
+  transform-origin: center center;
+  transition: transform 0.1s ease-out;
+  user-select: none;
+}
+
+.image-zoom-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  padding: 4px 8px;
+  z-index: 1;
+}
+
+.image-zoom-controls button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.image-zoom-controls button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.image-zoom-level {
+  color: #fff;
+  font-size: 11px;
+  min-width: 40px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Dark mode overrides — muted fills for buttons, semi-transparent badges */
 
 :root.dark .note-input button,

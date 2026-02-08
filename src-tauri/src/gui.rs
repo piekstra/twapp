@@ -839,6 +839,27 @@ fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, 
 }
 
 #[tauri::command]
+fn read_file_base64(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
+    let file_path = std::path::Path::new(&path);
+    let resolved = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        let cwd = config.cwd.as_deref().unwrap_or(".");
+        std::path::Path::new(cwd).join(file_path)
+    };
+    if !resolved.exists() {
+        return Err(format!("File not found: {}", resolved.display()));
+    }
+    let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
+    if metadata.len() > 5 * 1024 * 1024 {
+        return Err("File too large (max 5MB)".to_string());
+    }
+    let bytes = std::fs::read(&resolved).map_err(|e| e.to_string())?;
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[tauri::command]
 async fn install_update(download_url: String) -> Result<String, String> {
     let tmp_dir = std::env::temp_dir().join(format!("twapp-update-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
@@ -1009,6 +1030,7 @@ pub fn run(args: GuiArgs) {
             dev_reload,
             read_rebuild_log,
             read_file,
+            read_file_base64,
             reload_app,
             load_notes,
             save_notes,
