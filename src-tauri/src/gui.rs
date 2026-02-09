@@ -1290,6 +1290,11 @@ fn save_global_config(
 }
 
 #[tauri::command]
+fn get_font_family_preference() -> String {
+    crate::cli::config::get_font_family_preference()
+}
+
+#[tauri::command]
 fn get_session_color_preference() -> String {
     crate::cli::config::get_session_color_preference()
 }
@@ -2025,6 +2030,7 @@ pub fn run(args: GuiArgs) {
             launch_session,
             get_global_config,
             save_global_config,
+            get_font_family_preference,
             get_session_color_preference,
             set_session_color_preference,
             get_default_permissions,
