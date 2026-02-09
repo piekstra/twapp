@@ -19,6 +19,7 @@ A structured terminal companion for Claude coding sessions — with notes, ticke
 - **Ticket context** — link a Jira ticket or GitHub issue. Title, status, description stay visible in the sidebar.
 - **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
 - **Two-way Claude integration** — Claude reads your session and manages twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
+- **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click.
 - **In-app updates** — checks automatically, shows release notes, one-click update.
 - **Default permissions** — set Claude permissions once, auto-apply to every new session.
 
@@ -81,6 +82,19 @@ twapp ticket create "Fix the thing"    # create a new Jira ticket
 ### Quick Prompts
 
 Reusable prompts organized into sections. Global ones follow you everywhere; project ones stay with the session. One click sends them to the terminal.
+
+### Session Launcher
+
+Open **twapp** from Spotlight (or just run the app with no arguments) to see every session across your machine:
+
+- **Search** — filter by name, ticket, or directory
+- **Sort** — toggle between **Recent** (grouped by Today/Yesterday/This Week/Last Week/Older) and **A-Z** (grouped by first letter)
+- **Running status** — green badge on sessions that are currently open
+- **Details** — directory path, last active time, conversation message count
+- **One-click launch** — click to open a session, or focus it if already running
+- **Rescan** — Cmd+R or the refresh button to re-scan for new sessions
+
+The launcher streams results progressively as directories are scanned, refreshes automatically when visible, and pauses when the window is hidden to save resources.
 
 ### Permissions Management
 
@@ -183,6 +197,9 @@ twapp resume --fork
 
 # See all your sessions
 twapp sessions
+
+# Open the session launcher (or just open twapp from Spotlight)
+open ~/.config/twapp/twapp.app
 ```
 
 ## CLI Reference
