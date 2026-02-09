@@ -1646,6 +1646,14 @@ function App() {
 
     terminalInstance.current = term;
 
+    // Load font family preference from config
+    invoke<string>("get_font_family_preference")
+      .then((fontFamily) => {
+        term.options.fontFamily = fontFamily;
+        if (fitAddon.current) fitAddon.current.fit();
+      })
+      .catch(() => {});
+
     // Let xterm.js tell us when dimensions actually change
     term.onResize(({ cols, rows }) => {
       invoke("resize_pty", { rows, cols }).catch(console.error);

@@ -88,6 +88,21 @@ pub fn set_theme_preference(mode: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn get_font_family_preference() -> String {
+    let path = config_file();
+    if !path.exists() {
+        return r#""SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace"#.to_string();
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(font) = yaml.get("font_family").and_then(|v| v.as_str()) {
+                return font.to_string();
+            }
+        }
+    }
+    r#""SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace"#.to_string()
+}
+
 pub fn get_session_color_preference() -> String {
     let path = config_file();
     if !path.exists() {
