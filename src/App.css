@@ -2983,3 +2983,221 @@ a.file-link {
   cursor: default;
 }
 
+/* ---- Imported Badge ---- */
+
+.launcher-imported-badge {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+/* ---- Filter Toggle ---- */
+
+.launcher-filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.launcher-filter-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+/* ---- Import View ---- */
+
+.import-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.import-scanning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 48px 24px;
+}
+
+.import-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 6px 0;
+}
+
+.import-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.import-select-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.import-select-actions button {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.import-select-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.import-groups {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.import-no-results {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.import-group {
+  margin-bottom: 4px;
+}
+
+.import-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.import-group-header:hover {
+  background: var(--bg-secondary);
+}
+
+.import-group-path {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-group-count {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+.import-group-sessions {
+  padding-left: 8px;
+}
+
+.import-session {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background 0.1s ease;
+}
+
+.import-session:hover {
+  background: var(--bg-secondary);
+}
+
+.import-session-checkbox {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.import-session-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.import-session-name {
+  width: 100%;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  box-sizing: border-box;
+}
+
+.import-session-name:hover {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+}
+
+.import-session-name:focus {
+  border-color: var(--accent);
+  background: var(--bg-primary);
+}
+
+.import-session-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+
+.import-session-branch {
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-secondary);
+}
+
+.import-footer {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-preview-dirs {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+

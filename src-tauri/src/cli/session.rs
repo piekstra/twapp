@@ -17,6 +17,10 @@ pub struct SessionData {
     pub last_resumed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
 }
 
 /// Scan a directory recursively for .twapp-session.json files.

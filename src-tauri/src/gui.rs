@@ -1016,6 +1016,7 @@ struct LauncherSession {
     created: String,
     is_running: bool,
     message_count: Option<u32>,
+    imported: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1122,6 +1123,7 @@ fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
                             count_conversation_messages(&data.session_id, &data.claude_cwd);
                         let last_active =
                             data.last_resumed.clone().or_else(|| Some(data.created.clone()));
+                        let imported = data.imported.unwrap_or(false);
                         let _ = app.emit(
                             "launcher:session",
                             LauncherSession {
@@ -1135,6 +1137,7 @@ fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
                                 created: data.created,
                                 is_running,
                                 message_count,
+                                imported,
                             },
                         );
                     }
@@ -1160,6 +1163,7 @@ async fn list_all_sessions() -> Result<LauncherResponse, String> {
         let message_count = count_conversation_messages(&data.session_id, &data.claude_cwd);
         let last_active = data.last_resumed.clone().or_else(|| Some(data.created.clone()));
 
+        let imported = data.imported.unwrap_or(false);
         results.push(LauncherSession {
             session_id: data.session_id,
             name: data.name,
@@ -1171,6 +1175,7 @@ async fn list_all_sessions() -> Result<LauncherResponse, String> {
             created: data.created,
             is_running,
             message_count,
+            imported,
         });
     }
 
@@ -1503,6 +1508,466 @@ async fn delete_session(directory: String, delete_everything: bool) -> Result<()
     Ok(())
 }
 
+// ---- Session Import ----
+
+#[derive(Clone, serde::Serialize)]
+struct DiscoveredSession {
+    session_id: String,
+    original_cwd: String,
+    summary: Option<String>,
+    first_message: Option<String>,
+    message_count: u32,
+    file_size_bytes: u64,
+    first_timestamp: Option<String>,
+    last_timestamp: Option<String>,
+    git_branch: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct DiscoveredGroup {
+    original_cwd: String,
+    sessions: Vec<DiscoveredSession>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ImportPreview {
+    groups: Vec<DiscoveredGroup>,
+    total_sessions: u32,
+    work_directory: String,
+}
+
+/// Extract the last summary and first user message from a JSONL file efficiently.
+/// Reads only the tail (for summary) and head (for first message) of the file.
+fn extract_jsonl_metadata(
+    path: &std::path::Path,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, u32) {
+    // Returns: (summary, first_message, first_timestamp, last_timestamp, git_branch, message_count)
+    use std::io::{BufRead, Seek, SeekFrom};
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (None, None, None, None, None, 0),
+    };
+    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+    // --- Read tail for summary and last timestamp ---
+    let mut summary: Option<String> = None;
+    let mut last_timestamp: Option<String> = None;
+    {
+        let mut f = std::io::BufReader::new(&file);
+        let tail_size: u64 = 256 * 1024; // 256KB
+        let seek_pos = if file_len > tail_size { file_len - tail_size } else { 0 };
+        let _ = f.seek(SeekFrom::Start(seek_pos));
+
+        // If we seeked into the middle of a line, skip the partial line
+        if seek_pos > 0 {
+            let mut _skip = String::new();
+            let _ = f.read_line(&mut _skip);
+        }
+
+        for line in f.lines() {
+            let Ok(line) = line else { continue };
+            if line.contains("\"type\":\"summary\"") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(s) = v.get("summary").and_then(|s| s.as_str()) {
+                        summary = Some(s.to_string());
+                    }
+                }
+            }
+            // Track last timestamp from any message with one
+            if line.contains("\"timestamp\"") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
+                        last_timestamp = Some(ts.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Read head for first message, first timestamp, git branch ---
+    let mut first_message: Option<String> = None;
+    let mut first_timestamp: Option<String> = None;
+    let mut git_branch: Option<String> = None;
+    let mut message_count: u32 = 0;
+    {
+        let f = std::io::BufReader::new(&file);
+        let head_limit = 64 * 1024; // 64KB for head scan
+        let mut bytes_read: usize = 0;
+        let mut found_first = false;
+
+        for line in f.lines() {
+            let Ok(line) = line else { continue };
+            bytes_read += line.len() + 1;
+
+            // Count messages throughout (for head portion)
+            if line.contains("\"type\":\"human\"") || line.contains("\"type\":\"assistant\"") {
+                message_count += 1;
+            }
+
+            if !found_first && bytes_read <= head_limit {
+                if line.contains("\"type\":\"user\"") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        // First timestamp
+                        if first_timestamp.is_none() {
+                            first_timestamp = v.get("timestamp").and_then(|t| t.as_str()).map(String::from);
+                        }
+                        // Git branch
+                        if git_branch.is_none() {
+                            git_branch = v.get("gitBranch")
+                                .and_then(|b| b.as_str())
+                                .filter(|b| !b.is_empty())
+                                .map(String::from);
+                        }
+                        // First user message content
+                        if let Some(msg) = v.get("message").and_then(|m| m.get("content")) {
+                            let text = if let Some(s) = msg.as_str() {
+                                s.to_string()
+                            } else if let Some(arr) = msg.as_array() {
+                                // Content can be array of objects with "text" fields
+                                arr.iter()
+                                    .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            } else {
+                                String::new()
+                            };
+                            if !text.is_empty() {
+                                first_message = Some(truncate_str(&text, 120));
+                            }
+                        }
+                        found_first = true;
+                    }
+                }
+            }
+
+            // If past head limit and we found the first message, just keep counting
+            if bytes_read > head_limit && found_first {
+                // Continue counting but don't parse JSON
+            }
+        }
+    }
+
+    // For very large files, message count from full scan is expensive.
+    // The head-only count is an undercount but acceptable for display.
+    // If file is small enough (< 10MB), we already scanned everything above.
+
+    (summary, first_message, first_timestamp, last_timestamp, git_branch, message_count)
+}
+
+#[tauri::command]
+async fn discover_claude_sessions() -> Result<ImportPreview, String> {
+    let home = dirs::home_dir().ok_or("No home directory")?;
+    let projects_dir = home.join(".claude/projects");
+
+    if !projects_dir.exists() {
+        return Ok(ImportPreview {
+            groups: Vec::new(),
+            total_sessions: 0,
+            work_directory: String::new(),
+        });
+    }
+
+    let global_config = crate::cli::config::GlobalConfig::load()?;
+    let work_directory = global_config.work_directory.to_string_lossy().to_string();
+
+    // Collect all known twapp session IDs
+    let twapp_sessions = crate::cli::session::list_sessions(&global_config.work_directory);
+    let known_ids: std::collections::HashSet<String> = twapp_sessions
+        .iter()
+        .map(|(data, _)| data.session_id.clone())
+        .collect();
+
+    // Walk ~/.claude/projects/ directories
+    let mut groups_map: std::collections::HashMap<String, Vec<DiscoveredSession>> =
+        std::collections::HashMap::new();
+
+    let Ok(project_dirs) = std::fs::read_dir(&projects_dir) else {
+        return Ok(ImportPreview { groups: Vec::new(), total_sessions: 0, work_directory });
+    };
+
+    for project_entry in project_dirs.flatten() {
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+
+        let encoded_name = project_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        // Find all JSONL files in this project directory
+        let Ok(files) = std::fs::read_dir(&project_path) else {
+            continue;
+        };
+
+        for file_entry in files.flatten() {
+            let file_path = file_entry.path();
+            let file_name = file_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            if !file_name.ends_with(".jsonl") {
+                continue;
+            }
+
+            // Extract session ID from filename (strip .jsonl)
+            let session_id = file_name.trim_end_matches(".jsonl").to_string();
+
+            // Skip if this session is already managed by twapp
+            if known_ids.contains(&session_id) {
+                continue;
+            }
+
+            // Skip very small files (< 1KB — likely empty or corrupt)
+            let file_size = std::fs::metadata(&file_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            if file_size < 1024 {
+                continue;
+            }
+
+            // Extract metadata efficiently
+            let (summary, first_message, first_timestamp, last_timestamp, git_branch, message_count) =
+                extract_jsonl_metadata(&file_path);
+
+            // Determine original_cwd: try to read from JSONL first message, fall back to decoding dir name
+            let original_cwd = first_timestamp
+                .as_ref()
+                .and_then(|_| {
+                    // We already parsed first user message above; get cwd from head
+                    let f = std::fs::File::open(&file_path).ok()?;
+                    let reader = std::io::BufReader::new(f);
+                    use std::io::BufRead;
+                    for line in reader.lines().take(50) {
+                        let Ok(line) = line else { continue };
+                        if line.contains("\"type\":\"user\"") || line.contains("\"type\":\"human\"") {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                                if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
+                                    if !cwd.is_empty() {
+                                        return Some(cwd.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_else(|| {
+                    // Fallback: decode encoded directory name
+                    // The encoding replaces / with -
+                    // First char is always - (for leading /)
+                    if encoded_name.starts_with('-') {
+                        format!("/{}", encoded_name[1..].replace('-', "/"))
+                    } else {
+                        encoded_name.replace('-', "/")
+                    }
+                });
+
+            // Skip if no meaningful content
+            if summary.is_none() && first_message.is_none() && message_count == 0 {
+                continue;
+            }
+
+            let session = DiscoveredSession {
+                session_id,
+                original_cwd: original_cwd.clone(),
+                summary,
+                first_message,
+                message_count,
+                file_size_bytes: file_size,
+                first_timestamp,
+                last_timestamp,
+                git_branch,
+            };
+
+            groups_map
+                .entry(original_cwd)
+                .or_default()
+                .push(session);
+        }
+    }
+
+    // Sort sessions within each group by last_timestamp (most recent first)
+    for sessions in groups_map.values_mut() {
+        sessions.sort_by(|a, b| b.last_timestamp.cmp(&a.last_timestamp));
+    }
+
+    // Convert to sorted groups (most sessions first)
+    let mut groups: Vec<DiscoveredGroup> = groups_map
+        .into_iter()
+        .map(|(cwd, sessions)| DiscoveredGroup {
+            original_cwd: cwd,
+            sessions,
+        })
+        .collect();
+    groups.sort_by(|a, b| b.sessions.len().cmp(&a.sessions.len()));
+
+    let total_sessions: u32 = groups.iter().map(|g| g.sessions.len() as u32).sum();
+
+    Ok(ImportPreview {
+        groups,
+        total_sessions,
+        work_directory,
+    })
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct ImportRequest {
+    session_id: String,
+    proposed_name: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ImportResult {
+    imported: u32,
+    directories_created: Vec<String>,
+}
+
+#[tauri::command]
+async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResult, String> {
+    let global_config = crate::cli::config::GlobalConfig::load()?;
+    let work_dir = &global_config.work_directory;
+    let home = dirs::home_dir().ok_or("No home directory")?;
+    let projects_dir = home.join(".claude/projects");
+
+    // Determine color preference
+    let color_pref = crate::cli::config::get_session_color_preference();
+
+    let mut imported_count: u32 = 0;
+    let mut dirs_created: Vec<String> = Vec::new();
+
+    for req in &requests {
+        // Find the JSONL file to get metadata
+        let mut jsonl_path: Option<std::path::PathBuf> = None;
+        let mut original_cwd = String::new();
+
+        if let Ok(project_dirs) = std::fs::read_dir(&projects_dir) {
+            for project_entry in project_dirs.flatten() {
+                let candidate = project_entry
+                    .path()
+                    .join(format!("{}.jsonl", req.session_id));
+                if candidate.exists() {
+                    jsonl_path = Some(candidate);
+
+                    // Get original cwd from the first message
+                    let f = std::fs::File::open(&project_entry.path().join(format!("{}.jsonl", req.session_id))).ok();
+                    if let Some(f) = f {
+                        let reader = std::io::BufReader::new(f);
+                        use std::io::BufRead;
+                        for line in reader.lines().take(50) {
+                            let Ok(line) = line else { continue };
+                            if line.contains("\"cwd\"") {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                                    if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
+                                        if !cwd.is_empty() {
+                                            original_cwd = cwd.to_string();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if original_cwd.is_empty() {
+                        let encoded = project_entry
+                            .path()
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        original_cwd = if encoded.starts_with('-') {
+                            format!("/{}", encoded[1..].replace('-', "/"))
+                        } else {
+                            encoded.replace('-', "/")
+                        };
+                    }
+                    break;
+                }
+            }
+        }
+
+        if jsonl_path.is_none() {
+            continue; // JSONL not found, skip
+        }
+
+        // Sanitize name for directory
+        let safe_name: String = req
+            .proposed_name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let safe_name = safe_name.trim_matches('-').to_string();
+        let safe_name = if safe_name.is_empty() {
+            req.session_id[..8.min(req.session_id.len())].to_string()
+        } else {
+            safe_name[..safe_name.len().min(64)].to_string()
+        };
+
+        // Handle directory name collisions
+        let mut dir_name = safe_name.clone();
+        let mut attempt = 2;
+        while work_dir.join(&dir_name).exists() {
+            dir_name = format!("{}-{}", safe_name, attempt);
+            attempt += 1;
+            if attempt > 100 {
+                break;
+            }
+        }
+
+        let session_dir = work_dir.join(&dir_name);
+        std::fs::create_dir_all(&session_dir)
+            .map_err(|e| format!("Failed to create directory {}: {}", session_dir.display(), e))?;
+
+        // Get first timestamp from JSONL for created field
+        let (_, _, first_ts, _, _, _) = extract_jsonl_metadata(jsonl_path.as_ref().unwrap());
+
+        // Pick color
+        let color = if color_pref == "random" {
+            THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())].to_string()
+        } else {
+            color_pref.clone()
+        };
+
+        // Write .twapp-session.json
+        let session_data = crate::cli::session::SessionData {
+            session_id: req.session_id.clone(),
+            name: req.proposed_name.clone(),
+            color,
+            ticket_key: None,
+            claude_cwd: original_cwd.clone(),
+            created: first_ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            last_resumed: None,
+            forked_from: None,
+            imported: Some(true),
+            imported_from: Some(original_cwd),
+        };
+        crate::cli::session::write_session(&session_dir, &session_data)?;
+
+        // Set up Claude trust + permissions for the new directory
+        crate::cli::session::run_health_checks(&session_dir, Some(&session_data));
+
+        dirs_created.push(session_dir.to_string_lossy().to_string());
+        imported_count += 1;
+    }
+
+    Ok(ImportResult {
+        imported: imported_count,
+        directories_created: dirs_created,
+    })
+}
+
 pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
@@ -1554,6 +2019,8 @@ pub fn run(args: GuiArgs) {
             create_and_launch_session,
             preflight_delete_session,
             delete_session,
+            discover_claude_sessions,
+            import_sessions,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label

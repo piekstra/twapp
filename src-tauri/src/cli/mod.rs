@@ -403,6 +403,8 @@ pub fn create_session_core(
         created: chrono::Utc::now().to_rfc3339(),
         last_resumed: None,
         forked_from: fork_session_id.clone(),
+        imported: None,
+        imported_from: None,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -556,6 +558,8 @@ fn cmd_resume(fork: bool) -> i32 {
             created: chrono::Utc::now().to_rfc3339(),
             last_resumed: None,
             forked_from: Some(session_data.session_id),
+            imported: None,
+            imported_from: None,
         };
         session_id = new_id;
         // Write the forked session file

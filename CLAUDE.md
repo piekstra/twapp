@@ -39,6 +39,8 @@ When to use each:
 
 **Session Deletion**: Trash icon on session hover opens a confirmation modal. `preflight_delete_session` gathers safety checks (running status, uncommitted git changes, unpushed commits, ticket completion status, note count, conversation size). `delete_session` has two tiers: "Remove Session" (deletes `.twapp-*` metadata, `.claude/` project dir, conversation JSONL, `~/.claude.json` entry) or "Delete Everything" (entire working directory). Running sessions cannot be deleted (server-side block).
 
+**Import Claude Sessions**: Download-arrow icon in launcher header discovers unmanaged Claude CLI sessions from `~/.claude/projects/`. `discover_claude_sessions` scans JSONL files, extracts summaries (from compaction) and metadata (message count, timestamps, git branch, file size), cross-references with known twapp sessions to avoid duplicates, and groups results by original working directory. The import view shows expandable directory groups with searchable sessions, editable names, and metadata. `import_sessions` creates new directories in the work directory with full twapp session metadata (`imported: true`, `imported_from: session_id`). Imported sessions show an "Imported" badge on the meta line, with a filter toggle in the sort bar to show/hide them.
+
 ## Architecture
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
@@ -91,5 +93,5 @@ npx tsc --noEmit
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
 - **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
 - **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
-- **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
+- **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session" | "import"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
 - **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `App.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.

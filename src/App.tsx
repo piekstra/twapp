@@ -122,11 +122,40 @@ interface LauncherSession {
   created: string;
   is_running: boolean;
   message_count: number | null;
+  imported: boolean;
 }
 
 interface LauncherResponse {
   sessions: LauncherSession[];
   home_dir: string;
+}
+
+interface DiscoveredSession {
+  session_id: string;
+  original_cwd: string;
+  summary: string | null;
+  first_message: string | null;
+  message_count: number;
+  file_size_bytes: number;
+  first_timestamp: string | null;
+  last_timestamp: string | null;
+  git_branch: string | null;
+}
+
+interface DiscoveredGroup {
+  original_cwd: string;
+  sessions: DiscoveredSession[];
+}
+
+interface ImportPreview {
+  groups: DiscoveredGroup[];
+  total_sessions: number;
+  work_directory: string;
+}
+
+interface ImportResult {
+  imported: number;
+  directories_created: string[];
 }
 
 interface DeletePreflight {
@@ -145,7 +174,7 @@ interface DeletePreflight {
 
 type SortMode = "recent" | "alpha";
 
-type LauncherView = "sessions" | "settings" | "new-session";
+type LauncherView = "sessions" | "settings" | "new-session" | "import";
 
 function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [sessions, setSessions] = useState<LauncherSession[]>([]);
@@ -185,6 +214,17 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Import sessions state
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importScanning, setImportScanning] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSelected, setImportSelected] = useState<Set<string>>(new Set());
+  const [importExpanded, setImportExpanded] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  const [importNames, setImportNames] = useState<Map<string, string>>(new Map());
+  const [importSearch, setImportSearch] = useState("");
+  const [showImported, setShowImported] = useState(true);
 
   // Streaming initial load — each session appears as it's discovered
   useEffect(() => {
@@ -332,15 +372,19 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   }, [launcherView, settingsLoaded]);
 
   const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return sessions;
+    let result = sessions;
+    if (!showImported) {
+      result = result.filter((s) => !s.imported);
+    }
+    if (!searchQuery.trim()) return result;
     const q = searchQuery.toLowerCase();
-    return sessions.filter(
+    return result.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.ticket_key && s.ticket_key.toLowerCase().includes(q)) ||
         s.directory.toLowerCase().includes(q)
     );
-  }, [sessions, searchQuery]);
+  }, [sessions, searchQuery, showImported]);
 
   const groupedSessions = useMemo(() => {
     if (sortMode === "alpha") {
@@ -618,6 +662,136 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
     setDeleteLoading(false);
     setDeleting(false);
     setDeleteError(null);
+  };
+
+  // Import session handlers
+  const handleStartImport = async () => {
+    setLauncherView("import");
+    setImportScanning(true);
+    setImportError(null);
+    setImportPreview(null);
+    setImportSelected(new Set());
+    setImportExpanded(new Set());
+    setImportNames(new Map());
+    setImportSearch("");
+    try {
+      const result = await invoke<ImportPreview>("discover_claude_sessions");
+      setImportPreview(result);
+      // Auto-expand first group
+      if (result.groups.length > 0) {
+        setImportExpanded(new Set([result.groups[0].original_cwd]));
+      }
+    } catch (err) {
+      setImportError(String(err));
+    } finally {
+      setImportScanning(false);
+    }
+  };
+
+  const toggleImportSelect = (sessionId: string) => {
+    setImportSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
+
+  const toggleImportGroup = (cwd: string) => {
+    setImportExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(cwd)) next.delete(cwd);
+      else next.add(cwd);
+      return next;
+    });
+  };
+
+  const filteredImportGroups = useMemo(() => {
+    if (!importPreview) return [];
+    if (!importSearch.trim()) return importPreview.groups;
+    const q = importSearch.toLowerCase();
+    return importPreview.groups
+      .map((group) => {
+        // Match against directory path
+        const cwdMatch = group.original_cwd.toLowerCase().includes(q);
+        // Filter sessions within group
+        const filtered = group.sessions.filter((s) =>
+          cwdMatch ||
+          (s.summary && s.summary.toLowerCase().includes(q)) ||
+          (s.first_message && s.first_message.toLowerCase().includes(q)) ||
+          (s.git_branch && s.git_branch.toLowerCase().includes(q)) ||
+          (importNames.get(s.session_id) || "").toLowerCase().includes(q)
+        );
+        if (filtered.length === 0) return null;
+        return { ...group, sessions: filtered };
+      })
+      .filter((g): g is DiscoveredGroup => g !== null);
+  }, [importPreview, importSearch, importNames]);
+
+  const filteredImportSessionCount = useMemo(
+    () => filteredImportGroups.reduce((sum, g) => sum + g.sessions.length, 0),
+    [filteredImportGroups]
+  );
+
+  const selectAllImport = () => {
+    const all = new Set(importSelected);
+    for (const group of filteredImportGroups) {
+      for (const s of group.sessions) {
+        all.add(s.session_id);
+      }
+    }
+    setImportSelected(all);
+  };
+
+  const deselectAllImport = () => {
+    if (!importSearch.trim()) {
+      setImportSelected(new Set());
+    } else {
+      // Only deselect filtered sessions
+      const filtered = new Set<string>();
+      for (const group of filteredImportGroups) {
+        for (const s of group.sessions) {
+          filtered.add(s.session_id);
+        }
+      }
+      setImportSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of filtered) next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const getImportName = (s: DiscoveredSession): string => {
+    return importNames.get(s.session_id) || s.summary || s.first_message || `Session ${s.session_id.slice(0, 8)}`;
+  };
+
+  const setImportName = (sessionId: string, name: string) => {
+    setImportNames((prev) => new Map(prev).set(sessionId, name));
+  };
+
+  const handleImportConfirm = async () => {
+    if (importSelected.size === 0 || !importPreview) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const requests = Array.from(importSelected).map((id) => {
+        const session = importPreview.groups
+          .flatMap((g) => g.sessions)
+          .find((s) => s.session_id === id);
+        return {
+          session_id: id,
+          proposed_name: session ? getImportName(session) : `Session ${id.slice(0, 8)}`,
+        };
+      });
+      await invoke<ImportResult>("import_sessions", { requests });
+      setLauncherView("sessions");
+      handleRescan();
+    } catch (err) {
+      setImportError(String(err));
+    } finally {
+      setImporting(false);
+    }
   };
 
   const formatBytes = (bytes: number): string => {
@@ -918,7 +1092,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                   <path d="M10 2L4 8l6 6" />
                 </svg>
               </button>
-              <h1>{launcherView === "settings" ? "Settings" : "New Session"}</h1>
+              <h1>{launcherView === "settings" ? "Settings" : launcherView === "import" ? "Import Sessions" : "New Session"}</h1>
             </>
           ) : (
             <>
@@ -928,15 +1102,26 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
           )}
           <div className="launcher-header-actions">
             {launcherView === "sessions" && (
-              <button
-                className="launcher-action-btn"
-                onClick={() => setLauncherView("new-session")}
-                title="New session"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <path d="M8 2v12M2 8h12" />
-                </svg>
-              </button>
+              <>
+                <button
+                  className="launcher-action-btn"
+                  onClick={() => setLauncherView("new-session")}
+                  title="New session"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M8 2v12M2 8h12" />
+                  </svg>
+                </button>
+                <button
+                  className="launcher-action-btn"
+                  onClick={handleStartImport}
+                  title="Import Claude sessions"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 2v8M5 7l3 3 3-3" /><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
+                  </svg>
+                </button>
+              </>
             )}
             <button
               className={`launcher-action-btn${launcherView === "settings" ? " active" : ""}`}
@@ -979,6 +1164,16 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                 )}
               </div>
               <div className="launcher-sort">
+                {sessions.some((s) => s.imported) && (
+                  <label className="launcher-filter-toggle" title="Show imported sessions">
+                    <input
+                      type="checkbox"
+                      checked={showImported}
+                      onChange={(e) => setShowImported(e.target.checked)}
+                    />
+                    Imported
+                  </label>
+                )}
                 <button
                   className={`launcher-sort-btn${sortMode === "recent" ? " active" : ""}`}
                   onClick={() => setSortMode("recent")}
@@ -999,7 +1194,119 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
         )}
       </div>
 
-      {launcherView === "settings" ? renderSettings() : launcherView === "new-session" ? (
+      {launcherView === "settings" ? renderSettings() : launcherView === "import" ? (
+      <div className="import-view">
+        {importScanning ? (
+          <div className="import-scanning">
+            <div className="launcher-spinner" />
+            <div>Discovering Claude sessions...</div>
+          </div>
+        ) : importError && !importPreview ? (
+          <div className="import-error">{importError}</div>
+        ) : importPreview ? (
+          <>
+            <div className="import-summary">
+              {importPreview.total_sessions === 0 ? (
+                <span>No unmanaged Claude sessions found.</span>
+              ) : (
+                <>
+                  <span>
+                    {importSearch.trim() && filteredImportSessionCount !== importPreview.total_sessions
+                      ? `${filteredImportSessionCount} of ${importPreview.total_sessions} sessions`
+                      : `Found ${importPreview.total_sessions} unmanaged session${importPreview.total_sessions !== 1 ? "s" : ""} across ${importPreview.groups.length} director${importPreview.groups.length !== 1 ? "ies" : "y"}`
+                    }
+                  </span>
+                  <div className="import-select-actions">
+                    <button onClick={selectAllImport}>Select{importSearch.trim() ? " Visible" : " All"}</button>
+                    <button onClick={deselectAllImport}>Deselect{importSearch.trim() ? " Visible" : " All"}</button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {importPreview.total_sessions > 0 && (
+              <div className="launcher-search">
+                <input
+                  type="text"
+                  placeholder="Search discovered sessions..."
+                  value={importSearch}
+                  onChange={(e) => setImportSearch(e.target.value)}
+                />
+              </div>
+            )}
+
+            <div className="import-groups">
+              {filteredImportGroups.length === 0 && importSearch.trim() ? (
+                <div className="import-no-results">No sessions match "{importSearch}"</div>
+              ) : filteredImportGroups.map((group) => (
+                <div key={group.original_cwd} className="import-group">
+                  <div
+                    className="import-group-header"
+                    onClick={() => toggleImportGroup(group.original_cwd)}
+                  >
+                    <span className={`prompt-chevron${importExpanded.has(group.original_cwd) ? " expanded" : ""}`}>&#9654;</span>
+                    <span className="import-group-path">{shortenPath(group.original_cwd)}</span>
+                    <span className="import-group-count">{group.sessions.length}</span>
+                  </div>
+                  {importExpanded.has(group.original_cwd) && (
+                    <div className="import-group-sessions">
+                      {group.sessions.map((s) => (
+                        <div key={s.session_id} className="import-session">
+                          <input
+                            type="checkbox"
+                            className="import-session-checkbox"
+                            checked={importSelected.has(s.session_id)}
+                            onChange={() => toggleImportSelect(s.session_id)}
+                          />
+                          <div className="import-session-main">
+                            <input
+                              type="text"
+                              className="import-session-name"
+                              value={getImportName(s)}
+                              onChange={(e) => setImportName(s.session_id, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              title="Click to edit import name"
+                            />
+                            <div className="import-session-meta">
+                              {s.message_count > 0 && <span>{s.message_count} msgs</span>}
+                              <span>{formatBytes(s.file_size_bytes)}</span>
+                              {s.last_timestamp && <span>{formatRelativeTime(s.last_timestamp)}</span>}
+                              {s.git_branch && <span className="import-session-branch">{s.git_branch}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {importPreview.total_sessions > 0 && (
+              <div className="import-footer">
+                {importSelected.size > 0 && (
+                  <div className="import-preview-dirs">
+                    Will create {importSelected.size} director{importSelected.size !== 1 ? "ies" : "y"} in {shortenPath(importPreview.work_directory)}/
+                  </div>
+                )}
+                {importError && <div className="import-error">{importError}</div>}
+                <button
+                  className="launcher-create-btn"
+                  onClick={handleImportConfirm}
+                  disabled={importing || importSelected.size === 0}
+                >
+                  {importing ? (
+                    <><div className="launcher-spinner small" /> Importing...</>
+                  ) : (
+                    `Import ${importSelected.size} Session${importSelected.size !== 1 ? "s" : ""}`
+                  )}
+                </button>
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
+      ) : launcherView === "new-session" ? (
       <div className="launcher-new-session">
         <p className="launcher-settings-hint">
           Create a new work session and launch it immediately. Provide a ticket to auto-fetch details, or just a name.
@@ -1080,6 +1387,9 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                       )}
                     </div>
                     <div className="launcher-session-meta">
+                      {session.imported && (
+                        <span className="launcher-imported-badge">Imported</span>
+                      )}
                       {session.ticket_key && (
                         <span className="launcher-ticket">{session.ticket_key}</span>
                       )}
