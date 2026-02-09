@@ -129,6 +129,20 @@ interface LauncherResponse {
   home_dir: string;
 }
 
+interface DeletePreflight {
+  session_name: string;
+  session_color: string;
+  is_running: boolean;
+  has_uncommitted_changes: boolean;
+  unpushed_commit_count: number;
+  ticket_status: string | null;
+  ticket_key: string | null;
+  note_count: number;
+  last_active: string | null;
+  conversation_size_bytes: number;
+  forked_from: string | null;
+}
+
 type SortMode = "recent" | "alpha";
 
 type LauncherView = "sessions" | "settings" | "new-session";
@@ -164,6 +178,13 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [editingSection, setEditingSection] = useState<{ id: string | null; title: string } | null>(null);
   const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
+
+  // Delete session state
+  const [deleteTarget, setDeleteTarget] = useState<LauncherSession | null>(null);
+  const [deletePreflight, setDeletePreflight] = useState<DeletePreflight | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Streaming initial load — each session appears as it's discovered
   useEffect(() => {
@@ -552,6 +573,58 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
       setCopiedColor(hex);
       setTimeout(() => setCopiedColor(null), 1500);
     });
+  };
+
+  // Delete session handlers
+  const handleDeleteClick = async (e: React.MouseEvent, session: LauncherSession) => {
+    e.stopPropagation();
+    setDeleteTarget(session);
+    setDeletePreflight(null);
+    setDeleteError(null);
+    setDeleting(false);
+    setDeleteLoading(true);
+    try {
+      const result = await invoke<DeletePreflight>("preflight_delete_session", {
+        directory: session.directory,
+      });
+      setDeletePreflight(result);
+    } catch (err) {
+      setDeleteError(String(err));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleDeleteConfirm = async (deleteEverything: boolean) => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await invoke("delete_session", {
+        directory: deleteTarget.directory,
+        deleteEverything,
+      });
+      setSessions((prev) => prev.filter((s) => s.session_id !== deleteTarget.session_id));
+      closeDeleteDialog();
+    } catch (err) {
+      setDeleteError(String(err));
+      setDeleting(false);
+    }
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    setDeletePreflight(null);
+    setDeleteLoading(false);
+    setDeleting(false);
+    setDeleteError(null);
+  };
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   // Color palette for settings UI
@@ -1022,6 +1095,15 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                         {session.message_count} msgs
                       </span>
                     )}
+                    <button
+                      className="launcher-session-delete"
+                      title="Delete session"
+                      onClick={(e) => handleDeleteClick(e, session)}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 3h8M4.5 3V2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1M3 3v7a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V3" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1029,6 +1111,100 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
           ))
         )}
       </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="delete-overlay" onClick={closeDeleteDialog}>
+          <div className="delete-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="delete-header">
+              <div className="delete-session-info">
+                <span className="delete-color-dot" style={{ background: deleteTarget.color || "var(--text-muted)" }} />
+                <span className="delete-session-name">{deleteTarget.name}</span>
+              </div>
+              <button className="delete-close" onClick={closeDeleteDialog}>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+              </button>
+            </div>
+
+            <div className="delete-body">
+              {deleteLoading ? (
+                <div className="delete-loading">
+                  <div className="launcher-spinner small" /> Checking session...
+                </div>
+              ) : deleteError && !deletePreflight ? (
+                <div className="delete-error">{deleteError}</div>
+              ) : deletePreflight ? (
+                <>
+                  {deletePreflight.is_running && (
+                    <div className="delete-check blocking">
+                      <span className="delete-check-icon">&#x26D4;</span>
+                      Session is currently running. Close it before deleting.
+                    </div>
+                  )}
+                  {!deletePreflight.is_running && deletePreflight.has_uncommitted_changes && (
+                    <div className="delete-check warning">
+                      <span className="delete-check-icon">&#x26A0;</span>
+                      Uncommitted git changes in working directory
+                    </div>
+                  )}
+                  {!deletePreflight.is_running && deletePreflight.unpushed_commit_count > 0 && (
+                    <div className="delete-check warning">
+                      <span className="delete-check-icon">&#x26A0;</span>
+                      {deletePreflight.unpushed_commit_count} unpushed commit{deletePreflight.unpushed_commit_count !== 1 ? "s" : ""}
+                    </div>
+                  )}
+                  {!deletePreflight.is_running && deletePreflight.ticket_key && deletePreflight.ticket_status &&
+                    !["Done", "Closed", "Merged", "CLOSED", "MERGED"].includes(deletePreflight.ticket_status) && (
+                    <div className="delete-check warning">
+                      <span className="delete-check-icon">&#x26A0;</span>
+                      Ticket {deletePreflight.ticket_key} is &ldquo;{deletePreflight.ticket_status}&rdquo;
+                    </div>
+                  )}
+                  {!deletePreflight.is_running && deletePreflight.note_count > 0 && (
+                    <div className="delete-check warning">
+                      <span className="delete-check-icon">&#x26A0;</span>
+                      {deletePreflight.note_count} note{deletePreflight.note_count !== 1 ? "s" : ""} will be deleted
+                    </div>
+                  )}
+                  <div className="delete-info-section">
+                    <div className="delete-info-item">
+                      <span className="delete-info-label">Last active</span>
+                      <span>{formatRelativeTime(deletePreflight.last_active)}</span>
+                    </div>
+                    {deletePreflight.conversation_size_bytes > 0 && (
+                      <div className="delete-info-item">
+                        <span className="delete-info-label">Conversation data</span>
+                        <span>{formatBytes(deletePreflight.conversation_size_bytes)}</span>
+                      </div>
+                    )}
+                    {deletePreflight.forked_from && (
+                      <div className="delete-info-item">
+                        <span className="delete-info-label">Forked from</span>
+                        <span className="delete-info-mono">{deletePreflight.forked_from.slice(0, 12)}</span>
+                      </div>
+                    )}
+                  </div>
+                  {deleteError && <div className="delete-error">{deleteError}</div>}
+                </>
+              ) : null}
+            </div>
+
+            <div className="delete-actions">
+              <button className="delete-cancel" onClick={closeDeleteDialog}>Cancel</button>
+              {deletePreflight && !deletePreflight.is_running && (
+                <>
+                  <button className="delete-remove" onClick={() => handleDeleteConfirm(false)} disabled={deleting}>
+                    {deleting ? "Removing..." : "Remove Session"}
+                  </button>
+                  <button className="delete-everything" onClick={() => handleDeleteConfirm(true)} disabled={deleting}>
+                    {deleting ? "Deleting..." : "Delete Everything"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

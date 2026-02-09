@@ -94,6 +94,7 @@ Open **twapp** from Spotlight (or just run the app with no arguments) to see eve
 - **One-click launch** — click to open a session, or focus it if already running
 - **Rescan** — Cmd+R or the refresh button to re-scan for new sessions
 - **New session** — create and launch sessions from the UI (ticket key or name, same as `twapp work`)
+- **Delete session** — hover any session to reveal a trash icon. Confirmation modal runs safety checks (uncommitted git changes, unpushed commits, incomplete tickets, unsaved notes) and offers two tiers: remove session metadata or delete everything including the working directory
 
 The launcher streams results progressively as directories are scanned, refreshes automatically when visible, and pauses when the window is hidden to save resources.
 

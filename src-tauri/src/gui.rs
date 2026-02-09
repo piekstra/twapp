@@ -1039,7 +1039,9 @@ fn sanitize_instance_name(name: &str) -> String {
 
 fn check_instance_running(name: &str) -> bool {
     let safe = sanitize_instance_name(name);
-    let needle = format!("instances/{}.app", safe);
+    // Bracket trick: [i]nstances/... prevents pgrep from matching its own process,
+    // because pgrep's command line contains the literal "[i]" which doesn't match the regex [i]
+    let needle = format!("[i]nstances/{}.app", safe);
     std::process::Command::new("pgrep")
         .args(["-f", &needle])
         .output()
@@ -1307,6 +1309,200 @@ async fn create_and_launch_session(
     Ok(())
 }
 
+// ---- Session Deletion ----
+
+#[derive(Clone, serde::Serialize)]
+struct DeletePreflight {
+    session_name: String,
+    session_color: String,
+    is_running: bool,
+    has_uncommitted_changes: bool,
+    unpushed_commit_count: u32,
+    ticket_status: Option<String>,
+    ticket_key: Option<String>,
+    note_count: u32,
+    last_active: Option<String>,
+    conversation_size_bytes: u64,
+    forked_from: Option<String>,
+}
+
+#[tauri::command]
+async fn preflight_delete_session(directory: String) -> Result<DeletePreflight, String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    let session_data = crate::cli::session::read_session(&work_dir)?;
+
+    let is_running = check_instance_running(&session_data.name);
+
+    // Git: uncommitted changes
+    let has_uncommitted_changes = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&work_dir)
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+
+    // Git: unpushed commits
+    let unpushed_commit_count = std::process::Command::new("git")
+        .args(["rev-list", "@{u}..HEAD", "--count"])
+        .current_dir(&work_dir)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    // Ticket status (from file, no network call)
+    let ticket_file = work_dir.join(".twapp-ticket.json");
+    let (ticket_key, ticket_status) = if ticket_file.exists() {
+        std::fs::read_to_string(&ticket_file)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .map(|v| {
+                let key = v.get("key").and_then(|k| k.as_str()).map(String::from);
+                let status = v.get("status").and_then(|s| s.as_str()).map(String::from);
+                (key, status)
+            })
+            .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
+    // Note count: sum notes across all .twapp-notes*.json files
+    let note_count = std::fs::read_dir(&work_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(".twapp-notes")
+                        && e.file_name().to_string_lossy().ends_with(".json")
+                })
+                .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+                .filter_map(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                .filter_map(|v| v.as_array().map(|a| a.len() as u32))
+                .sum::<u32>()
+        })
+        .unwrap_or(0);
+
+    // Conversation size
+    let conversation_size_bytes = {
+        let home = dirs::home_dir().unwrap_or_default();
+        let encoded = session_data.claude_cwd.replace('/', "-");
+        let jsonl_path = home
+            .join(".claude/projects")
+            .join(&encoded)
+            .join(format!("{}.jsonl", session_data.session_id));
+        std::fs::metadata(&jsonl_path)
+            .map(|m| m.len())
+            .unwrap_or(0)
+    };
+
+    let last_active = session_data
+        .last_resumed
+        .clone()
+        .or(Some(session_data.created.clone()));
+
+    Ok(DeletePreflight {
+        session_name: session_data.name,
+        session_color: session_data.color,
+        is_running,
+        has_uncommitted_changes,
+        unpushed_commit_count,
+        ticket_status,
+        ticket_key,
+        note_count,
+        last_active,
+        conversation_size_bytes,
+        forked_from: session_data.forked_from,
+    })
+}
+
+#[tauri::command]
+async fn delete_session(directory: String, delete_everything: bool) -> Result<(), String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    let session_data = crate::cli::session::read_session(&work_dir)?;
+
+    // Server-side safety gate: refuse to delete running sessions
+    if check_instance_running(&session_data.name) {
+        return Err("Session is currently running. Close it before deleting.".to_string());
+    }
+
+    // 1. Delete conversation JSONL
+    let home = dirs::home_dir().unwrap_or_default();
+    let encoded = session_data.claude_cwd.replace('/', "-");
+    let jsonl_path = home
+        .join(".claude/projects")
+        .join(&encoded)
+        .join(format!("{}.jsonl", session_data.session_id));
+    let _ = std::fs::remove_file(&jsonl_path);
+
+    // 2. Remove project entry from ~/.claude.json
+    let claude_json = home.join(".claude.json");
+    if claude_json.exists() {
+        let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let content = std::fs::read_to_string(&claude_json)?;
+            let mut data: serde_json::Value = serde_json::from_str(&content)?;
+            if let Some(projects) = data.get_mut("projects").and_then(|p| p.as_object_mut()) {
+                projects.remove(&directory);
+                // Also remove claude_cwd entry if different
+                if session_data.claude_cwd != directory {
+                    projects.remove(&session_data.claude_cwd);
+                }
+            }
+            std::fs::write(&claude_json, serde_json::to_string_pretty(&data)?)?;
+            Ok(())
+        })();
+    }
+
+    // 3. Clean up instance .app bundle
+    let safe_name = sanitize_instance_name(&session_data.name);
+    let instance_app = home
+        .join(".config/twapp/instances")
+        .join(format!("{}.app", safe_name));
+    if instance_app.exists() {
+        let _ = std::fs::remove_dir_all(&instance_app);
+    }
+
+    // 4. Delete files based on tier
+    if delete_everything {
+        std::fs::remove_dir_all(&work_dir)
+            .map_err(|e| format!("Failed to delete directory: {}", e))?;
+    } else {
+        // Remove twapp metadata files
+        let _ = std::fs::remove_file(work_dir.join(".twapp-session.json"));
+        let _ = std::fs::remove_file(work_dir.join(".twapp-ticket.json"));
+
+        // Remove all .twapp-notes*.json and .twapp-prompts*.json
+        if let Ok(entries) = std::fs::read_dir(&work_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if (name.starts_with(".twapp-notes") || name.starts_with(".twapp-prompts"))
+                    && name.ends_with(".json")
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        // Remove .claude/ subdirectory (project-level Claude settings)
+        let claude_dir = work_dir.join(".claude");
+        if claude_dir.exists() {
+            let _ = std::fs::remove_dir_all(&claude_dir);
+        }
+    }
+
+    Ok(())
+}
+
 pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
@@ -1356,6 +1552,8 @@ pub fn run(args: GuiArgs) {
             add_default_permission,
             remove_default_permission,
             create_and_launch_session,
+            preflight_delete_session,
+            delete_session,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label

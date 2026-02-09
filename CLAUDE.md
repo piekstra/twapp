@@ -37,6 +37,8 @@ When to use each:
 
 **New Session (GUI)**: "+" button in launcher header opens a dedicated form to create and launch a session (ticket key or name). Uses `create_session_core()` — shared logic extracted from `cmd_work` — so CLI and GUI session creation stay in sync. Respects the session color preference.
 
+**Session Deletion**: Trash icon on session hover opens a confirmation modal. `preflight_delete_session` gathers safety checks (running status, uncommitted git changes, unpushed commits, ticket completion status, note count, conversation size). `delete_session` has two tiers: "Remove Session" (deletes `.twapp-*` metadata, `.claude/` project dir, conversation JSONL, `~/.claude.json` entry) or "Delete Everything" (entire working directory). Running sessions cannot be deleted (server-side block).
+
 ## Architecture
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
