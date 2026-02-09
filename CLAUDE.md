@@ -28,12 +28,14 @@ When to use each:
 - **resume --fork**: Splitting a session that grew too broad (same repo)
 - **work -s**: Forking off to work on a related issue in a different repo/directory
 
+**Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
+
 ## Architecture
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
 
 - **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app with sidebar panels
-- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets
+- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher
 - **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.)
 - **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
 - **Config**: `src-tauri/tauri.conf.json`
@@ -79,3 +81,4 @@ npx tsc --noEmit
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
 - **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
+- **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.

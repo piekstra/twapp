@@ -109,6 +109,374 @@ const darkTheme = {
   brightWhite: "#fff",
 };
 
+// ---- Session Launcher ----
+
+interface LauncherSession {
+  session_id: string;
+  name: string;
+  color: string;
+  ticket_key: string | null;
+  directory: string;
+  claude_cwd: string;
+  last_active: string | null;
+  created: string;
+  is_running: boolean;
+  message_count: number | null;
+}
+
+interface LauncherResponse {
+  sessions: LauncherSession[];
+  home_dir: string;
+}
+
+type SortMode = "recent" | "alpha";
+
+function SessionLauncher({ appVersion }: { appVersion: string | null }) {
+  const [sessions, setSessions] = useState<LauncherSession[]>([]);
+  const [homeDir, setHomeDir] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [launching, setLaunching] = useState<string | null>(null);
+  const [themeMode, setThemeMode] = useState<"light" | "dark" | "system">("system");
+  const [scanning, setScanning] = useState(true);
+  const [sortMode, setSortMode] = useState<SortMode>("recent");
+
+  // Streaming initial load — each session appears as it's discovered
+  useEffect(() => {
+    const unlistenHomeDir = listen<string>("launcher:home-dir", (event) => {
+      setHomeDir(event.payload);
+    });
+    const unlistenSession = listen<LauncherSession>("launcher:session", (event) => {
+      setLoading(false);
+      setSessions((prev) => {
+        // Deduplicate by session_id
+        if (prev.some((s) => s.session_id === event.payload.session_id)) return prev;
+        // Insert sorted by last_active (most recent first)
+        const updated = [...prev];
+        const newTime = event.payload.last_active || "";
+        const idx = updated.findIndex((s) => (s.last_active || "") < newTime);
+        updated.splice(idx === -1 ? updated.length : idx, 0, event.payload);
+        return updated;
+      });
+    });
+    const unlistenDone = listen("launcher:done", () => {
+      setLoading(false);
+      setScanning(false);
+    });
+
+    invoke("scan_sessions").catch((e) => {
+      console.error("Failed to scan sessions:", e);
+      setLoading(false);
+    });
+
+    return () => {
+      unlistenHomeDir.then((fn) => fn());
+      unlistenSession.then((fn) => fn());
+      unlistenDone.then((fn) => fn());
+    };
+  }, []);
+
+  // Periodic refresh — only when window is visible, auto-rescan on stale focus
+  const lastRefresh = useRef(Date.now());
+  const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scanningRef = useRef(true);
+
+  // Keep ref in sync so visibility handler can check it
+  useEffect(() => { scanningRef.current = scanning; }, [scanning]);
+
+  const loadSessions = async () => {
+    // Don't poll while streaming scan is in progress — causes duplicates
+    if (scanningRef.current) return;
+    try {
+      const result = await invoke<LauncherResponse>("list_all_sessions");
+      setSessions(result.sessions);
+      setHomeDir(result.home_dir);
+      lastRefresh.current = Date.now();
+    } catch (e) {
+      console.error("Failed to load sessions:", e);
+    }
+  };
+
+  useEffect(() => {
+    const startPolling = () => {
+      if (!refreshInterval.current) {
+        refreshInterval.current = setInterval(loadSessions, 5000);
+      }
+    };
+    const stopPolling = () => {
+      if (refreshInterval.current) {
+        clearInterval(refreshInterval.current);
+        refreshInterval.current = null;
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        const staleMs = Date.now() - lastRefresh.current;
+        if (staleMs > 5 * 60 * 1000) {
+          handleRescan();
+        } else {
+          loadSessions();
+        }
+        startPolling();
+      }
+    };
+
+    startPolling();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  // Cmd+R to rescan
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "r") {
+        e.preventDefault();
+        handleRescan();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // Theme handling
+  useEffect(() => {
+    invoke<string>("get_theme_preference")
+      .then((mode) => setThemeMode(mode as "light" | "dark" | "system"))
+      .catch(() => {});
+    const unlisten = listen<string>("theme-changed", (event) => {
+      setThemeMode(event.payload as "light" | "dark" | "system");
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const isDark = themeMode === "dark" || (themeMode === "system" && mediaQuery.matches);
+      document.documentElement.classList.toggle("dark", isDark);
+    };
+    applyTheme();
+    mediaQuery.addEventListener("change", applyTheme);
+    return () => mediaQuery.removeEventListener("change", applyTheme);
+  }, [themeMode]);
+
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return sessions;
+    const q = searchQuery.toLowerCase();
+    return sessions.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.ticket_key && s.ticket_key.toLowerCase().includes(q)) ||
+        s.directory.toLowerCase().includes(q)
+    );
+  }, [sessions, searchQuery]);
+
+  const groupedSessions = useMemo(() => {
+    if (sortMode === "alpha") {
+      const sorted = [...filteredSessions].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      );
+      const groups = new Map<string, LauncherSession[]>();
+      for (const s of sorted) {
+        const letter = (s.name[0] || "#").toUpperCase();
+        const key = /[A-Z]/.test(letter) ? letter : "#";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(s);
+      }
+      return Array.from(groups, ([label, sessions]) => ({ label, sessions }));
+    }
+
+    // Default: recent (time buckets)
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
+    const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86400000);
+    const startOfLastWeek = new Date(startOfWeek.getTime() - 7 * 86400000);
+
+    const buckets: { label: string; sessions: LauncherSession[] }[] = [
+      { label: "Today", sessions: [] },
+      { label: "Yesterday", sessions: [] },
+      { label: "This Week", sessions: [] },
+      { label: "Last Week", sessions: [] },
+      { label: "Older", sessions: [] },
+    ];
+
+    for (const s of filteredSessions) {
+      const t = s.last_active ? new Date(s.last_active).getTime() : 0;
+      if (t >= startOfToday.getTime()) buckets[0].sessions.push(s);
+      else if (t >= startOfYesterday.getTime()) buckets[1].sessions.push(s);
+      else if (t >= startOfWeek.getTime()) buckets[2].sessions.push(s);
+      else if (t >= startOfLastWeek.getTime()) buckets[3].sessions.push(s);
+      else buckets[4].sessions.push(s);
+    }
+
+    return buckets.filter((b) => b.sessions.length > 0);
+  }, [filteredSessions, sortMode]);
+
+  const handleLaunch = async (session: LauncherSession) => {
+    setLaunching(session.session_id);
+    try {
+      await invoke("launch_session", {
+        sessionId: session.session_id,
+        directory: session.directory,
+      });
+      setTimeout(loadSessions, 1000);
+    } catch (e) {
+      console.error("Failed to launch:", e);
+    } finally {
+      setLaunching(null);
+    }
+  };
+
+  const formatRelativeTime = (isoString: string | null): string => {
+    if (!isoString) return "never";
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMinutes < 1) return "just now";
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const shortenPath = (path: string): string => {
+    if (homeDir && path.startsWith(homeDir)) {
+      return "~" + path.slice(homeDir.length);
+    }
+    return path;
+  };
+
+  const handleRescan = () => {
+    setSessions([]);
+    setScanning(true);
+    setLoading(true);
+    invoke("scan_sessions").catch((e) => {
+      console.error("Failed to scan sessions:", e);
+      setLoading(false);
+      setScanning(false);
+    });
+  };
+
+  return (
+    <div className="launcher">
+      <div className="launcher-header">
+        <div className="launcher-title">
+          <h1>twapp</h1>
+          {appVersion && <span className="launcher-version">v{appVersion}</span>}
+        </div>
+        <div className="launcher-search">
+          <input
+            type="text"
+            placeholder="Search sessions..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div className="launcher-status">
+          <div className="launcher-status-left">
+            {scanning ? (
+              <>
+                <div className="launcher-spinner small" />
+                <span>Scanning... {sessions.length > 0 ? `${sessions.length} found` : ""}</span>
+              </>
+            ) : (
+              <>
+                <span>{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
+                <button className="launcher-rescan" onClick={handleRescan} title="Rescan (Cmd+R)">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 1v5h5" /><path d="M1.5 10A7 7 0 1 0 3 4.3L1 6" />
+                  </svg>
+                </button>
+              </>
+            )}
+          </div>
+          <div className="launcher-sort">
+            <button
+              className={`launcher-sort-btn${sortMode === "recent" ? " active" : ""}`}
+              onClick={() => setSortMode("recent")}
+              title="Sort by recent"
+            >
+              Recent
+            </button>
+            <button
+              className={`launcher-sort-btn${sortMode === "alpha" ? " active" : ""}`}
+              onClick={() => setSortMode("alpha")}
+              title="Sort alphabetically"
+            >
+              A-Z
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="launcher-list">
+        {loading && sessions.length === 0 ? (
+          <div className="launcher-empty">
+            <div className="launcher-spinner" />
+            <div>Scanning for sessions...</div>
+          </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="launcher-empty">
+            {searchQuery ? "No matching sessions" : "No sessions found"}
+          </div>
+        ) : (
+          groupedSessions.map((group) => (
+            <div key={group.label} className="launcher-group">
+              <div className="launcher-group-label">{group.label}</div>
+              {group.sessions.map((session) => (
+                <div
+                  key={session.session_id}
+                  className={`launcher-session${session.is_running ? " running" : ""}${launching === session.session_id ? " launching" : ""}`}
+                  onClick={() => handleLaunch(session)}
+                  style={{ borderLeftColor: session.color || "transparent" }}
+                >
+                  <div className="launcher-session-main">
+                    <div className="launcher-session-name">
+                      {session.name}
+                      {session.is_running && (
+                        <span className="launcher-running-badge">Running</span>
+                      )}
+                    </div>
+                    <div className="launcher-session-meta">
+                      {session.ticket_key && (
+                        <span className="launcher-ticket">{session.ticket_key}</span>
+                      )}
+                      <span className="launcher-path">{shortenPath(session.directory)}</span>
+                    </div>
+                  </div>
+                  <div className="launcher-session-right">
+                    <span className="launcher-time">
+                      {formatRelativeTime(session.last_active)}
+                    </span>
+                    {session.message_count != null && (
+                      <span className="launcher-messages">
+                        {session.message_count} msgs
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<Terminal | null>(null);
@@ -565,6 +933,12 @@ function App() {
 
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
+
+      // Launcher mode — don't spawn shell or initialize terminal peripherals
+      if (!config.command && !config.session_id) {
+        return;
+      }
+
 
       // Get actual terminal dimensions before spawning so PTY starts at the right size
       fit.fit();
@@ -1187,6 +1561,12 @@ function App() {
     }
     return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
+
+  // Launcher mode: show session list instead of terminal
+  const isLauncherMode = appConfig && !appConfig.command && !appConfig.session_id;
+  if (isLauncherMode) {
+    return <SessionLauncher appVersion={appVersion} />;
+  }
 
   return (
     <div className="app">

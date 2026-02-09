@@ -1002,6 +1002,249 @@ fn resize_pty(
     Ok(())
 }
 
+// ---- Session Launcher ----
+
+#[derive(Clone, serde::Serialize)]
+struct LauncherSession {
+    session_id: String,
+    name: String,
+    color: String,
+    ticket_key: Option<String>,
+    directory: String,
+    claude_cwd: String,
+    last_active: Option<String>,
+    created: String,
+    is_running: bool,
+    message_count: Option<u32>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct LauncherResponse {
+    sessions: Vec<LauncherSession>,
+    home_dir: String,
+}
+
+fn sanitize_instance_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .collect();
+    let safe = safe.trim().replace(' ', "-");
+    if safe.is_empty() {
+        "twapp".to_string()
+    } else {
+        safe[..safe.len().min(64)].to_string()
+    }
+}
+
+fn check_instance_running(name: &str) -> bool {
+    let safe = sanitize_instance_name(name);
+    let needle = format!("instances/{}.app", safe);
+    std::process::Command::new("pgrep")
+        .args(["-f", &needle])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn count_conversation_messages(session_id: &str, claude_cwd: &str) -> Option<u32> {
+    let home = dirs::home_dir()?;
+    let encoded = claude_cwd.replace('/', "-");
+    let jsonl_path = home
+        .join(".claude/projects")
+        .join(&encoded)
+        .join(format!("{}.jsonl", session_id));
+
+    if !jsonl_path.exists() {
+        return None;
+    }
+
+    let file = std::fs::File::open(&jsonl_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    use std::io::BufRead;
+    let count = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter(|line| {
+            line.contains("\"type\":\"human\"") || line.contains("\"type\":\"assistant\"")
+        })
+        .count();
+
+    Some(count as u32)
+}
+
+#[tauri::command]
+async fn scan_sessions(app: tauri::AppHandle) -> Result<(), String> {
+    let global_config = crate::cli::config::GlobalConfig::load()?;
+
+    let home_dir = dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Emit home_dir immediately so frontend can shorten paths
+    let _ = app.emit("launcher:home-dir", home_dir);
+
+    // Walk directories and emit each session as found + enriched
+    scan_and_emit(&app, &global_config.work_directory, 0);
+
+    // Signal scan complete
+    let _ = app.emit("launcher:done", ());
+
+    Ok(())
+}
+
+fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
+    if depth > 5 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path
+                .file_name()
+                .map_or(false, |n| n.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            let session_file = path.join(".twapp-session.json");
+            if session_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&session_file) {
+                    if let Ok(data) =
+                        serde_json::from_str::<crate::cli::session::SessionData>(&content)
+                    {
+                        let is_running = check_instance_running(&data.name);
+                        let message_count =
+                            count_conversation_messages(&data.session_id, &data.claude_cwd);
+                        let last_active =
+                            data.last_resumed.clone().or_else(|| Some(data.created.clone()));
+                        let _ = app.emit(
+                            "launcher:session",
+                            LauncherSession {
+                                session_id: data.session_id,
+                                name: data.name,
+                                color: data.color,
+                                ticket_key: data.ticket_key,
+                                directory: path.to_string_lossy().to_string(),
+                                claude_cwd: data.claude_cwd,
+                                last_active,
+                                created: data.created,
+                                is_running,
+                                message_count,
+                            },
+                        );
+                    }
+                }
+            }
+            scan_and_emit(app, &path, depth + 1);
+        }
+    }
+}
+
+#[tauri::command]
+async fn list_all_sessions() -> Result<LauncherResponse, String> {
+    let global_config = crate::cli::config::GlobalConfig::load()?;
+    let sessions = crate::cli::session::list_sessions(&global_config.work_directory);
+
+    let home_dir = dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let mut results = Vec::new();
+    for (data, dir) in sessions {
+        let is_running = check_instance_running(&data.name);
+        let message_count = count_conversation_messages(&data.session_id, &data.claude_cwd);
+        let last_active = data.last_resumed.clone().or_else(|| Some(data.created.clone()));
+
+        results.push(LauncherSession {
+            session_id: data.session_id,
+            name: data.name,
+            color: data.color,
+            ticket_key: data.ticket_key,
+            directory: dir.to_string_lossy().to_string(),
+            claude_cwd: data.claude_cwd,
+            last_active,
+            created: data.created,
+            is_running,
+            message_count,
+        });
+    }
+
+    Ok(LauncherResponse {
+        sessions: results,
+        home_dir,
+    })
+}
+
+#[tauri::command]
+async fn launch_session(_session_id: String, directory: String) -> Result<(), String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+
+    // If already running, focus the existing window
+    if check_instance_running(&session_data.name) {
+        let instances = dirs::home_dir()
+            .ok_or("No home directory")?
+            .join(".config/twapp/instances");
+        let safe_name = sanitize_instance_name(&session_data.name);
+        let instance_app = instances.join(format!("{}.app", safe_name));
+        std::process::Command::new("open")
+            .args(["-a", &instance_app.to_string_lossy()])
+            .spawn()
+            .map_err(|e| format!("Failed to focus: {}", e))?;
+        return Ok(());
+    }
+
+    // Update last_resumed
+    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    crate::cli::session::write_session(&work_dir, &session_data)?;
+
+    // Run health checks
+    crate::cli::session::run_health_checks(&work_dir, Some(&session_data));
+
+    // Build command (mirrors cli/mod.rs cmd_resume)
+    let cd_prefix = if !session_data.claude_cwd.is_empty()
+        && session_data.claude_cwd != work_dir.to_string_lossy()
+    {
+        format!("cd {} && ", session_data.claude_cwd)
+    } else {
+        String::new()
+    };
+    let command = format!("{}claude --resume {}", cd_prefix, session_data.session_id);
+
+    let color = if session_data.color.is_empty() {
+        crate::cli::theme::random_color().to_string()
+    } else {
+        session_data.color.clone()
+    };
+
+    // Build app args (mirrors cli/mod.rs build_and_launch)
+    let mut app_args = vec![
+        "--name".to_string(),
+        session_data.name.clone(),
+        "--color".to_string(),
+        color,
+        "--cwd".to_string(),
+        directory.clone(),
+        "--command".to_string(),
+        command,
+        "--session-id".to_string(),
+        session_data.session_id.clone(),
+    ];
+    let ticket_file = work_dir.join(".twapp-ticket.json");
+    if ticket_file.exists() {
+        app_args.push("--ticket".to_string());
+        app_args.push(ticket_file.to_string_lossy().to_string());
+    }
+
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name)?;
+    crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
+
+    Ok(())
+}
+
 pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
@@ -1040,6 +1283,9 @@ pub fn run(args: GuiArgs) {
             save_project_prompts,
             get_session_info,
             install_update,
+            scan_sessions,
+            list_all_sessions,
+            launch_session,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
