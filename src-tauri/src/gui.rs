@@ -3,6 +3,7 @@ use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use rand::Rng;
 use std::io::{Read, Write};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
@@ -93,8 +94,21 @@ fn spawn_shell(
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-l"); // Login shell
 
-    // Ensure TERM is set — GUI apps don't inherit it
-    cmd.env("TERM", "xterm-256color");
+    // Ensure TERM is set — GUI apps don't inherit it.
+    // Prefer xterm-ghostty if its terminfo is available (Ghostty terminal).
+    let term_value = if Command::new("infocmp")
+        .arg("xterm-ghostty")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        "xterm-ghostty"
+    } else {
+        "xterm-256color"
+    };
+    cmd.env("TERM", term_value);
 
     // Set working directory
     if let Some(dir) = cwd {
