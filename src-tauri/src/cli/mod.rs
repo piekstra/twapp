@@ -292,36 +292,25 @@ pub fn run(cmd: Commands) -> i32 {
     }
 }
 
-fn cmd_work(
+pub struct SessionCreationResult {
+    pub name: String,
+    pub app_args: Vec<String>,
+}
+
+/// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session)
+pub fn create_session_core(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
-) -> i32 {
-    // Require a ticket or --name
+) -> Result<SessionCreationResult, String> {
     if ticket_id.is_none() && session_name.is_none() {
-        eprintln!("Error: Provide a ticket or --name for the session.");
-        eprintln!("  twapp work MON-1234");
-        eprintln!("  twapp work --name \"My Task\"");
-        return 1;
+        return Err("Provide a ticket or session name".to_string());
     }
 
-    // Check twapp-gui app bundle exists
-    if let Err(e) = app_bundle::check_gui_installed() {
-        eprintln!("{}", e);
-        return 1;
-    }
-
-    // Load global config
-    let global_config = match config::GlobalConfig::load() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("Error loading config: {}", e);
-            return 1;
-        }
-    };
+    let global_config = config::GlobalConfig::load()?;
 
     let mut ticket_info: Option<ticket::TicketInfo> = None;
     let mut ticket_file_path: Option<std::path::PathBuf> = None;
@@ -333,16 +322,11 @@ fn cmd_work(
     let dir_already_existed;
 
     if let Some(ref tid) = ticket_id {
-        // Resolve ticket
         let is_github = tid.contains('#') || github;
 
         let fetched = if is_github {
-            ticket::fetch_github_issue(
-                tid,
-                global_config.github_repo.as_deref(),
-            )
+            ticket::fetch_github_issue(tid, global_config.github_repo.as_deref())
         } else {
-            // Bare number → prepend jira project
             let resolved_key = if tid.chars().all(|c| c.is_ascii_digit()) {
                 if let Some(ref proj) = global_config.jira_project {
                     format!("{}-{}", proj, tid)
@@ -357,22 +341,14 @@ fn cmd_work(
 
         let ti = match fetched {
             Some(t) => t,
-            None => return 1,
+            None => return Err(format!("Failed to fetch ticket: {}", tid)),
         };
-
-        println!("Ticket: {} - {}", ti.key, ti.title);
-        println!("Status: {}  Type: {}", ti.status, ti.r#type);
 
         let dir_name = ti.key.replace('/', "-").replace('#', "-");
         work_dir = global_config.work_directory.join(&dir_name);
         dir_already_existed = work_dir.exists();
-        if let Err(e) = std::fs::create_dir_all(&work_dir) {
-            eprintln!("Error creating directory: {}", e);
-            return 1;
-        }
-        println!("Directory: {}", work_dir.display());
+        std::fs::create_dir_all(&work_dir).map_err(|e| format!("Error creating directory: {}", e))?;
 
-        // Write ticket file
         let tf = work_dir.join(".twapp-ticket.json");
         if let Ok(json) = serde_json::to_string_pretty(&ti) {
             let _ = std::fs::write(&tf, json);
@@ -384,7 +360,6 @@ fn cmd_work(
         }
         ticket_info = Some(ti);
     } else {
-        // Named session, no ticket
         let name = session_name.as_deref().unwrap();
         let dir_name: String = name
             .chars()
@@ -394,23 +369,21 @@ fn cmd_work(
             .replace(|c: char| c.is_whitespace() || c == '_', "-");
         work_dir = global_config.work_directory.join(&dir_name);
         dir_already_existed = work_dir.exists();
-        if let Err(e) = std::fs::create_dir_all(&work_dir) {
-            eprintln!("Error creating directory: {}", e);
-            return 1;
-        }
-        println!("Directory: {}", work_dir.display());
+        std::fs::create_dir_all(&work_dir).map_err(|e| format!("Error creating directory: {}", e))?;
     }
 
-    // Health checks
     session::run_health_checks(&work_dir, None);
 
-    // Session ID — always generate a new one (fork gets its own identity)
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    // Color
-    let color = theme::random_color().to_string();
+    // Color: respect user preference
+    let color_pref = config::get_session_color_preference();
+    let color = if color_pref == "random" {
+        theme::random_color().to_string()
+    } else {
+        color_pref
+    };
 
-    // Claude CWD (for migration, may differ from work_dir)
     let claude_cwd = claude_cwd_arg
         .map(|p| {
             std::path::PathBuf::from(&p)
@@ -421,7 +394,6 @@ fn cmd_work(
         })
         .unwrap_or_else(|| work_dir.to_string_lossy().to_string());
 
-    // Write session file
     let session_data = session::SessionData {
         session_id: session_id.clone(),
         name: window_name.clone(),
@@ -432,12 +404,8 @@ fn cmd_work(
         last_resumed: None,
         forked_from: fork_session_id.clone(),
     };
-    if let Err(e) = session::write_session(&work_dir, &session_data) {
-        eprintln!("Error: {}", e);
-        return 1;
-    }
+    session::write_session(&work_dir, &session_data)?;
 
-    // Build the claude command
     let command = if let Some(ref custom) = run_command {
         custom.clone()
     } else if let Some(ref old_id) = fork_session_id {
@@ -454,7 +422,6 @@ fn cmd_work(
         format!("claude --session-id {}", session_id)
     };
 
-    // Build prefill (only for new sessions with ticket in existing dir)
     let prefill = if let Some(ref ti) = ticket_info {
         if dir_already_existed {
             Some(format!("I'm working on {}: {}.", ti.key, ti.title))
@@ -465,18 +432,17 @@ fn cmd_work(
         None
     };
 
-    // Build app args
     let mut app_args = vec![
         "--name".to_string(),
         window_name.clone(),
         "--color".to_string(),
-        color.clone(),
+        color,
         "--cwd".to_string(),
         work_dir.to_string_lossy().to_string(),
         "--command".to_string(),
         command,
         "--session-id".to_string(),
-        session_id.clone(),
+        session_id,
     ];
     if let Some(ref pf) = prefill {
         app_args.push("--prefill".to_string());
@@ -487,8 +453,41 @@ fn cmd_work(
         app_args.push(tf.to_string_lossy().to_string());
     }
 
-    // Prepare instance app + launch
-    let instance_app = match app_bundle::prepare_instance_app(&window_name) {
+    Ok(SessionCreationResult {
+        name: window_name,
+        app_args,
+    })
+}
+
+fn cmd_work(
+    ticket_id: Option<String>,
+    session_name: Option<String>,
+    run_command: Option<String>,
+    github: bool,
+    fork_session_id: Option<String>,
+    claude_cwd_arg: Option<String>,
+) -> i32 {
+    if ticket_id.is_none() && session_name.is_none() {
+        eprintln!("Error: Provide a ticket or --name for the session.");
+        eprintln!("  twapp work MON-1234");
+        eprintln!("  twapp work --name \"My Task\"");
+        return 1;
+    }
+
+    if let Err(e) = app_bundle::check_gui_installed() {
+        eprintln!("{}", e);
+        return 1;
+    }
+
+    let result = match create_session_core(ticket_id, session_name, run_command, github, fork_session_id, claude_cwd_arg) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    let instance_app = match app_bundle::prepare_instance_app(&result.name) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error preparing app instance: {}", e);
@@ -496,9 +495,9 @@ fn cmd_work(
         }
     };
 
-    println!("Launching twapp-gui with theme {}...", color);
+    println!("Launching twapp-gui...");
 
-    if let Err(e) = app_bundle::launch_gui(&instance_app, &app_args) {
+    if let Err(e) = app_bundle::launch_gui(&instance_app, &result.app_args) {
         eprintln!("Error: {}", e);
         return 1;
     }

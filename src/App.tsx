@@ -12,7 +12,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
-import { applyThemeColor } from "./color";
+import { applyThemeColor, getDarkModeAccentColor } from "./color";
 
 interface AppConfig {
   name: string;
@@ -131,6 +131,8 @@ interface LauncherResponse {
 
 type SortMode = "recent" | "alpha";
 
+type LauncherView = "sessions" | "settings" | "new-session";
+
 function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [sessions, setSessions] = useState<LauncherSession[]>([]);
   const [homeDir, setHomeDir] = useState("");
@@ -140,6 +142,28 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [themeMode, setThemeMode] = useState<"light" | "dark" | "system">("system");
   const [scanning, setScanning] = useState(true);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
+  const [launcherView, setLauncherView] = useState<LauncherView>("sessions");
+  const [settingsTab, setSettingsTab] = useState<"general" | "prompts" | "permissions">("general");
+
+  // New session form
+  const [newSessionTicket, setNewSessionTicket] = useState("");
+  const [newSessionName, setNewSessionName] = useState("");
+  const [newSessionGithub, setNewSessionGithub] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Settings state
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [configWorkDir, setConfigWorkDir] = useState("");
+  const [configJiraProject, setConfigJiraProject] = useState("");
+  const [configGithubRepo, setConfigGithubRepo] = useState("");
+  const [sessionColorPref, setSessionColorPref] = useState("random");
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [newPermission, setNewPermission] = useState("");
+  const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
+  const [editingSection, setEditingSection] = useState<{ id: string | null; title: string } | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
+  const [copiedColor, setCopiedColor] = useState<string | null>(null);
 
   // Streaming initial load — each session appears as it's discovered
   useEffect(() => {
@@ -266,6 +290,26 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
     return () => mediaQuery.removeEventListener("change", applyTheme);
   }, [themeMode]);
 
+  // Load settings data on first navigation to settings
+  useEffect(() => {
+    if (launcherView !== "settings" || settingsLoaded) return;
+    invoke<{ work_directory: string; jira_project: string | null; github_repo: string | null; session_color: string }>("get_global_config")
+      .then((cfg) => {
+        setConfigWorkDir(cfg.work_directory);
+        setConfigJiraProject(cfg.jira_project || "");
+        setConfigGithubRepo(cfg.github_repo || "");
+        setSessionColorPref(cfg.session_color || "random");
+      })
+      .catch((e) => console.error("Failed to load config:", e));
+    invoke<string[]>("get_default_permissions")
+      .then((perms) => setPermissions(perms))
+      .catch((e) => console.error("Failed to load permissions:", e));
+    invoke<PromptStore>("load_global_prompts")
+      .then((store) => setGlobalPrompts(store || { sections: [] }))
+      .catch((e) => console.error("Failed to load global prompts:", e));
+    setSettingsLoaded(true);
+  }, [launcherView, settingsLoaded]);
+
   const filteredSessions = useMemo(() => {
     if (!searchQuery.trim()) return sessions;
     const q = searchQuery.toLowerCase();
@@ -369,59 +413,571 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
     });
   };
 
+  // --- Settings handlers ---
+  const handleSaveConfig = async (field: string, value: string) => {
+    try {
+      const args: Record<string, string | null> = {
+        workDirectory: field === "work_directory" ? value : null,
+        jiraProject: field === "jira_project" ? value : null,
+        githubRepo: field === "github_repo" ? value : null,
+      };
+      await invoke("save_global_config", args);
+    } catch (e) {
+      console.error("Failed to save config:", e);
+    }
+  };
+
+  const handleSetSessionColor = async (color: string) => {
+    setSessionColorPref(color);
+    try {
+      await invoke("set_session_color_preference", { mode: color });
+    } catch (e) {
+      console.error("Failed to save color preference:", e);
+    }
+  };
+
+  const handleSetTheme = async (mode: "light" | "dark" | "system") => {
+    setThemeMode(mode);
+    try {
+      await invoke("set_theme_preference", { mode });
+    } catch (e) {
+      console.error("Failed to save theme:", e);
+    }
+  };
+
+  const handleAddPermission = async () => {
+    const pattern = newPermission.trim();
+    if (!pattern) return;
+    try {
+      const updated = await invoke<string[]>("add_default_permission", { pattern });
+      setPermissions(updated);
+      setNewPermission("");
+    } catch (e) {
+      console.error("Failed to add permission:", e);
+    }
+  };
+
+  const handleRemovePermission = async (pattern: string) => {
+    try {
+      const updated = await invoke<string[]>("remove_default_permission", { pattern });
+      setPermissions(updated);
+    } catch (e) {
+      console.error("Failed to remove permission:", e);
+    }
+  };
+
+  const saveGlobalPrompts = async (store: PromptStore) => {
+    setGlobalPrompts(store);
+    try {
+      await invoke("save_global_prompts", { data: store });
+    } catch (e) {
+      console.error("Failed to save global prompts:", e);
+    }
+  };
+
+  const handleAddPromptSection = () => {
+    setEditingSection({ id: null, title: "" });
+  };
+
+  const handleSavePromptSection = () => {
+    if (!editingSection || !editingSection.title.trim()) return;
+    const store = { ...globalPrompts };
+    if (editingSection.id) {
+      store.sections = store.sections.map((s) =>
+        s.id === editingSection.id ? { ...s, title: editingSection.title.trim() } : s
+      );
+    } else {
+      store.sections = [...store.sections, { id: crypto.randomUUID(), title: editingSection.title.trim(), prompts: [] }];
+    }
+    saveGlobalPrompts(store);
+    setEditingSection(null);
+  };
+
+  const handleDeletePromptSection = (sectionId: string) => {
+    const store = { ...globalPrompts, sections: globalPrompts.sections.filter((s) => s.id !== sectionId) };
+    saveGlobalPrompts(store);
+  };
+
+  const handleSavePrompt = () => {
+    if (!editingPrompt || !editingPrompt.title.trim() || !editingPrompt.text.trim()) return;
+    const store = { ...globalPrompts };
+    store.sections = store.sections.map((s) => {
+      if (s.id !== editingPrompt.sectionId) return s;
+      if (editingPrompt.promptId) {
+        return { ...s, prompts: s.prompts.map((p) =>
+          p.id === editingPrompt.promptId ? { ...p, title: editingPrompt.title.trim(), text: editingPrompt.text.trim() } : p
+        )};
+      } else {
+        return { ...s, prompts: [...s.prompts, { id: crypto.randomUUID(), title: editingPrompt.title.trim(), text: editingPrompt.text.trim() }] };
+      }
+    });
+    saveGlobalPrompts(store);
+    setEditingPrompt(null);
+  };
+
+  const handleDeletePrompt = (sectionId: string, promptId: string) => {
+    const store = { ...globalPrompts };
+    store.sections = store.sections.map((s) =>
+      s.id === sectionId ? { ...s, prompts: s.prompts.filter((p) => p.id !== promptId) } : s
+    );
+    saveGlobalPrompts(store);
+  };
+
+  const handleCreateSession = async () => {
+    const ticket = newSessionTicket.trim();
+    const name = newSessionName.trim();
+    if (!ticket && !name) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await invoke("create_and_launch_session", {
+        ticket: ticket || null,
+        name: name || null,
+        github: newSessionGithub,
+      });
+      setLauncherView("sessions");
+      setNewSessionTicket("");
+      setNewSessionName("");
+      setNewSessionGithub(false);
+      setTimeout(loadSessions, 1000);
+    } catch (e) {
+      setCreateError(String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleCopyColor = (hex: string) => {
+    navigator.clipboard.writeText(hex).then(() => {
+      setCopiedColor(hex);
+      setTimeout(() => setCopiedColor(null), 1500);
+    });
+  };
+
+  // Color palette for settings UI
+  const colorPalette = [
+    { hex: "#ffe0e0", name: "Rose" },
+    { hex: "#e0e8ff", name: "Cornflower" },
+    { hex: "#e0ffe0", name: "Mint" },
+    { hex: "#fff0e0", name: "Peach" },
+    { hex: "#f0e0ff", name: "Lavender" },
+    { hex: "#e0ffff", name: "Seafoam" },
+    { hex: "#fef3c7", name: "Lemon" },
+    { hex: "#e8d8cc", name: "Cappuccino" },
+    { hex: "#e8f0e0", name: "Sage" },
+  ];
+
+  const renderSettings = () => (
+    <div className="launcher-settings">
+      <div className="launcher-settings-tabs">
+        <button className={`launcher-settings-tab${settingsTab === "general" ? " active" : ""}`} onClick={() => setSettingsTab("general")}>General</button>
+        <button className={`launcher-settings-tab${settingsTab === "prompts" ? " active" : ""}`} onClick={() => setSettingsTab("prompts")}>Prompts</button>
+        <button className={`launcher-settings-tab${settingsTab === "permissions" ? " active" : ""}`} onClick={() => setSettingsTab("permissions")}>Permissions</button>
+      </div>
+
+      <div className="launcher-settings-content">
+        {settingsTab === "general" && (
+          <>
+            {/* Appearance */}
+            <div className="launcher-settings-section">
+              <div className="launcher-settings-section-header">Appearance</div>
+              <div className="launcher-settings-field">
+                <label>Theme</label>
+                <div className="launcher-sort">
+                  <button className={`launcher-sort-btn${themeMode === "light" ? " active" : ""}`} onClick={() => handleSetTheme("light")}>Light</button>
+                  <button className={`launcher-sort-btn${themeMode === "dark" ? " active" : ""}`} onClick={() => handleSetTheme("dark")}>Dark</button>
+                  <button className={`launcher-sort-btn${themeMode === "system" ? " active" : ""}`} onClick={() => handleSetTheme("system")}>System</button>
+                </div>
+              </div>
+              <div className="launcher-settings-field">
+                <label>Session Color</label>
+                <div className="launcher-color-grid">
+                  <div
+                    className={`launcher-color-swatch random${sessionColorPref === "random" ? " selected" : ""}`}
+                    onClick={() => handleSetSessionColor("random")}
+                    title="Random color for each new session"
+                  >
+                    <div className="launcher-color-circle random-icon">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 10l3-3m0 0l3 3m-3-3v8" /><path d="M9 6l3 3m0 0l3-3m-3 3V1" />
+                      </svg>
+                    </div>
+                    <span className="launcher-color-name">Random</span>
+                  </div>
+                  {colorPalette.map(({ hex, name }) => {
+                    const darkHex = getDarkModeAccentColor(hex);
+                    return (
+                      <div
+                        key={hex}
+                        className={`launcher-color-swatch${sessionColorPref === hex ? " selected" : ""}`}
+                        onClick={() => handleSetSessionColor(hex)}
+                        title={`${name} — Light: ${hex}, Dark: ${darkHex}`}
+                      >
+                        <div className="launcher-color-split">
+                          <div className="launcher-color-half light" style={{ backgroundColor: hex }} />
+                          <div className="launcher-color-half dark" style={{ backgroundColor: darkHex }} />
+                        </div>
+                        <span className="launcher-color-name">{name}</span>
+                        <div className="launcher-color-hexes">
+                          <span
+                            className="launcher-color-hex"
+                            onClick={(e) => { e.stopPropagation(); handleCopyColor(hex); }}
+                            title="Light mode — click to copy"
+                          >
+                            {copiedColor === hex ? "Copied!" : hex}
+                          </span>
+                          <span
+                            className="launcher-color-hex dark"
+                            onClick={(e) => { e.stopPropagation(); handleCopyColor(darkHex); }}
+                            title="Dark mode — click to copy"
+                          >
+                            {copiedColor === darkHex ? "Copied!" : darkHex}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Config */}
+            <div className="launcher-settings-section">
+              <div className="launcher-settings-section-header">Configuration</div>
+              <div className="launcher-settings-field">
+                <label>Work Directory</label>
+                <input
+                  type="text"
+                  value={configWorkDir}
+                  onChange={(e) => setConfigWorkDir(e.target.value)}
+                  onBlur={() => handleSaveConfig("work_directory", configWorkDir)}
+                  placeholder="~/Dev"
+                />
+              </div>
+              <div className="launcher-settings-field">
+                <label>Jira Project</label>
+                <input
+                  type="text"
+                  value={configJiraProject}
+                  onChange={(e) => setConfigJiraProject(e.target.value)}
+                  onBlur={() => handleSaveConfig("jira_project", configJiraProject)}
+                  placeholder="MON"
+                />
+              </div>
+              <div className="launcher-settings-field">
+                <label>GitHub Repo</label>
+                <input
+                  type="text"
+                  value={configGithubRepo}
+                  onChange={(e) => setConfigGithubRepo(e.target.value)}
+                  onBlur={() => handleSaveConfig("github_repo", configGithubRepo)}
+                  placeholder="owner/repo"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {settingsTab === "prompts" && (
+          <div className="launcher-settings-section">
+            <div className="launcher-settings-section-header">
+              Global Quick Prompts
+              <button className="launcher-settings-add-btn" onClick={handleAddPromptSection}>+ Section</button>
+            </div>
+            <p className="launcher-settings-hint">
+              Reusable prompts that appear in every session's sidebar. Organize them into sections.
+            </p>
+            {editingSection && !editingSection.id && (
+              <div className="launcher-prompt-edit-row">
+                <input
+                  type="text"
+                  value={editingSection.title}
+                  onChange={(e) => setEditingSection({ ...editingSection, title: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && handleSavePromptSection()}
+                  placeholder="Section name"
+                  autoFocus
+                />
+                <button onClick={handleSavePromptSection} disabled={!editingSection.title.trim()}>Save</button>
+                <button onClick={() => setEditingSection(null)}>Cancel</button>
+              </div>
+            )}
+            {globalPrompts.sections.map((section) => (
+              <div key={section.id} className="launcher-prompt-section">
+                <div className="launcher-prompt-section-header">
+                  {editingSection?.id === section.id ? (
+                    <div className="launcher-prompt-edit-row">
+                      <input
+                        type="text"
+                        value={editingSection.title}
+                        onChange={(e) => setEditingSection({ ...editingSection, title: e.target.value })}
+                        onKeyDown={(e) => e.key === "Enter" && handleSavePromptSection()}
+                        autoFocus
+                      />
+                      <button onClick={handleSavePromptSection} disabled={!editingSection.title.trim()}>Save</button>
+                      <button onClick={() => setEditingSection(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="launcher-prompt-section-title">{section.title}</span>
+                      <div className="launcher-prompt-section-actions">
+                        <button onClick={() => setEditingSection({ id: section.id, title: section.title })} title="Rename">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M8.5 1.5l2 2L4 10H2v-2z" /></svg>
+                        </button>
+                        <button onClick={() => setEditingPrompt({ sectionId: section.id, promptId: null, title: "", text: "" })} title="Add prompt">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 2v8M2 6h8" /></svg>
+                        </button>
+                        <button onClick={() => handleDeletePromptSection(section.id)} title="Delete section">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {editingPrompt?.sectionId === section.id && !editingPrompt.promptId && (
+                  <div className="launcher-prompt-edit-form">
+                    <input
+                      type="text"
+                      value={editingPrompt.title}
+                      onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                      placeholder="Prompt title"
+                      autoFocus
+                    />
+                    <textarea
+                      value={editingPrompt.text}
+                      onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                      placeholder="Prompt text"
+                      rows={3}
+                    />
+                    <div className="launcher-prompt-edit-actions">
+                      <button onClick={handleSavePrompt} disabled={!editingPrompt.title.trim() || !editingPrompt.text.trim()}>Save</button>
+                      <button onClick={() => setEditingPrompt(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+                {section.prompts.map((prompt) => (
+                  <div key={prompt.id} className="launcher-prompt-item">
+                    {editingPrompt?.promptId === prompt.id ? (
+                      <div className="launcher-prompt-edit-form">
+                        <input
+                          type="text"
+                          value={editingPrompt.title}
+                          onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                          autoFocus
+                        />
+                        <textarea
+                          value={editingPrompt.text}
+                          onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
+                          rows={3}
+                        />
+                        <div className="launcher-prompt-edit-actions">
+                          <button onClick={handleSavePrompt} disabled={!editingPrompt.title.trim() || !editingPrompt.text.trim()}>Save</button>
+                          <button onClick={() => setEditingPrompt(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="launcher-prompt-title">{prompt.title}</span>
+                        <div className="launcher-prompt-actions">
+                          <button onClick={() => setEditingPrompt({ sectionId: section.id, promptId: prompt.id, title: prompt.title, text: prompt.text })} title="Edit">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M8.5 1.5l2 2L4 10H2v-2z" /></svg>
+                          </button>
+                          <button onClick={() => handleDeletePrompt(section.id, prompt.id)} title="Delete">
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {section.prompts.length === 0 && !editingPrompt?.sectionId && (
+                  <div className="launcher-prompt-empty">No prompts in this section</div>
+                )}
+              </div>
+            ))}
+            {globalPrompts.sections.length === 0 && !editingSection && (
+              <div className="launcher-permission-empty">No global quick prompts configured</div>
+            )}
+          </div>
+        )}
+
+        {settingsTab === "permissions" && (
+          <div className="launcher-settings-section">
+            <div className="launcher-settings-section-header">Default Permissions ({permissions.length})</div>
+            <p className="launcher-settings-hint">
+              Claude tool permissions that are automatically applied to every new session.
+              Patterns like <code>Bash(gh:*)</code> allow Claude to run matching commands without asking.
+            </p>
+            <div className="launcher-permission-add">
+              <input
+                type="text"
+                value={newPermission}
+                onChange={(e) => setNewPermission(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddPermission()}
+                placeholder="Bash(gh:*)"
+              />
+              <button onClick={handleAddPermission} disabled={!newPermission.trim()}>Add</button>
+            </div>
+            <div className="launcher-permission-list">
+              {[...permissions].sort().map((perm) => (
+                <div key={perm} className="launcher-permission-item">
+                  <span className="launcher-permission-text">{perm}</span>
+                  <button className="launcher-permission-remove" onClick={() => handleRemovePermission(perm)} title="Remove">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+                  </button>
+                </div>
+              ))}
+              {permissions.length === 0 && <div className="launcher-permission-empty">No default permissions configured</div>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="launcher">
       <div className="launcher-header">
         <div className="launcher-title">
-          <h1>twapp</h1>
-          {appVersion && <span className="launcher-version">v{appVersion}</span>}
-        </div>
-        <div className="launcher-search">
-          <input
-            type="text"
-            placeholder="Search sessions..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            autoFocus
-          />
-        </div>
-        <div className="launcher-status">
-          <div className="launcher-status-left">
-            {scanning ? (
-              <>
-                <div className="launcher-spinner small" />
-                <span>Scanning... {sessions.length > 0 ? `${sessions.length} found` : ""}</span>
-              </>
-            ) : (
-              <>
-                <span>{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
-                <button className="launcher-rescan" onClick={handleRescan} title="Rescan (Cmd+R)">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 1v5h5" /><path d="M1.5 10A7 7 0 1 0 3 4.3L1 6" />
-                  </svg>
-                </button>
-              </>
+          {launcherView !== "sessions" ? (
+            <>
+              <button className="launcher-back-btn" onClick={() => setLauncherView("sessions")} title="Back to sessions">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 2L4 8l6 6" />
+                </svg>
+              </button>
+              <h1>{launcherView === "settings" ? "Settings" : "New Session"}</h1>
+            </>
+          ) : (
+            <>
+              <h1>twapp</h1>
+              {appVersion && <span className="launcher-version">v{appVersion}</span>}
+            </>
+          )}
+          <div className="launcher-header-actions">
+            {launcherView === "sessions" && (
+              <button
+                className="launcher-action-btn"
+                onClick={() => setLauncherView("new-session")}
+                title="New session"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M8 2v12M2 8h12" />
+                </svg>
+              </button>
             )}
-          </div>
-          <div className="launcher-sort">
             <button
-              className={`launcher-sort-btn${sortMode === "recent" ? " active" : ""}`}
-              onClick={() => setSortMode("recent")}
-              title="Sort by recent"
+              className={`launcher-action-btn${launcherView === "settings" ? " active" : ""}`}
+              onClick={() => setLauncherView(launcherView === "settings" ? "sessions" : "settings")}
+              title="Settings"
             >
-              Recent
-            </button>
-            <button
-              className={`launcher-sort-btn${sortMode === "alpha" ? " active" : ""}`}
-              onClick={() => setSortMode("alpha")}
-              title="Sort alphabetically"
-            >
-              A-Z
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="8" r="2" /><path d="M8 1v2m0 10v2M1 8h2m10 0h2M2.9 2.9l1.4 1.4m7.4 7.4l1.4 1.4M13.1 2.9l-1.4 1.4M4.3 11.7l-1.4 1.4" />
+              </svg>
             </button>
           </div>
         </div>
+        {launcherView === "sessions" && (
+          <>
+            <div className="launcher-search">
+              <input
+                type="text"
+                placeholder="Search sessions..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="launcher-status">
+              <div className="launcher-status-left">
+                {scanning ? (
+                  <>
+                    <div className="launcher-spinner small" />
+                    <span>Scanning... {sessions.length > 0 ? `${sessions.length} found` : ""}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
+                    <button className="launcher-rescan" onClick={handleRescan} title="Rescan (Cmd+R)">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 1v5h5" /><path d="M1.5 10A7 7 0 1 0 3 4.3L1 6" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="launcher-sort">
+                <button
+                  className={`launcher-sort-btn${sortMode === "recent" ? " active" : ""}`}
+                  onClick={() => setSortMode("recent")}
+                  title="Sort by recent"
+                >
+                  Recent
+                </button>
+                <button
+                  className={`launcher-sort-btn${sortMode === "alpha" ? " active" : ""}`}
+                  onClick={() => setSortMode("alpha")}
+                  title="Sort alphabetically"
+                >
+                  A-Z
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
+      {launcherView === "settings" ? renderSettings() : launcherView === "new-session" ? (
+      <div className="launcher-new-session">
+        <p className="launcher-settings-hint">
+          Create a new work session and launch it immediately. Provide a ticket to auto-fetch details, or just a name.
+        </p>
+        <div className="launcher-new-session-fields">
+          <div className="launcher-settings-field">
+            <label>Ticket</label>
+            <input
+              type="text"
+              value={newSessionTicket}
+              onChange={(e) => setNewSessionTicket(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
+              placeholder="MON-1234 or owner/repo#42"
+              autoFocus
+            />
+          </div>
+          <div className="launcher-settings-field">
+            <label>Name <span className="launcher-field-hint">(optional if ticket provided)</span></label>
+            <input
+              type="text"
+              value={newSessionName}
+              onChange={(e) => setNewSessionName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
+              placeholder="Session name"
+            />
+          </div>
+          <label className="launcher-checkbox-field">
+            <input
+              type="checkbox"
+              checked={newSessionGithub}
+              onChange={(e) => setNewSessionGithub(e.target.checked)}
+            />
+            <span>GitHub issue</span>
+          </label>
+        </div>
+        {createError && <div className="launcher-create-error">{createError}</div>}
+        <div className="launcher-new-session-actions">
+          <button
+            className="launcher-create-btn"
+            onClick={handleCreateSession}
+            disabled={creating || (!newSessionTicket.trim() && !newSessionName.trim())}
+          >
+            {creating ? (
+              <><div className="launcher-spinner small" /> Creating...</>
+            ) : (
+              "Create & Launch"
+            )}
+          </button>
+        </div>
+      </div>
+      ) : (
       <div className="launcher-list">
         {loading && sessions.length === 0 ? (
           <div className="launcher-empty">
@@ -473,6 +1029,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
           ))
         )}
       </div>
+      )}
     </div>
   );
 }

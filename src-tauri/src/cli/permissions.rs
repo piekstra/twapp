@@ -19,7 +19,7 @@ pub fn load_default_permissions() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn save_default_permissions(perms: &[String]) -> Result<(), String> {
+pub fn save_default_permissions(perms: &[String]) -> Result<(), String> {
     let path = default_permissions_file();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -210,4 +210,23 @@ pub fn cmd_sync(dir: Option<&str>) -> i32 {
             1
         }
     }
+}
+
+/// GUI-friendly: adds a permission and returns the updated list
+pub fn add_permission(pattern: &str) -> Result<Vec<String>, String> {
+    let mut perms = load_default_permissions();
+    if perms.contains(&pattern.to_string()) {
+        return Ok(perms);
+    }
+    perms.push(pattern.to_string());
+    save_default_permissions(&perms)?;
+    Ok(perms)
+}
+
+/// GUI-friendly: removes a permission and returns the updated list
+pub fn remove_permission(pattern: &str) -> Result<Vec<String>, String> {
+    let perms = load_default_permissions();
+    let remaining: Vec<String> = perms.into_iter().filter(|p| p != pattern).collect();
+    save_default_permissions(&remaining)?;
+    Ok(remaining)
 }

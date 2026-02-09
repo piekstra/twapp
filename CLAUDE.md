@@ -30,13 +30,20 @@ When to use each:
 
 **Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
 
+**Launcher Settings**: Gear icon in launcher header switches to settings view with three tabs:
+- **General** — theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo. Auto-saves on blur.
+- **Prompts** — global quick prompt management (add/edit/remove sections and prompts). Same data as `~/.config/twapp/quick-prompts.json`.
+- **Permissions** — default Claude permission CRUD. Same data as `~/.config/twapp/default-permissions.json`.
+
+**New Session (GUI)**: "+" button in launcher header opens a dedicated form to create and launch a session (ticket key or name). Uses `create_session_core()` — shared logic extracted from `cmd_work` — so CLI and GUI session creation stay in sync. Respects the session color preference.
+
 ## Architecture
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
 
 - **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app with sidebar panels
-- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher
-- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.)
+- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher, settings, permissions, session creation
+- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.). `create_session_core()` in `mod.rs` is shared between CLI and GUI.
 - **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
 - **Config**: `src-tauri/tauri.conf.json`
 
@@ -82,3 +89,5 @@ npx tsc --noEmit
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
 - **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
 - **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
+- **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
+- **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `App.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.

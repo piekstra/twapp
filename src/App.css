@@ -2116,3 +2116,642 @@ a.file-link {
   to { transform: rotate(360deg); }
 }
 
+/* ---- Launcher Header Actions ---- */
+
+.launcher-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.launcher-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.launcher-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.launcher-action-btn.active {
+  color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.launcher-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  margin-right: 4px;
+}
+
+.launcher-back-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+/* ---- Launcher Settings ---- */
+
+.launcher-settings {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.launcher-settings-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.launcher-settings-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-bottom: -1px;
+}
+
+.launcher-settings-tab:hover {
+  color: var(--text-primary);
+}
+
+.launcher-settings-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.launcher-settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+}
+
+.launcher-settings-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+
+.launcher-settings-hint code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+  background: var(--bg-secondary);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.launcher-settings-section {
+  margin-bottom: 24px;
+}
+
+.launcher-settings-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.launcher-settings-add-btn {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.launcher-settings-add-btn:hover {
+  background: var(--bg-secondary);
+}
+
+.launcher-settings-field {
+  margin-bottom: 12px;
+}
+
+.launcher-settings-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.launcher-settings-field input[type="text"] {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.launcher-settings-field input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.launcher-settings-field input[type="text"]::placeholder {
+  color: var(--text-muted);
+}
+
+.launcher-field-hint {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ---- Color Swatches ---- */
+
+.launcher-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.launcher-color-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.launcher-color-swatch:hover {
+  background: var(--bg-secondary);
+}
+
+.launcher-color-swatch.selected {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.launcher-color-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+}
+
+.launcher-color-circle.random-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.launcher-color-split {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  display: flex;
+}
+
+.launcher-color-half {
+  width: 50%;
+  height: 100%;
+}
+
+.launcher-color-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.launcher-color-hexes {
+  display: flex;
+  gap: 2px;
+}
+
+.launcher-color-hex {
+  font-size: 9px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.launcher-color-hex:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.launcher-color-hex.dark {
+  opacity: 0.7;
+}
+
+/* ---- Permissions ---- */
+
+.launcher-permission-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.launcher-permission-add input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  outline: none;
+}
+
+.launcher-permission-add input:focus {
+  border-color: var(--accent);
+}
+
+.launcher-permission-add input::placeholder {
+  color: var(--text-muted);
+}
+
+.launcher-permission-add button {
+  padding: 6px 12px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.launcher-permission-add button:hover {
+  opacity: 0.85;
+}
+
+.launcher-permission-add button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.launcher-permission-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launcher-permission-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background 0.1s ease;
+}
+
+.launcher-permission-item:hover {
+  background: var(--bg-secondary);
+}
+
+.launcher-permission-text {
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--text-primary);
+}
+
+.launcher-permission-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.launcher-permission-item:hover .launcher-permission-remove {
+  opacity: 1;
+}
+
+.launcher-permission-remove:hover {
+  color: var(--danger);
+  background: var(--bg-secondary);
+}
+
+.launcher-permission-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 10px;
+}
+
+/* ---- Global Prompts in Settings ---- */
+
+.launcher-prompt-section {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.launcher-prompt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.launcher-prompt-section-title {
+  flex: 1;
+}
+
+.launcher-prompt-section-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.launcher-prompt-section-header:hover .launcher-prompt-section-actions {
+  opacity: 1;
+}
+
+.launcher-prompt-section-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.launcher-prompt-section-actions button:hover {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.launcher-prompt-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.launcher-prompt-title {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.launcher-prompt-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.launcher-prompt-item:hover .launcher-prompt-actions {
+  opacity: 1;
+}
+
+.launcher-prompt-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.launcher-prompt-actions button:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.launcher-prompt-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.launcher-prompt-edit-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.launcher-prompt-edit-row input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.launcher-prompt-edit-row input:focus {
+  border-color: var(--accent);
+}
+
+.launcher-prompt-edit-row button {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.launcher-prompt-edit-row button:first-of-type {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.launcher-prompt-edit-row button:disabled {
+  opacity: 0.5;
+}
+
+.launcher-prompt-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.launcher-prompt-edit-form input,
+.launcher-prompt-edit-form textarea {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.launcher-prompt-edit-form input:focus,
+.launcher-prompt-edit-form textarea:focus {
+  border-color: var(--accent);
+}
+
+.launcher-prompt-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.launcher-prompt-edit-actions button {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.launcher-prompt-edit-actions button:first-child {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.launcher-prompt-edit-actions button:disabled {
+  opacity: 0.5;
+}
+
+/* ---- New Session View ---- */
+
+.launcher-new-session {
+  flex: 1;
+  padding: 16px 24px 24px;
+  overflow-y: auto;
+}
+
+.launcher-new-session-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.launcher-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.launcher-checkbox-field input[type="checkbox"] {
+  margin: 0;
+}
+
+.launcher-create-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 6px 0;
+}
+
+.launcher-new-session-actions {
+  margin-top: 20px;
+}
+
+.launcher-create-btn {
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.launcher-create-btn:hover {
+  opacity: 0.85;
+}
+
+.launcher-create-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+

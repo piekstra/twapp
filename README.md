@@ -19,7 +19,7 @@ A structured terminal companion for Claude coding sessions — with notes, ticke
 - **Ticket context** — link a Jira ticket or GitHub issue. Title, status, description stay visible in the sidebar.
 - **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
 - **Two-way Claude integration** — Claude reads your session and manages twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
-- **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click.
+- **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click. Create new sessions, manage settings, and configure permissions — all from the launcher.
 - **In-app updates** — checks automatically, shows release notes, one-click update.
 - **Default permissions** — set Claude permissions once, auto-apply to every new session.
 
@@ -93,8 +93,19 @@ Open **twapp** from Spotlight (or just run the app with no arguments) to see eve
 - **Details** — directory path, last active time, conversation message count
 - **One-click launch** — click to open a session, or focus it if already running
 - **Rescan** — Cmd+R or the refresh button to re-scan for new sessions
+- **New session** — create and launch sessions from the UI (ticket key or name, same as `twapp work`)
 
 The launcher streams results progressively as directories are scanned, refreshes automatically when visible, and pauses when the window is hidden to save resources.
+
+### Launcher Settings
+
+The launcher doubles as the central settings hub. Click the gear icon to access:
+
+- **General** — theme (light/dark/system), session color preference (random or a specific color from the palette), work directory, Jira project, and GitHub repo
+- **Prompts** — manage global quick prompts (sections and prompts) directly from the launcher
+- **Permissions** — view, add, and remove default Claude permission patterns
+
+Session colors show split-circle previews with both light and dark mode variants so you know what you're picking.
 
 ### Permissions Management
 
@@ -242,6 +253,8 @@ twapp install-gui /tmp/twapp.app
 ### Global Config (`~/.config/twapp/config.yaml`)
 
 ```yaml
+theme: system          # light | dark | system
+session_color: random  # random | hex (e.g. "#ffe0e0")
 defaults:
   work_directory: ~/projects
   jira_project: PROJ

@@ -88,6 +88,94 @@ pub fn set_theme_preference(mode: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn get_session_color_preference() -> String {
+    let path = config_file();
+    if !path.exists() {
+        return "random".to_string();
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(color) = yaml.get("session_color").and_then(|v| v.as_str()) {
+                return color.to_string();
+            }
+        }
+    }
+    "random".to_string()
+}
+
+pub fn set_session_color_preference(mode: &str) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("session_color".to_string()),
+            serde_yaml::Value::String(mode.to_string()),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+pub fn save_global_config(
+    work_directory: Option<String>,
+    jira_project: Option<String>,
+    github_repo: Option<String>,
+) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        let defaults = map
+            .entry(serde_yaml::Value::String("defaults".to_string()))
+            .or_insert(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        if let serde_yaml::Value::Mapping(ref mut dmap) = defaults {
+            if let Some(wd) = work_directory {
+                dmap.insert(
+                    serde_yaml::Value::String("work_directory".to_string()),
+                    serde_yaml::Value::String(wd),
+                );
+            }
+            if let Some(jp) = jira_project {
+                dmap.insert(
+                    serde_yaml::Value::String("jira_project".to_string()),
+                    if jp.is_empty() { serde_yaml::Value::Null } else { serde_yaml::Value::String(jp) },
+                );
+            }
+            if let Some(gr) = github_repo {
+                dmap.insert(
+                    serde_yaml::Value::String("github_repo".to_string()),
+                    if gr.is_empty() { serde_yaml::Value::Null } else { serde_yaml::Value::String(gr) },
+                );
+            }
+        }
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 impl GlobalConfig {
     pub fn load() -> Result<Self, String> {
         let path = config_file();

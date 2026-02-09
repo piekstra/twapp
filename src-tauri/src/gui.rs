@@ -1245,6 +1245,68 @@ async fn launch_session(_session_id: String, directory: String) -> Result<(), St
     Ok(())
 }
 
+// ---- Settings commands ----
+
+#[tauri::command]
+fn get_global_config() -> Result<serde_json::Value, String> {
+    let config = crate::cli::config::GlobalConfig::load()?;
+    let session_color = crate::cli::config::get_session_color_preference();
+    Ok(serde_json::json!({
+        "work_directory": config.work_directory.to_string_lossy(),
+        "jira_project": config.jira_project,
+        "github_repo": config.github_repo,
+        "session_color": session_color,
+    }))
+}
+
+#[tauri::command]
+fn save_global_config(
+    work_directory: Option<String>,
+    jira_project: Option<String>,
+    github_repo: Option<String>,
+) -> Result<(), String> {
+    crate::cli::config::save_global_config(work_directory, jira_project, github_repo)
+}
+
+#[tauri::command]
+fn get_session_color_preference() -> String {
+    crate::cli::config::get_session_color_preference()
+}
+
+#[tauri::command]
+fn set_session_color_preference(mode: String) -> Result<(), String> {
+    crate::cli::config::set_session_color_preference(&mode)
+}
+
+#[tauri::command]
+fn get_default_permissions() -> Vec<String> {
+    crate::cli::permissions::load_default_permissions()
+}
+
+#[tauri::command]
+fn add_default_permission(pattern: String) -> Result<Vec<String>, String> {
+    crate::cli::permissions::add_permission(&pattern)
+}
+
+#[tauri::command]
+fn remove_default_permission(pattern: String) -> Result<Vec<String>, String> {
+    crate::cli::permissions::remove_permission(&pattern)
+}
+
+#[tauri::command]
+async fn create_and_launch_session(
+    ticket: Option<String>,
+    name: Option<String>,
+    github: bool,
+) -> Result<(), String> {
+    let result = crate::cli::create_session_core(ticket, name, None, github, None, None)?;
+
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name)?;
+    crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
+
+    Ok(())
+}
+
 pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
 
@@ -1286,6 +1348,14 @@ pub fn run(args: GuiArgs) {
             scan_sessions,
             list_all_sessions,
             launch_session,
+            get_global_config,
+            save_global_config,
+            get_session_color_preference,
+            set_session_color_preference,
+            get_default_permissions,
+            add_default_permission,
+            remove_default_permission,
+            create_and_launch_session,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
