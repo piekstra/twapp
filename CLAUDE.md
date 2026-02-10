@@ -48,8 +48,8 @@ When to use each:
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
 
 - **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app with sidebar panels
-- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher, settings, permissions, session creation
-- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.). `create_session_core()` in `mod.rs` is shared between CLI and GUI.
+- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher, settings, permissions, session creation, monitor process management
+- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.). `create_session_core()` in `mod.rs` is shared between CLI and GUI. `monitor.rs` handles CLI monitor commands.
 - **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
 - **Config**: `src-tauri/tauri.conf.json`
 
@@ -94,7 +94,15 @@ npx tsc --noEmit
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
 - **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
-- **Monitor**: `twapp monitor "npm run dev"` runs a background command with live output in a collapsible bar at the bottom of the terminal. One command at a time (starting a new one stops the previous). Output auto-logs to timestamped `.twapp-monitor-{timestamp}.log` files. `twapp monitor --stop` stops it, `twapp monitor --status` shows what's running, `twapp monitor --logs` tails the log. CLI communicates with the GUI via `.twapp-monitor-request.json`; GUI polls for it and spawns the process. Monitor logs are cleaned up with session deletion.
+- **Monitor**: Background command runner with live output in a collapsible bar. Opt-in only (disabled by default; enable in Settings > General > Features).
+  - **CLI**: `twapp monitor "npm run dev"` starts a command. `--stop` stops it, `--status` shows what's running, `--logs` tails the log. CLI communicates with GUI via `.twapp-monitor-request.json`; GUI polls for it and spawns the process.
+  - **GUI bar**: Dockable to top or bottom (position persisted in `config.yaml`). Resizable via drag handle (size persisted). Header shows command, status indicator, duration. Click header to expand/collapse output.
+  - **Float mode**: Toggle via icon in bar header. When float is on, the output panel overlays the terminal instead of pushing it. Click outside the bar to collapse. When float is off, it takes up static space.
+  - **Log search**: Magnifying glass icon opens incremental search bar (xterm SearchAddon). Enter/Shift+Enter to navigate matches, Esc to close.
+  - **Log file explorer**: Document icon opens a dropdown listing `.twapp-monitor-{timestamp}.log` files (newest first). Click a file to preview it in the in-app file viewer. Small reveal button on hover opens it in Finder.
+  - **One command at a time**: Starting a new command stops the previous. Output auto-logs to timestamped `.twapp-monitor-{timestamp}.log` files.
+  - **Config keys**: `monitor_enabled` (bool), `monitor_position` ("top"/"bottom"), `monitor_size` (px), `monitor_float` (bool) — all in `~/.config/twapp/config.yaml`.
+  - **Cleanup**: Monitor log files (`.twapp-monitor-*.log`) and request/active JSON files are cleaned up with session deletion.
 - **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
 - **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session" | "import"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
 - **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `App.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.
