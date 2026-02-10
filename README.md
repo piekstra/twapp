@@ -5,7 +5,7 @@ A structured terminal companion for Claude coding sessions — with notes, ticke
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/piekstra/twapp)](https://github.com/piekstra/twapp/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/piekstra/twapp/release.yml?branch=main)](https://github.com/piekstra/twapp/actions)
-[![macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey)](#install)
+[![macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon%20%7C%20Intel)-lightgrey)](#install)
 
 > Tired of losing productive flow to tab chaos? Afraid of losing a great idea because you're mid-task? **twapp your work.**
 
@@ -121,7 +121,7 @@ twapp permissions add 'Bash(npm test:*)'
 
 ## Install
 
-> **Platform:** macOS (Apple Silicon) only. Linux and Windows are not currently supported.
+> **Platform:** macOS (Apple Silicon and Intel). Linux and Windows are not currently supported.
 
 ### Prerequisites
 
@@ -136,12 +136,20 @@ brew install piekstra/tap/twapp
 ### Manual Install
 
 ```bash
+# Determine architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+  ASSET="twapp-macos-x86_64.tar.gz"
+else
+  ASSET="twapp-macos-aarch64.tar.gz"
+fi
+
 # Download latest release
-curl -fSL -o /tmp/twapp-macos-aarch64.tar.gz \
-  https://github.com/piekstra/twapp/releases/latest/download/twapp-macos-aarch64.tar.gz
+curl -fSL -o /tmp/$ASSET \
+  https://github.com/piekstra/twapp/releases/latest/download/$ASSET
 
 # Extract
-cd /tmp && tar -xzf twapp-macos-aarch64.tar.gz
+cd /tmp && tar -xzf $ASSET
 
 # Install
 mkdir -p ~/.config/twapp/bin
@@ -243,9 +251,11 @@ twapp checks for updates on startup and shows an indicator in the sidebar when a
 Manual update:
 
 ```bash
-curl -fSL -o /tmp/twapp-macos-aarch64.tar.gz \
-  https://github.com/piekstra/twapp/releases/latest/download/twapp-macos-aarch64.tar.gz
-cd /tmp && tar -xzf twapp-macos-aarch64.tar.gz
+ARCH=$(uname -m)
+ASSET="twapp-macos-$([ "$ARCH" = "x86_64" ] && echo x86_64 || echo aarch64).tar.gz"
+curl -fSL -o /tmp/$ASSET \
+  https://github.com/piekstra/twapp/releases/latest/download/$ASSET
+cd /tmp && tar -xzf $ASSET
 twapp install-gui /tmp/twapp.app
 ```
 
