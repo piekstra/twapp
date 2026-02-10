@@ -83,10 +83,6 @@ body,
 
 .terminal {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  right: 0;
-  bottom: 0;
 }
 
 .terminal .xterm {
@@ -100,6 +96,446 @@ body,
 
 .terminal .xterm-viewport {
   overflow-y: auto !important;
+}
+
+/* Monitor Bar */
+.monitor-bar {
+  position: absolute;
+  background: var(--bg-secondary);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.monitor-bar.float-mode {
+  transition: height 0.25s ease, width 0.25s ease;
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root.dark .monitor-bar.float-mode {
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.monitor-bar.dock-bottom { border-top: 1px solid var(--border-color); }
+.monitor-bar.dock-top { border-bottom: 1px solid var(--border-color); }
+.monitor-bar.dock-left { border-right: 1px solid var(--border-color); }
+.monitor-bar.dock-right { border-left: 1px solid var(--border-color); }
+
+.monitor-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  height: 28px;
+  min-height: 28px;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+}
+
+.monitor-bar-header:hover {
+  background: var(--bg-hover);
+}
+
+.monitor-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.monitor-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Idle input row */
+.monitor-input-row {
+  cursor: default;
+}
+
+.monitor-prompt-label {
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.monitor-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+  font-size: 12px;
+  padding: 0;
+}
+
+.monitor-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.monitor-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.monitor-indicator.running {
+  background: #34c759;
+}
+
+.monitor-indicator.crashed {
+  background: var(--danger, #ff3b30);
+}
+
+.monitor-indicator.stopped {
+  background: var(--text-muted);
+}
+
+.monitor-command {
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-duration {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.monitor-status-label {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.monitor-status-label.crashed {
+  color: var(--danger, #ff3b30);
+}
+
+.monitor-stop-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.monitor-stop-btn:hover {
+  background: var(--danger, #ff3b30);
+  border-color: var(--danger, #ff3b30);
+  color: #fff;
+}
+
+.monitor-dismiss-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.monitor-dismiss-btn:hover {
+  color: var(--text-primary);
+}
+
+.monitor-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.monitor-output {
+  flex: 1;
+  overflow: hidden;
+  border-top: 1px solid var(--border-color);
+}
+
+.monitor-output .xterm {
+  height: 100%;
+  width: 100%;
+}
+
+.monitor-output .xterm-screen {
+  height: 100%;
+}
+
+.monitor-output .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* Monitor Resize Handle */
+.monitor-resize-handle {
+  position: absolute;
+  z-index: 6;
+  transition: background 0.15s ease;
+}
+
+.monitor-resize-handle:hover {
+  background: var(--border-hover);
+}
+
+/* Monitor Position Switcher */
+.monitor-position-switcher {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.monitor-pos-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.monitor-pos-btn:hover {
+  opacity: 1;
+  background: var(--border-color);
+}
+
+.monitor-pos-btn.active {
+  opacity: 1;
+}
+
+/* Monitor Float Toggle */
+.monitor-float-toggle {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.monitor-float-toggle:hover {
+  opacity: 1;
+  background: var(--border-color);
+}
+
+.monitor-float-toggle.active {
+  opacity: 1;
+}
+
+/* Monitor Search */
+.monitor-search-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.monitor-search-toggle:hover {
+  opacity: 1;
+}
+
+.monitor-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-color);
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.monitor-search-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.monitor-search-input:focus {
+  border-color: var(--accent);
+}
+
+.monitor-search-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.monitor-search-nav-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.monitor-search-nav-btn:hover {
+  background: var(--border-color);
+}
+
+.monitor-search-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.monitor-search-close:hover {
+  color: var(--text-primary);
+}
+
+/* Monitor Logs Dropdown */
+.monitor-logs-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.monitor-logs-toggle:hover {
+  opacity: 1;
+}
+
+.monitor-logs-dropdown {
+  width: 280px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  font-size: 12px;
+}
+
+:root.dark .monitor-logs-dropdown {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.monitor-logs-header {
+  padding: 8px 12px 4px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.monitor-logs-empty {
+  padding: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.monitor-logs-item {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.monitor-logs-item:hover {
+  background: var(--border-color);
+}
+
+.monitor-logs-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.monitor-logs-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.monitor-logs-reveal-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.1s ease;
+  flex-shrink: 0;
+}
+
+.monitor-logs-item:hover .monitor-logs-reveal-btn {
+  opacity: 0.6;
+}
+
+.monitor-logs-reveal-btn:hover {
+  opacity: 1 !important;
+  background: var(--bg-hover);
+}
+
+.monitor-logs-item.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.monitor-logs-item-name {
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitor-logs-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34c759;
+  flex-shrink: 0;
+}
+
+.monitor-logs-item-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-top: 2px;
 }
 
 /* Resize Handle */

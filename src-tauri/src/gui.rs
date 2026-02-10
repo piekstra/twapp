@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tauri::menu::{CheckMenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::cli::monitor::{MonitorActive, MonitorRequest};
+
 #[derive(Args, Debug, Clone, serde::Serialize)]
 pub struct GuiArgs {
     /// Instance name (shown in title bar)
@@ -60,6 +62,49 @@ impl Default for PtyState {
             total_bytes_read: 0,
         }
     }
+}
+
+// Shared monitor state for background process
+struct MonitorState {
+    child: Option<std::process::Child>,
+    command: String,
+    log_path: Option<std::path::PathBuf>,
+    started_at: Option<String>,
+    status: MonitorStatus,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "status")]
+enum MonitorStatus {
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopped")]
+    Stopped,
+    #[serde(rename = "crashed")]
+    Crashed { exit_code: Option<i32> },
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self {
+            child: None,
+            command: String::new(),
+            log_path: None,
+            started_at: None,
+            status: MonitorStatus::Idle,
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct MonitorStatusInfo {
+    #[serde(flatten)]
+    status: MonitorStatus,
+    command: String,
+    started_at: Option<String>,
+    log_path: Option<String>,
 }
 
 #[tauri::command]
@@ -1305,6 +1350,46 @@ fn set_session_color_preference(mode: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_monitor_position() -> String {
+    crate::cli::config::get_monitor_position()
+}
+
+#[tauri::command]
+fn set_monitor_position(position: String) -> Result<(), String> {
+    crate::cli::config::set_monitor_position(&position)
+}
+
+#[tauri::command]
+fn get_monitor_size() -> u32 {
+    crate::cli::config::get_monitor_size()
+}
+
+#[tauri::command]
+fn set_monitor_size(size: u32) -> Result<(), String> {
+    crate::cli::config::set_monitor_size(size)
+}
+
+#[tauri::command]
+fn get_monitor_enabled() -> bool {
+    crate::cli::config::get_monitor_enabled()
+}
+
+#[tauri::command]
+fn set_monitor_enabled(enabled: bool) -> Result<(), String> {
+    crate::cli::config::set_monitor_enabled(enabled)
+}
+
+#[tauri::command]
+fn get_monitor_float() -> bool {
+    crate::cli::config::get_monitor_float()
+}
+
+#[tauri::command]
+fn set_monitor_float(float: bool) -> Result<(), String> {
+    crate::cli::config::set_monitor_float(float)
+}
+
+#[tauri::command]
 fn get_default_permissions() -> Vec<String> {
     crate::cli::permissions::load_default_permissions()
 }
@@ -1509,8 +1594,10 @@ async fn delete_session(directory: String, delete_everything: bool) -> Result<()
         if let Ok(entries) = std::fs::read_dir(&work_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if (name.starts_with(".twapp-notes") || name.starts_with(".twapp-prompts"))
-                    && name.ends_with(".json")
+                if (name.starts_with(".twapp-notes")
+                    || name.starts_with(".twapp-prompts")
+                    || name.starts_with(".twapp-monitor"))
+                    && (name.ends_with(".json") || name.ends_with(".log"))
                 {
                     let _ = std::fs::remove_file(entry.path());
                 }
@@ -1987,8 +2074,335 @@ async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResult, S
     })
 }
 
+fn start_monitor_internal(
+    app: &AppHandle,
+    state: &Arc<Mutex<MonitorState>>,
+    config: &GuiArgs,
+    command: String,
+) -> Result<(), String> {
+    let work_dir = config
+        .cwd
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    // Kill existing monitor if running
+    {
+        let mut monitor = state.lock();
+        if let Some(ref mut child) = monitor.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        monitor.child = None;
+    }
+
+    // Build timestamped log file path
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y-%m-%dT%H-%M-%S").to_string();
+    let log_filename = format!(".twapp-monitor-{}.log", timestamp);
+    let log_path = work_dir.join(&log_filename);
+    let started_at = now.to_rfc3339();
+
+    // Spawn the command via sh -c
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .current_dir(&work_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn monitor: {}", e))?;
+
+    let pid = child.id();
+
+    // Take stdout and stderr handles
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Write active status file
+    let active = MonitorActive {
+        command: command.clone(),
+        pid,
+        log_path: log_filename.clone(),
+        started_at: started_at.clone(),
+    };
+    let active_json = serde_json::to_string_pretty(&active)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    std::fs::write(work_dir.join(".twapp-monitor-active.json"), &active_json)
+        .map_err(|e| format!("Failed to write active file: {}", e))?;
+
+    // Update state
+    {
+        let mut monitor = state.lock();
+        monitor.child = Some(child);
+        monitor.command = command.clone();
+        monitor.log_path = Some(log_path.clone());
+        monitor.started_at = Some(started_at.clone());
+        monitor.status = MonitorStatus::Running;
+    }
+
+    // Emit initial status
+    let _ = app.emit(
+        "monitor-status",
+        MonitorStatusInfo {
+            status: MonitorStatus::Running,
+            command: command.clone(),
+            started_at: Some(started_at),
+            log_path: Some(log_filename),
+        },
+    );
+
+    // Spawn reader thread for stdout + stderr → log file + events
+    let app_handle = app.clone();
+    let state_clone = Arc::clone(state);
+    let log_path_clone = log_path.clone();
+    let command_clone = command.clone();
+    let active_path = work_dir.join(".twapp-monitor-active.json");
+
+    std::thread::spawn(move || {
+        // Open log file for writing
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path_clone);
+        let mut log_writer = log_file.ok();
+
+        // Merge stdout and stderr via channel
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+
+        if let Some(stderr) = stderr {
+            let tx_clone = tx.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stderr);
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let _ = tx_clone.send(buf[..n].to_vec());
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+
+        if let Some(stdout) = stdout {
+            let tx_clone = tx.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stdout);
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let _ = tx_clone.send(buf[..n].to_vec());
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+
+        // Drop our copy of tx so rx closes when both readers finish
+        drop(tx);
+
+        let mut pending = Vec::new();
+        for chunk in rx {
+            pending.extend_from_slice(&chunk);
+
+            let valid_len = match std::str::from_utf8(&pending) {
+                Ok(_) => pending.len(),
+                Err(e) => e.valid_up_to(),
+            };
+
+            if valid_len > 0 {
+                let data = std::str::from_utf8(&pending[..valid_len])
+                    .unwrap()
+                    .to_string();
+                let _ = app_handle.emit("monitor-output", &data);
+
+                // Write to log file
+                if let Some(ref mut writer) = log_writer {
+                    let _ = writer.write_all(data.as_bytes());
+                    let _ = writer.flush();
+                }
+            }
+
+            pending = pending[valid_len..].to_vec();
+        }
+
+        // Process has exited — check exit code
+        let mut monitor = state_clone.lock();
+        let exit_code = monitor
+            .child
+            .as_mut()
+            .and_then(|c| c.wait().ok())
+            .and_then(|s| s.code());
+
+        let new_status = match exit_code {
+            Some(0) => MonitorStatus::Stopped,
+            Some(code) => MonitorStatus::Crashed {
+                exit_code: Some(code),
+            },
+            None => MonitorStatus::Stopped, // killed by signal
+        };
+
+        monitor.status = new_status.clone();
+        monitor.child = None;
+
+        // Remove active file
+        let _ = std::fs::remove_file(&active_path);
+
+        // Emit final status
+        let _ = app_handle.emit(
+            "monitor-status",
+            MonitorStatusInfo {
+                status: new_status,
+                command: command_clone,
+                started_at: monitor.started_at.clone(),
+                log_path: monitor.log_path.as_ref().map(|p| {
+                    p.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                }),
+            },
+        );
+    });
+
+    Ok(())
+}
+
+fn stop_monitor_internal(
+    app: &AppHandle,
+    state: &Arc<Mutex<MonitorState>>,
+    config: &GuiArgs,
+) -> Result<(), String> {
+    let mut monitor = state.lock();
+    if let Some(ref mut child) = monitor.child {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    monitor.child = None;
+    monitor.status = MonitorStatus::Stopped;
+
+    // Remove active file
+    let work_dir = config
+        .cwd
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let _ = std::fs::remove_file(work_dir.join(".twapp-monitor-active.json"));
+
+    // Emit status
+    let _ = app.emit(
+        "monitor-status",
+        MonitorStatusInfo {
+            status: MonitorStatus::Stopped,
+            command: monitor.command.clone(),
+            started_at: monitor.started_at.clone(),
+            log_path: monitor.log_path.as_ref().map(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            }),
+        },
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+fn start_monitor(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<Mutex<MonitorState>>>,
+    config: tauri::State<'_, GuiArgs>,
+    command: String,
+) -> Result<(), String> {
+    start_monitor_internal(&app, &state, &config, command)
+}
+
+#[tauri::command]
+fn stop_monitor(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<Mutex<MonitorState>>>,
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<(), String> {
+    stop_monitor_internal(&app, &state, &config)
+}
+
+#[tauri::command]
+fn get_monitor_status(
+    state: tauri::State<'_, Arc<Mutex<MonitorState>>>,
+) -> MonitorStatusInfo {
+    let monitor = state.lock();
+    MonitorStatusInfo {
+        status: monitor.status.clone(),
+        command: monitor.command.clone(),
+        started_at: monitor.started_at.clone(),
+        log_path: monitor.log_path.as_ref().map(|p| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        }),
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+struct MonitorLogEntry {
+    filename: String,
+    path: String,
+    size: u64,
+    modified: String,
+}
+
+#[tauri::command]
+fn list_monitor_logs(config: tauri::State<'_, GuiArgs>) -> Vec<MonitorLogEntry> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let dir = std::path::Path::new(cwd);
+    let mut logs: Vec<MonitorLogEntry> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(".twapp-monitor-") && name.ends_with(".log") {
+                if let Ok(meta) = entry.metadata() {
+                    let modified = meta.modified()
+                        .ok()
+                        .and_then(|t| {
+                            let dt: chrono::DateTime<chrono::Utc> = t.into();
+                            Some(dt.to_rfc3339())
+                        })
+                        .unwrap_or_default();
+                    logs.push(MonitorLogEntry {
+                        filename: name,
+                        path: entry.path().to_string_lossy().to_string(),
+                        size: meta.len(),
+                        modified,
+                    });
+                }
+            }
+        }
+    }
+    logs.sort_by(|a, b| b.modified.cmp(&a.modified));
+    logs
+}
+
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to reveal: {}", e))?;
+    Ok(())
+}
+
 pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
+    let monitor_state = Arc::new(Mutex::new(MonitorState::default()));
 
     let title = if args.name == "twapp" {
         "twapp".to_string()
@@ -1996,9 +2410,13 @@ pub fn run(args: GuiArgs) {
         format!("twapp - {}", args.name)
     };
 
+    // Clone cwd for the file watcher thread
+    let watcher_cwd = args.cwd.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(pty_state)
+        .manage(monitor_state)
         .manage(args)
         .invoke_handler(tauri::generate_handler![
             spawn_shell,
@@ -2041,6 +2459,19 @@ pub fn run(args: GuiArgs) {
             delete_session,
             discover_claude_sessions,
             import_sessions,
+            start_monitor,
+            stop_monitor,
+            get_monitor_status,
+            get_monitor_position,
+            set_monitor_position,
+            get_monitor_size,
+            set_monitor_size,
+            get_monitor_enabled,
+            set_monitor_enabled,
+            get_monitor_float,
+            set_monitor_float,
+            list_monitor_logs,
+            reveal_in_finder,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
@@ -2127,7 +2558,76 @@ pub fn run(args: GuiArgs) {
                         .build(),
                 )?;
             }
+
+            // File watcher for CLI-initiated monitor requests
+            if let Some(watch_dir) = watcher_cwd
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let request_path = watch_dir.join(".twapp-monitor-request.json");
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        if !request_path.exists() {
+                            continue;
+                        }
+                        let content = match std::fs::read_to_string(&request_path) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        // Delete request file immediately to avoid re-processing
+                        let _ = std::fs::remove_file(&request_path);
+
+                        let request: MonitorRequest = match serde_json::from_str(&content) {
+                            Ok(r) => r,
+                            Err(_) => continue,
+                        };
+
+                        match request.action.as_str() {
+                            "start" => {
+                                if let Some(cmd) = request.command {
+                                    let monitor_state =
+                                        app_handle.state::<Arc<Mutex<MonitorState>>>();
+                                    let config = app_handle.state::<GuiArgs>();
+                                    // Call start_monitor logic directly
+                                    let _ = start_monitor_internal(
+                                        &app_handle,
+                                        &monitor_state,
+                                        &config,
+                                        cmd,
+                                    );
+                                }
+                            }
+                            "stop" => {
+                                let monitor_state =
+                                    app_handle.state::<Arc<Mutex<MonitorState>>>();
+                                let config = app_handle.state::<GuiArgs>();
+                                let _ = stop_monitor_internal(
+                                    &app_handle,
+                                    &monitor_state,
+                                    &config,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // Kill monitor process on window close
+                if let Some(state) = window.try_state::<Arc<Mutex<MonitorState>>>() {
+                    let mut monitor = state.lock();
+                    if let Some(ref mut child) = monitor.child {
+                        let _ = child.kill();
+                    }
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

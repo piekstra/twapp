@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
@@ -49,6 +51,21 @@ interface QuickPrompt {
   id: string;
   title: string;
   text: string;
+}
+
+interface MonitorStatusInfo {
+  status: "idle" | "running" | "stopped" | "crashed";
+  command: string;
+  started_at: string | null;
+  log_path: string | null;
+  exit_code?: number | null;
+}
+
+interface MonitorLogEntry {
+  filename: string;
+  path: string;
+  size: number;
+  modified: string;
 }
 
 interface PromptSection {
@@ -207,6 +224,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [editingSection, setEditingSection] = useState<{ id: string | null; title: string } | null>(null);
   const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
+  const [monitorEnabled, setMonitorEnabled] = useState(false);
 
   // Delete session state
   const [deleteTarget, setDeleteTarget] = useState<LauncherSession | null>(null);
@@ -368,6 +386,9 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
     invoke<PromptStore>("load_global_prompts")
       .then((store) => setGlobalPrompts(store || { sections: [] }))
       .catch((e) => console.error("Failed to load global prompts:", e));
+    invoke<boolean>("get_monitor_enabled")
+      .then((enabled) => setMonitorEnabled(enabled))
+      .catch(() => {});
     setSettingsLoaded(true);
   }, [launcherView, settingsLoaded]);
 
@@ -920,6 +941,33 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                   onBlur={() => handleSaveConfig("github_repo", configGithubRepo)}
                   placeholder="owner/repo"
                 />
+              </div>
+            </div>
+
+            {/* Features */}
+            <div className="launcher-settings-section">
+              <div className="launcher-settings-section-header">Features</div>
+              <div className="launcher-settings-field">
+                <label>Background Monitor</label>
+                <div className="launcher-sort">
+                  <button
+                    className={`launcher-sort-btn${monitorEnabled ? " active" : ""}`}
+                    onClick={() => {
+                      setMonitorEnabled(true);
+                      invoke("set_monitor_enabled", { enabled: true }).catch(() => {});
+                    }}
+                  >Enabled</button>
+                  <button
+                    className={`launcher-sort-btn${!monitorEnabled ? " active" : ""}`}
+                    onClick={() => {
+                      setMonitorEnabled(false);
+                      invoke("set_monitor_enabled", { enabled: false }).catch(() => {});
+                    }}
+                  >Disabled</button>
+                </div>
+                <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
+                  Shows a command runner bar for background processes like dev servers
+                </span>
               </div>
             </div>
           </>
@@ -1601,6 +1649,42 @@ function App() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  // Monitor state
+  const [monitorStatus, setMonitorStatus] = useState<MonitorStatusInfo | null>(null);
+  const [monitorExpanded, setMonitorExpanded] = useState(false);
+  const monitorTermRef = useRef<HTMLDivElement>(null);
+  const monitorTerm = useRef<Terminal | null>(null);
+  const monitorFit = useRef<FitAddon | null>(null);
+  const [monitorDuration, setMonitorDuration] = useState("");
+  const [monitorInput, setMonitorInput] = useState("");
+  const monitorInputRef = useRef<HTMLInputElement>(null);
+
+  // Monitor docking
+  type MonitorPosition = "bottom" | "top" | "left" | "right";
+  const [monitorPosition, setMonitorPosition] = useState<MonitorPosition>("bottom");
+  const [monitorSize, setMonitorSize] = useState(300);
+  const monitorContainerRef = useRef<HTMLDivElement>(null);
+  const monitorOutputBuffer = useRef<string>("");
+
+  // Monitor enabled
+  const [monitorEnabled, setMonitorEnabled] = useState(false);
+
+  // Monitor float mode
+  const [monitorFloat, setMonitorFloat] = useState(false);
+  const monitorBarRef = useRef<HTMLDivElement>(null);
+
+  // Monitor search
+  const monitorSearch = useRef<SearchAddon | null>(null);
+  const [monitorSearchVisible, setMonitorSearchVisible] = useState(false);
+  const [monitorSearchQuery, setMonitorSearchQuery] = useState("");
+  const monitorSearchInputRef = useRef<HTMLInputElement>(null);
+
+  // Monitor log history
+  const [monitorLogsOpen, setMonitorLogsOpen] = useState(false);
+  const [monitorLogs, setMonitorLogs] = useState<MonitorLogEntry[]>([]);
+  const monitorLogsRef = useRef<HTMLButtonElement>(null);
+  const [monitorLogsPos, setMonitorLogsPos] = useState<{ top: number; left: number } | null>(null);
+
   // Theme mode
   type ThemeMode = "light" | "dark" | "system";
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -2053,6 +2137,127 @@ function App() {
     return () => { unlisten.then((u) => u()); };
   }, []);
 
+  // Load monitor position/size/float preferences
+  useEffect(() => {
+    invoke<string>("get_monitor_position")
+      .then((pos) => setMonitorPosition(pos as MonitorPosition))
+      .catch(() => {});
+    invoke<number>("get_monitor_size")
+      .then((size) => setMonitorSize(size))
+      .catch(() => {});
+    invoke<boolean>("get_monitor_float")
+      .then((f) => setMonitorFloat(f))
+      .catch(() => {});
+    invoke<boolean>("get_monitor_enabled")
+      .then((enabled) => setMonitorEnabled(enabled))
+      .catch(() => {});
+  }, []);
+
+  // Monitor event listeners
+  useEffect(() => {
+    // Fetch initial monitor status (in case a monitor was already running)
+    invoke<MonitorStatusInfo>("get_monitor_status")
+      .then((info) => {
+        if (info.status !== "idle") setMonitorStatus(info);
+      })
+      .catch(() => {});
+
+    const unlistenOutput = listen<string>("monitor-output", (event) => {
+      monitorOutputBuffer.current += event.payload;
+      if (monitorTerm.current) {
+        monitorTerm.current.write(event.payload);
+      }
+    });
+
+    const unlistenStatus = listen<MonitorStatusInfo>("monitor-status", (event) => {
+      setMonitorStatus(event.payload);
+    });
+
+    return () => {
+      unlistenOutput.then((u) => u());
+      unlistenStatus.then((u) => u());
+    };
+  }, []);
+
+  // Monitor duration timer
+  useEffect(() => {
+    if (monitorStatus?.status !== "running" || !monitorStatus?.started_at) {
+      return;
+    }
+    const updateDuration = () => {
+      const start = new Date(monitorStatus.started_at!).getTime();
+      const elapsed = Math.floor((Date.now() - start) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      setMonitorDuration(m > 0 ? `${m}m ${s}s` : `${s}s`);
+    };
+    updateDuration();
+    const interval = setInterval(updateDuration, 1000);
+    return () => clearInterval(interval);
+  }, [monitorStatus?.status, monitorStatus?.started_at]);
+
+  // For left/right docking, force expanded
+  const isHorizontalDock = monitorPosition === "bottom" || monitorPosition === "top";
+  const monitorShowOutput = monitorFloat
+    ? monitorExpanded
+    : (isHorizontalDock ? monitorExpanded : true);
+
+  // Initialize/dispose monitor terminal when output area is visible
+  useEffect(() => {
+    if (monitorShowOutput && monitorTermRef.current && !monitorTerm.current) {
+      const isDark = document.documentElement.classList.contains("dark");
+      const term = new Terminal({
+        fontSize: 12,
+        fontFamily: terminalInstance.current?.options.fontFamily || "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+        theme: isDark ? darkTheme : lightTheme,
+        scrollback: 5000,
+        disableStdin: true,
+        convertEol: true,
+        cursorStyle: "bar",
+        cursorBlink: false,
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      const search = new SearchAddon();
+      term.loadAddon(search);
+      term.open(monitorTermRef.current);
+      // Replay buffered output from before this terminal existed
+      if (monitorOutputBuffer.current) {
+        term.write(monitorOutputBuffer.current);
+      }
+      requestAnimationFrame(() => fit.fit());
+      monitorTerm.current = term;
+      monitorFit.current = fit;
+      monitorSearch.current = search;
+    } else if (!monitorShowOutput && monitorTerm.current) {
+      monitorTerm.current.dispose();
+      monitorTerm.current = null;
+      monitorFit.current = null;
+      monitorSearch.current = null;
+    }
+  }, [monitorShowOutput, monitorPosition, monitorStatus?.status]);
+
+  // Refit both terminals when monitor size, position, sidebar, or expansion changes
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      fitAddon.current?.fit();
+      monitorFit.current?.fit();
+    }, monitorFloat ? 300 : 50); // longer delay in float mode for CSS transition
+    return () => clearTimeout(timeout);
+  }, [sidebarWidth, monitorExpanded, monitorPosition, monitorSize, monitorFloat]);
+
+  // Float mode: collapse on click outside the monitor bar
+  useEffect(() => {
+    if (!monitorFloat || !monitorExpanded) return;
+    const handler = (e: MouseEvent) => {
+      if (monitorBarRef.current && !monitorBarRef.current.contains(e.target as Node)) {
+        setMonitorExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [monitorFloat, monitorExpanded]);
+
   // Apply theme whenever themeMode or accent color changes
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -2064,6 +2269,9 @@ function App() {
 
       if (terminalInstance.current) {
         terminalInstance.current.options.theme = isDark ? darkTheme : lightTheme;
+      }
+      if (monitorTerm.current) {
+        monitorTerm.current.options.theme = isDark ? darkTheme : lightTheme;
       }
 
       if (appConfig?.color) {
@@ -2120,6 +2328,22 @@ function App() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
+
+  // Close monitor logs dropdown on outside click
+  useEffect(() => {
+    if (!monitorLogsOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      // Don't close if clicking the toggle button itself
+      if (monitorLogsRef.current && monitorLogsRef.current.contains(target)) return;
+      // Don't close if clicking inside the dropdown (portaled)
+      const dropdown = document.querySelector(".monitor-logs-dropdown");
+      if (dropdown && dropdown.contains(target)) return;
+      setMonitorLogsOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [monitorLogsOpen]);
 
   // File preview keyboard shortcuts (Escape, Cmd+F)
   useEffect(() => {
@@ -2613,6 +2837,76 @@ function App() {
     return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
 
+  // Monitor float mode toggle
+  const renderMonitorFloatToggle = () => {
+    const color = monitorFloat ? "var(--accent)" : "var(--text-muted)";
+    return (
+      <button
+        className={`monitor-float-toggle${monitorFloat ? " active" : ""}`}
+        title={monitorFloat ? "Switch to static mode" : "Switch to float mode"}
+        onClick={(e) => {
+          e.stopPropagation();
+          const next = !monitorFloat;
+          setMonitorFloat(next);
+          invoke("set_monitor_float", { float: next }).catch(() => {});
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14">
+          {monitorFloat ? (
+            <>
+              <rect x="1" y="4" width="7" height="7" rx="1" fill="none" stroke={color} strokeWidth="1" />
+              <rect x="5" y="1" width="7" height="7" rx="1" fill="var(--bg-secondary)" stroke={color} strokeWidth="1" />
+            </>
+          ) : (
+            <>
+              <rect x="0.5" y="0.5" width="13" height="13" rx="1.5" fill="none" stroke={color} strokeWidth="1" />
+              <line x1="7" y1="0.5" x2="7" y2="13.5" stroke={color} strokeWidth="1" />
+            </>
+          )}
+        </svg>
+      </button>
+    );
+  };
+
+  // Monitor position switcher — four edge-indicator icons
+  const renderMonitorPositionSwitcher = () => {
+    const positions: MonitorPosition[] = ["bottom", "top"];
+    return (
+      <div className="monitor-position-switcher" onClick={(e) => e.stopPropagation()}>
+        {positions.map((pos) => {
+          const isActive = monitorPosition === pos;
+          const color = isActive ? "var(--accent)" : "var(--text-muted)";
+          return (
+            <button
+              key={pos}
+              className={`monitor-pos-btn${isActive ? " active" : ""}`}
+              title={`Dock ${pos}`}
+              onClick={() => {
+                if (pos === monitorPosition) return;
+                // Dispose monitor terminal before switching — container shape changes drastically
+                if (monitorTerm.current) {
+                  monitorTerm.current.dispose();
+                  monitorTerm.current = null;
+                  monitorFit.current = null;
+                }
+                setMonitorPosition(pos);
+                invoke("set_monitor_position", { position: pos }).catch(() => {});
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14">
+                <rect x="0.5" y="0.5" width="13" height="13" rx="1.5" fill="none" stroke={color} strokeWidth="1" />
+                {pos === "bottom" && <rect x="1" y="11" width="12" height="2.5" rx="0.5" fill={color} />}
+                {pos === "top" && <rect x="1" y="0.5" width="12" height="2.5" rx="0.5" fill={color} />}
+                {pos === "left" && <rect x="0.5" y="1" width="2.5" height="12" rx="0.5" fill={color} />}
+                {pos === "right" && <rect x="11" y="1" width="2.5" height="12" rx="0.5" fill={color} />}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
   // Launcher mode: show session list instead of terminal
   const isLauncherMode = appConfig && !appConfig.command && !appConfig.session_id;
   if (isLauncherMode) {
@@ -2622,11 +2916,329 @@ function App() {
   return (
     <div className="app">
       {/* Terminal */}
-      <div className="terminal-container">
+      <div className="terminal-container" ref={monitorContainerRef}>
         {reloading && (
           <div className="reload-banner">{rebuildStatus || "Rebuilding..."}</div>
         )}
-        <div ref={terminalRef} className="terminal" />
+        <div
+          ref={terminalRef}
+          className="terminal"
+          style={{
+            top: !monitorEnabled ? 8
+              : monitorPosition === "top" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 8,
+            left: 8,
+            right: 0,
+            bottom: !monitorEnabled ? 0
+              : monitorPosition === "bottom" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 0,
+          }}
+        />
+        {monitorEnabled && <div
+          className={`monitor-bar dock-${monitorPosition}${monitorFloat ? " float-mode" : ""}`}
+          style={{
+            ...(isHorizontalDock
+              ? {
+                  [monitorPosition]: 0, left: 0, right: 0,
+                  height: monitorShowOutput ? monitorSize : 28,
+                }
+              : {
+                  [monitorPosition]: 0, top: 0, bottom: 0,
+                  width: monitorShowOutput ? monitorSize : 28,
+                }),
+            zIndex: monitorFloat ? 10 : 5,
+          }}
+          ref={monitorBarRef}
+        >
+          {/* Resize handle */}
+          {monitorShowOutput && (
+            <div
+              className={`monitor-resize-handle monitor-resize-${monitorPosition}`}
+              style={{
+                ...(monitorPosition === "bottom" ? { top: 0, left: 0, right: 0, height: 4, cursor: "row-resize" } :
+                  monitorPosition === "top" ? { bottom: 0, left: 0, right: 0, height: 4, cursor: "row-resize" } :
+                  monitorPosition === "left" ? { right: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize" } :
+                  { left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize" }),
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startPos = isHorizontalDock ? e.clientY : e.clientX;
+                const startSize = monitorSize;
+                const container = monitorContainerRef.current;
+                const maxSize = container
+                  ? (isHorizontalDock ? container.clientHeight * 0.6 : container.clientWidth * 0.5)
+                  : 600;
+                const minSize = isHorizontalDock ? 100 : 200;
+
+                let lastSize = startSize;
+                const onMouseMove = (ev: MouseEvent) => {
+                  const currentPos = isHorizontalDock ? ev.clientY : ev.clientX;
+                  const delta = (monitorPosition === "bottom" || monitorPosition === "right")
+                    ? startPos - currentPos
+                    : currentPos - startPos;
+                  lastSize = Math.max(minSize, Math.min(maxSize, startSize + delta));
+                  setMonitorSize(lastSize);
+                };
+
+                const onMouseUp = () => {
+                  document.removeEventListener("mousemove", onMouseMove);
+                  document.removeEventListener("mouseup", onMouseUp);
+                  invoke("set_monitor_size", { size: Math.round(lastSize) }).catch(() => {});
+                };
+
+                document.addEventListener("mousemove", onMouseMove);
+                document.addEventListener("mouseup", onMouseUp);
+              }}
+            />
+          )}
+          {/* Idle state — command input */}
+          {(!monitorStatus || monitorStatus.status === "idle") && (
+            <div className="monitor-bar-header">
+              <div className="monitor-bar-left monitor-input-row">
+                <span className="monitor-prompt-label">$</span>
+                <input
+                  ref={monitorInputRef}
+                  className="monitor-input"
+                  type="text"
+                  placeholder="Run a command..."
+                  value={monitorInput}
+                  onChange={(e) => setMonitorInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && monitorInput.trim()) {
+                      monitorOutputBuffer.current = "";
+                      invoke("start_monitor", { command: monitorInput.trim() }).catch(console.error);
+                      setMonitorInput("");
+                      setMonitorExpanded(true);
+                    }
+                  }}
+                />
+              </div>
+              <div className="monitor-bar-right">
+                {renderMonitorFloatToggle()}
+                {renderMonitorPositionSwitcher()}
+              </div>
+            </div>
+          )}
+          {/* Running/stopped/crashed state */}
+          {monitorStatus && monitorStatus.status !== "idle" && (
+            <>
+              <div
+                className="monitor-bar-header"
+                onClick={() => {
+                  if (isHorizontalDock || monitorFloat) setMonitorExpanded(!monitorExpanded);
+                }}
+              >
+                <div className="monitor-bar-left">
+                  <span className={`monitor-indicator ${monitorStatus.status}`} />
+                  <span className="monitor-command">{monitorStatus.command}</span>
+                  {monitorStatus.status === "running" && (
+                    <span className="monitor-duration">({monitorDuration})</span>
+                  )}
+                  {monitorStatus.status === "stopped" && (
+                    <span className="monitor-status-label">stopped</span>
+                  )}
+                  {monitorStatus.status === "crashed" && (
+                    <span className="monitor-status-label crashed">crashed</span>
+                  )}
+                </div>
+                <div className="monitor-bar-right">
+                  {monitorStatus.status === "running" && (
+                    <button
+                      className="monitor-stop-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        invoke("stop_monitor").catch(console.error);
+                      }}
+                    >
+                      Stop
+                    </button>
+                  )}
+                  {monitorStatus.status !== "running" && (
+                    <button
+                      className="monitor-dismiss-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        monitorOutputBuffer.current = "";
+                        setMonitorStatus(null);
+                        setMonitorExpanded(false);
+                      }}
+                      title="Dismiss"
+                    >
+                      ×
+                    </button>
+                  )}
+                  <button
+                    ref={monitorLogsRef}
+                    className="monitor-logs-toggle"
+                    title={monitorStatus.log_path ? `Log: ${monitorStatus.log_path}` : "Log files"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!monitorLogsOpen) {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        setMonitorLogsPos({
+                          top: monitorPosition === "bottom" ? rect.top - 4 : rect.bottom + 4,
+                          left: Math.max(8, rect.right - 280),
+                        });
+                        invoke<MonitorLogEntry[]>("list_monitor_logs")
+                          .then((logs) => setMonitorLogs(logs))
+                          .catch(() => {});
+                      }
+                      setMonitorLogsOpen(!monitorLogsOpen);
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <rect x="2" y="1" width="10" height="12" rx="1" stroke="var(--text-muted)" strokeWidth="1.2" />
+                      <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
+                      <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
+                      <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    className="monitor-search-toggle"
+                    title="Search logs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = !monitorSearchVisible;
+                      setMonitorSearchVisible(next);
+                      if (next) setTimeout(() => monitorSearchInputRef.current?.focus(), 0);
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="6" cy="6" r="4.5" stroke="var(--text-muted)" strokeWidth="1.2" />
+                      <line x1="9.5" y1="9.5" x2="13" y2="13" stroke="var(--text-muted)" strokeWidth="1.2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  {renderMonitorFloatToggle()}
+                  {renderMonitorPositionSwitcher()}
+                  {(isHorizontalDock || monitorFloat) && (
+                    <span className={`monitor-chevron${monitorExpanded ? " expanded" : ""}`}>
+                      {monitorExpanded ? "▼" : "▶"}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {monitorSearchVisible && monitorShowOutput && (
+                <div className="monitor-search-bar">
+                  <input
+                    ref={monitorSearchInputRef}
+                    type="text"
+                    className="monitor-search-input"
+                    placeholder="Search logs..."
+                    value={monitorSearchQuery}
+                    onChange={(e) => {
+                      setMonitorSearchQuery(e.target.value);
+                      if (e.target.value && monitorSearch.current) {
+                        monitorSearch.current.findNext(e.target.value);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && monitorSearch.current && monitorSearchQuery) {
+                        if (e.shiftKey) {
+                          monitorSearch.current.findPrevious(monitorSearchQuery);
+                        } else {
+                          monitorSearch.current.findNext(monitorSearchQuery);
+                        }
+                      }
+                      if (e.key === "Escape") {
+                        setMonitorSearchVisible(false);
+                        setMonitorSearchQuery("");
+                        if (monitorSearch.current) monitorSearch.current.clearDecorations();
+                      }
+                    }}
+                  />
+                  <button
+                    className="monitor-search-nav-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (monitorSearch.current && monitorSearchQuery) monitorSearch.current.findPrevious(monitorSearchQuery);
+                    }}
+                    title="Previous (Shift+Enter)"
+                  >&#x25B2;</button>
+                  <button
+                    className="monitor-search-nav-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (monitorSearch.current && monitorSearchQuery) monitorSearch.current.findNext(monitorSearchQuery);
+                    }}
+                    title="Next (Enter)"
+                  >&#x25BC;</button>
+                  <button
+                    className="monitor-search-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMonitorSearchVisible(false);
+                      setMonitorSearchQuery("");
+                      if (monitorSearch.current) monitorSearch.current.clearDecorations();
+                    }}
+                    title="Close (Esc)"
+                  >&#xd7;</button>
+                </div>
+              )}
+              {monitorShowOutput && (
+                <div className="monitor-output" ref={monitorTermRef} />
+              )}
+            </>
+          )}
+        </div>}
+        {monitorLogsOpen && monitorLogsPos && createPortal(
+          <div
+            className="monitor-logs-dropdown"
+            style={{
+              position: "fixed",
+              ...(monitorPosition === "bottom"
+                ? { bottom: window.innerHeight - monitorLogsPos.top, left: monitorLogsPos.left }
+                : { top: monitorLogsPos.top, left: monitorLogsPos.left }),
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="monitor-logs-header">Log Files</div>
+            {monitorLogs.length === 0 && (
+              <div className="monitor-logs-empty">No log files found</div>
+            )}
+            {monitorLogs.map((log) => {
+              const isActive = monitorStatus?.log_path && log.filename === monitorStatus.log_path;
+              const date = new Date(log.modified);
+              const sizeKb = (log.size / 1024).toFixed(1);
+              return (
+                <div
+                  key={log.filename}
+                  className={`monitor-logs-item${isActive ? " active" : ""}`}
+                  onClick={() => {
+                    handleFilePreview(log.path);
+                    setMonitorLogsOpen(false);
+                  }}
+                  title={log.path}
+                >
+                  <div className="monitor-logs-item-row">
+                    <div className="monitor-logs-item-info">
+                      <div className="monitor-logs-item-name">
+                        {isActive && <span className="monitor-logs-active-dot" />}
+                        {log.filename.replace(".twapp-monitor-", "").replace(".log", "")}
+                      </div>
+                      <div className="monitor-logs-item-meta">
+                        {date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {" \u00B7 "}
+                        {sizeKb}KB
+                      </div>
+                    </div>
+                    <button
+                      className="monitor-logs-reveal-btn"
+                      title="Reveal in Finder"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        invoke("reveal_in_finder", { path: log.path }).catch(console.error);
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2 1h5l3 3v6.5a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 012 10.5v-8A1.5 1.5 0 013.5 1z" stroke="currentColor" strokeWidth="1" fill="none" />
+                        <path d="M7 1v3h3" stroke="currentColor" strokeWidth="1" fill="none" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>,
+          document.body
+        )}
       </div>
 
       {/* Resize handle */}

@@ -1,5 +1,6 @@
 pub mod app_bundle;
 pub mod config;
+pub mod monitor;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
@@ -85,6 +86,24 @@ pub enum Commands {
     /// Create code signing certificate
     #[command(name = "setup-cert")]
     SetupCert,
+    /// Run a background command with live monitoring
+    #[command(after_help = "Examples:\n  twapp monitor \"npm run dev\"    Start monitoring a command\n  twapp monitor --stop           Stop the running monitor\n  twapp monitor --status         Show what's running\n  twapp monitor --logs           Show log file and recent output")]
+    Monitor {
+        /// Command to run (e.g. "npm run dev")
+        command: Option<String>,
+        /// Stop the running monitor
+        #[arg(long)]
+        stop: bool,
+        /// Show monitor status
+        #[arg(long)]
+        status: bool,
+        /// Show log file and recent output
+        #[arg(long)]
+        logs: bool,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Rebuild, reinstall, relaunch (dev workflow)
     #[command(name = "dev-reload")]
     DevReload {
@@ -283,6 +302,26 @@ pub fn run(cmd: Commands) -> i32 {
         } => cmd_set_session(&session_id, cwd.as_deref(), dir.as_deref()),
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
+        Commands::Monitor {
+            command,
+            stop,
+            status,
+            logs,
+            dir,
+        } => {
+            if stop {
+                monitor::cmd_monitor_stop(dir.as_deref())
+            } else if status {
+                monitor::cmd_monitor_status(dir.as_deref())
+            } else if logs {
+                monitor::cmd_monitor_logs(dir.as_deref())
+            } else if let Some(cmd) = command {
+                monitor::cmd_monitor_start(&cmd, dir.as_deref())
+            } else {
+                eprintln!("Provide a command to monitor, or use --stop/--status/--logs");
+                1
+            }
+        }
         Commands::DevReload {
             pid,
             cwd,

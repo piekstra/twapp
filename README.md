@@ -20,6 +20,7 @@ A structured terminal companion for Claude coding sessions — with notes, ticke
 - **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
 - **Two-way Claude integration** — Claude reads your session and manages twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
 - **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click. Create new sessions, manage settings, and configure permissions — all from the launcher.
+- **Background monitor** — run a dev server or watcher alongside Claude without leaving twapp. One command at a time, auto-logged to timestamped files, with a collapsible status bar at the bottom of the terminal. Claude can trigger it too.
 - **In-app updates** — checks automatically, shows release notes, one-click update.
 - **Default permissions** — set Claude permissions once, auto-apply to every new session.
 
@@ -239,6 +240,10 @@ open ~/.config/twapp/twapp.app
 | `twapp ticket link <key>` | Link a Jira/GitHub ticket |
 | `twapp ticket create <summary>` | Create and link a new Jira ticket |
 | `twapp ticket refresh` | Re-fetch ticket details |
+| `twapp monitor "<command>"` | Run a background command with live monitoring |
+| `twapp monitor --stop` | Stop the running monitor |
+| `twapp monitor --status` | Show what's running |
+| `twapp monitor --logs` | Show log file and recent output |
 | `twapp permissions list\|add\|remove\|sync` | Manage default Claude permissions |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |

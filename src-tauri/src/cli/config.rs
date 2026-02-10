@@ -143,6 +143,166 @@ pub fn set_session_color_preference(mode: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn get_monitor_position() -> String {
+    let path = config_file();
+    if !path.exists() {
+        return "bottom".to_string();
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(pos) = yaml.get("monitor_position").and_then(|v| v.as_str()) {
+                return pos.to_string();
+            }
+        }
+    }
+    "bottom".to_string()
+}
+
+pub fn set_monitor_position(position: &str) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("monitor_position".to_string()),
+            serde_yaml::Value::String(position.to_string()),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+pub fn get_monitor_size() -> u32 {
+    let path = config_file();
+    if !path.exists() {
+        return 300;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(size) = yaml.get("monitor_size").and_then(|v| v.as_u64()) {
+                return size as u32;
+            }
+        }
+    }
+    300
+}
+
+pub fn set_monitor_size(size: u32) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("monitor_size".to_string()),
+            serde_yaml::Value::Number(serde_yaml::Number::from(size as u64)),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+pub fn get_monitor_enabled() -> bool {
+    let path = config_file();
+    if !path.exists() {
+        return false;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(val) = yaml.get("monitor_enabled").and_then(|v| v.as_bool()) {
+                return val;
+            }
+        }
+    }
+    false
+}
+
+pub fn set_monitor_enabled(enabled: bool) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("monitor_enabled".to_string()),
+            serde_yaml::Value::Bool(enabled),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+pub fn get_monitor_float() -> bool {
+    let path = config_file();
+    if !path.exists() {
+        return false;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(float_val) = yaml.get("monitor_float").and_then(|v| v.as_bool()) {
+                return float_val;
+            }
+        }
+    }
+    false
+}
+
+pub fn set_monitor_float(float: bool) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("monitor_float".to_string()),
+            serde_yaml::Value::Bool(float),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 pub fn save_global_config(
     work_directory: Option<String>,
     jira_project: Option<String>,

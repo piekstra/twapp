@@ -4,7 +4,7 @@
 
 This section is the authoritative reference for twapp usage across all Claude sessions.
 
-**Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
+**Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `monitor`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
 
 Run `twapp <command> --help` for details.
 
@@ -94,6 +94,7 @@ npx tsc --noEmit
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
 - **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
+- **Monitor**: `twapp monitor "npm run dev"` runs a background command with live output in a collapsible bar at the bottom of the terminal. One command at a time (starting a new one stops the previous). Output auto-logs to timestamped `.twapp-monitor-{timestamp}.log` files. `twapp monitor --stop` stops it, `twapp monitor --status` shows what's running, `twapp monitor --logs` tails the log. CLI communicates with the GUI via `.twapp-monitor-request.json`; GUI polls for it and spawns the process. Monitor logs are cleaned up with session deletion.
 - **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
 - **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session" | "import"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
 - **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `App.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.
