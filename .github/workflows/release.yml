@@ -9,7 +9,14 @@ permissions:
 
 jobs:
   check:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: aarch64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,7 +33,14 @@ jobs:
 
   release:
     needs: check
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: aarch64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,18 +70,47 @@ jobs:
       - name: Package release
         run: |
           cd src-tauri/target/release/bundle/macos
-          tar -czf twapp-macos-aarch64.tar.gz twapp.app
-          mv twapp-macos-aarch64.tar.gz $GITHUB_WORKSPACE/
+          tar -czf twapp-macos-${{ matrix.arch }}.tar.gz twapp.app
+          mv twapp-macos-${{ matrix.arch }}.tar.gz $GITHUB_WORKSPACE/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twapp-macos-${{ matrix.arch }}
+          path: twapp-macos-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Determine version
+        id: bump
+        run: |
+          BASE_VERSION=$(cat version.txt | tr -d '\n')
+          VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push origin "v${{ steps.bump.outputs.version }}"
-          gh release create "v${{ steps.bump.outputs.version }}" \
-            twapp-macos-aarch64.tar.gz \
-            --title "v${{ steps.bump.outputs.version }}" \
+          VERSION="${{ steps.bump.outputs.version }}"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" \
+            artifacts/twapp-macos-aarch64/twapp-macos-aarch64.tar.gz \
+            artifacts/twapp-macos-x86_64/twapp-macos-x86_64.tar.gz \
+            --title "v${VERSION}" \
             --generate-notes
 
       - name: Update Homebrew formula
@@ -79,20 +122,28 @@ jobs:
             exit 0
           fi
 
-          SHA256=$(shasum -a 256 twapp-macos-aarch64.tar.gz | awk '{print $1}')
           VERSION="${{ steps.bump.outputs.version }}"
+          SHA256_ARM=$(shasum -a 256 artifacts/twapp-macos-aarch64/twapp-macos-aarch64.tar.gz | awk '{print $1}')
+          SHA256_INTEL=$(shasum -a 256 artifacts/twapp-macos-x86_64/twapp-macos-x86_64.tar.gz | awk '{print $1}')
 
           cat > /tmp/twapp.rb <<RUBY
           class Twapp < Formula
             desc "A structured terminal companion for Claude coding sessions"
             homepage "https://github.com/piekstra/twapp"
-            url "https://github.com/piekstra/twapp/releases/download/v${VERSION}/twapp-macos-aarch64.tar.gz"
-            sha256 "${SHA256}"
             license "MIT"
             version "${VERSION}"
 
             depends_on :macos
-            depends_on arch: :arm64
+
+            on_arm do
+              url "https://github.com/piekstra/twapp/releases/download/v${VERSION}/twapp-macos-aarch64.tar.gz"
+              sha256 "${SHA256_ARM}"
+            end
+
+            on_intel do
+              url "https://github.com/piekstra/twapp/releases/download/v${VERSION}/twapp-macos-x86_64.tar.gz"
+              sha256 "${SHA256_INTEL}"
+            end
 
             def install
               prefix.install "twapp.app"
