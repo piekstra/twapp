@@ -297,6 +297,30 @@ pub struct SessionCreationResult {
     pub app_args: Vec<String>,
 }
 
+/// Combine ticket key + shortened title for the session name.
+/// e.g. "MON-1234 Implement Great Feature" instead of just "MON-1234".
+/// Truncates at word boundaries to stay under 50 chars total.
+fn format_session_name(key: &str, title: &str) -> String {
+    let max_total = 50;
+    let title = title.trim();
+    if title.is_empty() {
+        return key.to_string();
+    }
+    let full = format!("{} {}", key, title);
+    if full.len() <= max_total {
+        return full;
+    }
+    let mut result = key.to_string();
+    for word in title.split_whitespace() {
+        let candidate = format!("{} {}", result, word);
+        if candidate.len() > max_total {
+            break;
+        }
+        result = candidate;
+    }
+    result
+}
+
 /// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session)
 pub fn create_session_core(
     ticket_id: Option<String>,
@@ -356,7 +380,7 @@ pub fn create_session_core(
         ticket_file_path = Some(tf);
 
         if session_name.is_none() {
-            window_name = ti.key.clone();
+            window_name = format_session_name(&ti.key, &ti.title);
         }
         ticket_info = Some(ti);
     } else {

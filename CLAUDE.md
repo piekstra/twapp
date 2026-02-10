@@ -28,6 +28,8 @@ When to use each:
 - **resume --fork**: Splitting a session that grew too broad (same repo)
 - **work -s**: Forking off to work on a related issue in a different repo/directory
 
+**Session naming**: When created from a ticket (Jira or GitHub), sessions are named with the ticket key + shortened title (e.g. "MON-1234 Implement Great Feature"), truncated at word boundaries to stay under 50 chars. If `--name` is provided, that overrides the auto-generated name.
+
 **Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
 
 **Launcher Settings**: Gear icon in launcher header switches to settings view with three tabs:
