@@ -139,8 +139,11 @@ jobs:
               sha256 "${SHA256_INTEL}"
             end
 
+            # Homebrew strips single top-level directories from tarballs,
+            # so the extracted contents are the inside of twapp.app (Contents/).
+            # Reconstruct the app bundle at prefix/twapp.app.
             def install
-              prefix.install "twapp.app"
+              (prefix/"twapp.app").install Dir["*"]
               bin.install_symlink prefix/"twapp.app/Contents/MacOS/twapp"
             end
 
