@@ -9,14 +9,7 @@ permissions:
 
 jobs:
   check:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-latest
-            arch: aarch64
-          - runner: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,34 +17,36 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: npm ci
       - run: npx tsc --noEmit
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
 
   release:
     needs: check
     strategy:
       matrix:
         include:
-          - runner: macos-latest
-            arch: aarch64
-          - runner: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+          - arch: aarch64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -65,11 +60,11 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - run: npm ci
-      - run: npm run tauri build
+      - run: npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Package release
         run: |
-          cd src-tauri/target/release/bundle/macos
+          cd src-tauri/target/${{ matrix.target }}/release/bundle/macos
           tar -czf twapp-macos-${{ matrix.arch }}.tar.gz twapp.app
           mv twapp-macos-${{ matrix.arch }}.tar.gz $GITHUB_WORKSPACE/
 
@@ -85,7 +80,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Determine version
