@@ -303,6 +303,46 @@ pub fn set_monitor_float(float: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn get_slack_enabled() -> bool {
+    let path = config_file();
+    if !path.exists() {
+        return false;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(val) = yaml.get("slack_enabled").and_then(|v| v.as_bool()) {
+                return val;
+            }
+        }
+    }
+    false
+}
+
+pub fn set_slack_enabled(enabled: bool) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("slack_enabled".to_string()),
+            serde_yaml::Value::Bool(enabled),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 pub fn save_global_config(
     work_directory: Option<String>,
     jira_project: Option<String>,

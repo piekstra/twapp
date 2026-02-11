@@ -1285,6 +1285,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
 }
 
 .ticket-header-actions {
@@ -1506,6 +1507,175 @@ body,
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 10px;
+}
+
+/* Thread Panel */
+.thread-panel {
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.thread-header {
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.thread-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  margin: 0;
+}
+
+.thread-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.thread-content {
+  padding: 0 12px 12px;
+  margin: 0 8px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.thread-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.thread-channel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.thread-messages {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 4px 0;
+}
+
+.thread-message {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.thread-message:last-child {
+  border-bottom: none;
+}
+
+.thread-message-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.thread-message-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thread-message-time {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.thread-message-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.thread-message-text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.thread-message-text a:hover {
+  text-decoration: underline;
+}
+
+.thread-message-text code {
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.thread-message-text pre {
+  background: var(--bg-primary);
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin: 4px 0;
+  overflow-x: auto;
+}
+
+.thread-mention {
+  color: var(--accent);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.thread-attachments {
+  margin-top: 4px;
+}
+
+.thread-attachment {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+.thread-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.thread-reaction {
+  font-size: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+
+.thread-reply {
+  display: flex;
+  gap: 6px;
+}
+
+.thread-empty {
+  padding: 0 12px 12px;
 }
 
 /* Fork Form */

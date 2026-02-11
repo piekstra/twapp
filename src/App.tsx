@@ -68,6 +68,23 @@ interface MonitorLogEntry {
   modified: string;
 }
 
+interface ThreadMeta {
+  channel_id: string;
+  thread_ts: string;
+  channel_name: string;
+  workspace_url: string;
+  followed_at: string;
+}
+
+interface ThreadMessage {
+  user: string;
+  text: string;
+  ts: string;
+  thread_ts: string;
+  reactions?: { name: string; count: number }[];
+  files?: { name: string; mimetype: string; size: number }[];
+}
+
 interface PromptSection {
   id: string;
   title: string;
@@ -225,6 +242,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
   const [monitorEnabled, setMonitorEnabled] = useState(false);
+  const [slackEnabled, setSlackEnabled] = useState(false);
 
   // Delete session state
   const [deleteTarget, setDeleteTarget] = useState<LauncherSession | null>(null);
@@ -388,6 +406,9 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
       .catch((e) => console.error("Failed to load global prompts:", e));
     invoke<boolean>("get_monitor_enabled")
       .then((enabled) => setMonitorEnabled(enabled))
+      .catch(() => {});
+    invoke<boolean>("get_slack_enabled")
+      .then((enabled) => setSlackEnabled(enabled))
       .catch(() => {});
     setSettingsLoaded(true);
   }, [launcherView, settingsLoaded]);
@@ -967,6 +988,28 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                 </div>
                 <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
                   Shows a command runner bar for background processes like dev servers
+                </span>
+              </div>
+              <div className="launcher-settings-field">
+                <label>Slack Thread Follower</label>
+                <div className="launcher-sort">
+                  <button
+                    className={`launcher-sort-btn${slackEnabled ? " active" : ""}`}
+                    onClick={() => {
+                      setSlackEnabled(true);
+                      invoke("set_slack_enabled", { enabled: true }).catch(() => {});
+                    }}
+                  >Enabled</button>
+                  <button
+                    className={`launcher-sort-btn${!slackEnabled ? " active" : ""}`}
+                    onClick={() => {
+                      setSlackEnabled(false);
+                      invoke("set_slack_enabled", { enabled: false }).catch(() => {});
+                    }}
+                  >Disabled</button>
+                </div>
+                <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
+                  Follow Slack threads in the sidebar and reply inline
                 </span>
               </div>
             </div>
@@ -1582,6 +1625,7 @@ function App() {
   const [reloading, setReloading] = useState(false);
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
   const [ticketExpanded, setTicketExpanded] = useState(false);
+  const [ticketSectionExpanded, setTicketSectionExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
 
   // Ticket linking state
@@ -1599,7 +1643,7 @@ function App() {
   // Quick Prompts state
   const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
   const [projectPrompts, setProjectPrompts] = useState<PromptStore>({ sections: [] });
-  const [promptsExpanded, setPromptsExpanded] = useState(true);
+  const [promptsExpanded, setPromptsExpanded] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [editingPrompt, setEditingPrompt] = useState<{
     mode: "new-section" | "new-prompt" | "edit-prompt" | "edit-section";
@@ -1685,6 +1729,20 @@ function App() {
   const monitorLogsRef = useRef<HTMLButtonElement>(null);
   const [monitorLogsPos, setMonitorLogsPos] = useState<{ top: number; left: number } | null>(null);
 
+  // Slack thread state
+  const [slackEnabled, setSlackEnabled] = useState(false);
+  const [threadMeta, setThreadMeta] = useState<ThreadMeta | null>(null);
+  const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([]);
+  const [threadExpanded, setThreadExpanded] = useState(false);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [threadReplyText, setThreadReplyText] = useState("");
+  const [threadSending, setThreadSending] = useState(false);
+  const [threadFollowUrl, setThreadFollowUrl] = useState("");
+  const [threadFollowing, setThreadFollowing] = useState(false);
+  const [slackUserCache, setSlackUserCache] = useState<Record<string, string>>({});
+  const threadMessagesRef = useRef<HTMLDivElement>(null);
+
   // Theme mode
   type ThemeMode = "light" | "dark" | "system";
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -1707,6 +1765,136 @@ function App() {
       setProjectPrompts(project || { sections: [] });
       promptsLoaded.current = true;
     }).catch(console.error);
+  };
+
+  // --- Slack thread helpers ---
+
+  const refreshThread = async (meta?: ThreadMeta) => {
+    const m = meta || threadMeta;
+    if (!m) return;
+    setThreadLoading(true);
+    setThreadError(null);
+    try {
+      const result = await invoke<{ meta: ThreadMeta; messages: ThreadMessage[] }>("fetch_thread_messages");
+      let updatedMeta = result.meta || m;
+
+      // Resolve channel name if still a raw ID
+      if (updatedMeta.channel_name === updatedMeta.channel_id || !updatedMeta.channel_name) {
+        try {
+          const resolved = await invoke<string | null>("resolve_channel_name", { channelId: updatedMeta.channel_id });
+          if (resolved) {
+            updatedMeta = { ...updatedMeta, channel_name: resolved };
+          }
+        } catch (_) {}
+      }
+      setThreadMeta(updatedMeta);
+
+      const messages = result.messages || [];
+      const uncachedIds = [...new Set(messages.map((msg) => msg.user))]
+        .filter((id) => id && !slackUserCache[id]);
+      if (uncachedIds.length > 0) {
+        const names = await invoke<Record<string, string>>("resolve_slack_users", { userIds: uncachedIds });
+        setSlackUserCache((prev) => ({ ...prev, ...names }));
+      }
+      setThreadMessages(messages);
+      setTimeout(() => {
+        if (threadMessagesRef.current) {
+          threadMessagesRef.current.scrollTop = threadMessagesRef.current.scrollHeight;
+        }
+      }, 50);
+    } catch (e: any) {
+      setThreadError(e?.toString() || "Failed to fetch thread");
+    } finally {
+      setThreadLoading(false);
+    }
+  };
+
+  const handleFollowThread = async () => {
+    if (!threadFollowUrl.trim()) return;
+    setThreadFollowing(true);
+    setThreadError(null);
+    try {
+      const meta = await invoke<ThreadMeta>("follow_thread", { url: threadFollowUrl.trim() });
+      setThreadMeta(meta);
+      setThreadFollowUrl("");
+      await refreshThread(meta);
+    } catch (e: any) {
+      setThreadError(e?.toString() || "Failed to follow thread");
+    } finally {
+      setThreadFollowing(false);
+    }
+  };
+
+  const handleUnfollowThread = async () => {
+    try {
+      await invoke("unfollow_thread");
+      setThreadMeta(null);
+      setThreadMessages([]);
+      setThreadError(null);
+    } catch (e: any) {
+      setThreadError(e?.toString() || "Failed to unfollow");
+    }
+  };
+
+  const handleSendThreadReply = async () => {
+    if (!threadReplyText.trim()) return;
+    setThreadSending(true);
+    try {
+      await invoke("send_thread_reply", { text: threadReplyText.trim() });
+      setThreadReplyText("");
+      await refreshThread();
+    } catch (e: any) {
+      setThreadError(e?.toString() || "Failed to send reply");
+    } finally {
+      setThreadSending(false);
+    }
+  };
+
+  const formatSlackTimestamp = (ts: string): string => {
+    const epochSeconds = parseFloat(ts);
+    if (isNaN(epochSeconds)) return ts;
+    const date = new Date(epochSeconds * 1000);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (isToday) return time;
+    return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  };
+
+  const renderSlackText = (text: string, userNames: Record<string, string>): React.ReactNode => {
+    // Replace Slack link syntax <url|label> and <url>
+    let html = text
+      .replace(/<([^|>]+)\|([^>]+)>/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>')
+      .replace(/<(https?:\/\/[^>]+)>/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    // Replace user mentions <@U1234>
+    html = html.replace(/<@(U[A-Z0-9]+)>/g, (_, id) => {
+      const name = userNames[id] || id;
+      return `<span class="thread-mention">@${name}</span>`;
+    });
+
+    // Replace channel mentions <#C1234|name>
+    html = html.replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1");
+
+    // Code blocks (```...```)
+    html = html.replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>");
+
+    // Inline code (`...`)
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    // Bold (*...*)
+    html = html.replace(/\*([^*]+)\*/g, "<strong>$1</strong>");
+
+    // Italic (_..._)
+    html = html.replace(/\b_([^_]+)_\b/g, "<em>$1</em>");
+
+    // Strikethrough (~...~)
+    html = html.replace(/~([^~]+)~/g, "<s>$1</s>");
+
+    // Newlines
+    html = html.replace(/\n/g, "<br>");
+
+    return <span dangerouslySetInnerHTML={{ __html: html }} />;
   };
 
   const isNewerVersion = (current: string, latest: string): boolean => {
@@ -2150,6 +2338,21 @@ function App() {
       .catch(() => {});
     invoke<boolean>("get_monitor_enabled")
       .then((enabled) => setMonitorEnabled(enabled))
+      .catch(() => {});
+    invoke<boolean>("get_slack_enabled")
+      .then((enabled) => {
+        setSlackEnabled(enabled);
+        if (enabled) {
+          invoke<ThreadMeta | null>("get_thread_info")
+            .then((meta) => {
+              if (meta) {
+                setThreadMeta(meta);
+                refreshThread(meta);
+              }
+            })
+            .catch(() => {});
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -3635,14 +3838,171 @@ function App() {
           )}
         </div>
 
+        {/* Thread Panel */}
+        {slackEnabled && (
+          <div className="thread-panel">
+            <div className="thread-header">
+              <h2 onClick={() => setThreadExpanded(!threadExpanded)}>
+                <span className={`prompt-chevron${threadExpanded ? " expanded" : ""}`}>&#9654;</span>
+                Thread
+                {!threadExpanded && threadMessages.length > 0 && (
+                  <span className="notes-count">{threadMessages.length}</span>
+                )}
+              </h2>
+              <div className="thread-header-actions">
+                {threadMeta && (
+                  <>
+                    <button
+                      className="ticket-refresh-button"
+                      onClick={() => refreshThread()}
+                      disabled={threadLoading}
+                      title="Refresh thread messages"
+                    >
+                      {threadLoading ? "..." : "Refresh"}
+                    </button>
+                    <button
+                      className="ticket-change-button"
+                      onClick={handleUnfollowThread}
+                      title="Unfollow thread"
+                    >
+                      Unfollow
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {threadExpanded && (
+              <>
+                {threadMeta ? (
+                  <div className="thread-content">
+                    <div className="thread-meta-row">
+                      <span className="thread-channel">#{threadMeta.channel_name}</span>
+                      <a
+                        className="ticket-link"
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          openUrl(`${threadMeta.workspace_url}/archives/${threadMeta.channel_id}/p${threadMeta.thread_ts.replace(".", "")}`).catch(console.error);
+                        }}
+                      >
+                        Open in Slack
+                      </a>
+                    </div>
+
+                    {threadError && <div className="ticket-link-error">{threadError}</div>}
+
+                    <div className="thread-messages" ref={threadMessagesRef}>
+                      {threadMessages.map((msg) => (
+                        <div key={msg.ts} className="thread-message">
+                          <div className="thread-message-header">
+                            <span className="thread-message-author">
+                              {slackUserCache[msg.user] || msg.user}
+                            </span>
+                            <span className="thread-message-time">
+                              {formatSlackTimestamp(msg.ts)}
+                            </span>
+                          </div>
+                          <div className="thread-message-text">
+                            {renderSlackText(msg.text, slackUserCache)}
+                          </div>
+                          {msg.files && msg.files.length > 0 && (
+                            <div className="thread-attachments">
+                              {msg.files.map((f, i) => (
+                                <span key={i} className="thread-attachment">
+                                  {f.name} ({f.mimetype.split("/")[1] || f.mimetype})
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {msg.reactions && msg.reactions.length > 0 && (
+                            <div className="thread-reactions">
+                              {msg.reactions.map((r) => (
+                                <span key={r.name} className="thread-reaction">
+                                  :{r.name}: {r.count}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {threadMessages.length === 0 && !threadLoading && (
+                        <div className="notes-empty">No messages yet.</div>
+                      )}
+                      {threadLoading && threadMessages.length === 0 && (
+                        <div className="notes-empty">Loading...</div>
+                      )}
+                    </div>
+
+                    <div className="thread-reply">
+                      <input
+                        type="text"
+                        className="ticket-link-input"
+                        placeholder="Reply to thread..."
+                        value={threadReplyText}
+                        onChange={(e) => setThreadReplyText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSendThreadReply();
+                        }}
+                        disabled={threadSending}
+                      />
+                      <button
+                        className="ticket-link-button"
+                        onClick={handleSendThreadReply}
+                        disabled={threadSending || !threadReplyText.trim()}
+                      >
+                        {threadSending ? "..." : "Send"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="thread-empty">
+                    <div className="ticket-empty-label">No thread followed</div>
+                    <div className="ticket-link-form">
+                      <input
+                        type="text"
+                        className="ticket-link-input"
+                        placeholder="Paste Slack thread URL..."
+                        value={threadFollowUrl}
+                        onChange={(e) => setThreadFollowUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleFollowThread();
+                        }}
+                        disabled={threadFollowing}
+                      />
+                      <button
+                        className="ticket-link-button"
+                        onClick={handleFollowThread}
+                        disabled={threadFollowing || !threadFollowUrl.trim()}
+                      >
+                        {threadFollowing ? "..." : "Follow"}
+                      </button>
+                    </div>
+                    {threadError && <div className="ticket-link-error">{threadError}</div>}
+                    <div className="ticket-hint">
+                      Or run: <code>twapp thread follow &lt;url&gt;</code>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {/* Ticket Info Panel */}
         <div className="ticket-panel">
-          <div className="ticket-header">
-            <h2>Ticket</h2>
+          <div className="ticket-header" onClick={() => setTicketSectionExpanded(!ticketSectionExpanded)}>
+            <h2>
+              <span className={`prompt-chevron${ticketSectionExpanded ? " expanded" : ""}`}>&#9654;</span>
+              Ticket
+              {!ticketSectionExpanded && ticket && (
+                <span className="notes-count">{ticket.key}</span>
+              )}
+            </h2>
             <div className="ticket-header-actions">
               <button
                 className="ticket-refresh-button"
-                onClick={handleRefreshTicket}
+                onClick={(e) => { e.stopPropagation(); handleRefreshTicket(); }}
                 disabled={refreshingTicket}
                 title={ticket ? "Refresh ticket details" : "Check for linked ticket"}
               >
@@ -3651,7 +4011,7 @@ function App() {
               {ticket && (
                 <button
                   className="ticket-change-button"
-                  onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
                   title="Change ticket"
                 >
                   Change
@@ -3659,7 +4019,7 @@ function App() {
               )}
             </div>
           </div>
-          {ticket ? (
+          {ticketSectionExpanded && (ticket ? (
             <div className="ticket-content">
               <div className="ticket-badges">
                 <span className="ticket-key">{ticket.key}</span>
@@ -3726,7 +4086,7 @@ function App() {
                 Or run: <code>twapp ticket link MON-1234</code> or <code>owner/repo#123</code>
               </div>
             </div>
-          )}
+          ))}
         </div>
 
       </div>

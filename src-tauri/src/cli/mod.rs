@@ -6,6 +6,7 @@ pub mod permissions;
 pub mod prompts;
 pub mod session;
 pub mod theme;
+pub mod thread;
 pub mod ticket;
 
 use clap::Subcommand;
@@ -49,6 +50,11 @@ pub enum Commands {
     Ticket {
         #[command(subcommand)]
         command: TicketCommands,
+    },
+    /// Follow a Slack thread
+    Thread {
+        #[command(subcommand)]
+        command: ThreadCommands,
     },
     /// Manage session notes
     Note {
@@ -148,6 +154,47 @@ pub enum TicketCommands {
     },
     /// Re-fetch ticket details from Jira/GitHub
     Refresh {
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ThreadCommands {
+    /// Follow a Slack thread URL
+    Follow {
+        /// Slack thread URL
+        url: String,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Stop following the current thread
+    Unfollow {
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Show current thread status
+    Status {
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Fetch and display thread messages
+    Messages {
+        /// Max messages to fetch
+        #[arg(long, default_value = "50")]
+        limit: u32,
+        /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Send a reply to the followed thread
+    Reply {
+        /// Reply text
+        text: String,
         /// Target directory
         #[arg(long)]
         dir: Option<String>,
@@ -266,6 +313,19 @@ pub fn run(cmd: Commands) -> i32 {
                 r#type,
             } => cmd_ticket_create(&summary, dir.as_deref(), &r#type),
             TicketCommands::Refresh { dir } => cmd_ticket_refresh(dir.as_deref()),
+        },
+        Commands::Thread { command } => match command {
+            ThreadCommands::Follow { url, dir } => {
+                thread::cmd_thread_follow(&url, dir.as_deref())
+            }
+            ThreadCommands::Unfollow { dir } => thread::cmd_thread_unfollow(dir.as_deref()),
+            ThreadCommands::Status { dir } => thread::cmd_thread_status(dir.as_deref()),
+            ThreadCommands::Messages { limit, dir } => {
+                thread::cmd_thread_messages(limit, dir.as_deref())
+            }
+            ThreadCommands::Reply { text, dir } => {
+                thread::cmd_thread_reply(&text, dir.as_deref())
+            }
         },
         Commands::Note { command } => match command {
             NoteCommands::Add { text, dir } => notes::cmd_note_add(&text, dir.as_deref()),

@@ -1390,6 +1390,145 @@ fn set_monitor_float(float: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_slack_enabled() -> bool {
+    crate::cli::config::get_slack_enabled()
+}
+
+#[tauri::command]
+fn set_slack_enabled(enabled: bool) -> Result<(), String> {
+    crate::cli::config::set_slack_enabled(enabled)
+}
+
+#[tauri::command]
+fn get_thread_info(config: tauri::State<'_, GuiArgs>) -> Result<Option<serde_json::Value>, String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let path = std::path::Path::new(cwd).join(".twapp-thread.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read thread file: {}", e))?;
+    let val: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse thread file: {}", e))?;
+    Ok(Some(val))
+}
+
+#[tauri::command]
+async fn follow_thread(url: String, config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+
+    let (workspace_url, channel_id, thread_ts) =
+        crate::cli::thread::parse_thread_url(&url)?;
+
+    // Fetch channel name asynchronously
+    let channel_id_clone = channel_id.clone();
+    let channel_name = tokio::task::spawn_blocking(move || {
+        crate::cli::thread::fetch_channel_name(&channel_id_clone)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+    .unwrap_or_else(|| channel_id.clone());
+
+    let meta = crate::cli::thread::ThreadMeta {
+        channel_id,
+        thread_ts,
+        channel_name,
+        workspace_url,
+        followed_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    crate::cli::thread::write_thread_meta(std::path::Path::new(cwd), &meta)?;
+
+    serde_json::to_value(&meta).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn unfollow_thread(config: tauri::State<'_, GuiArgs>) -> Result<(), String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let path = std::path::Path::new(cwd).join(".twapp-thread.json");
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to remove: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn fetch_thread_messages(config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let dir_path = std::path::PathBuf::from(cwd);
+
+    let mut meta = crate::cli::thread::read_thread_meta(&dir_path)
+        .ok_or_else(|| "No thread followed".to_string())?;
+
+    // Auto-heal: if channel_name looks like a raw ID, re-resolve it
+    if meta.channel_name == meta.channel_id || meta.channel_name.is_empty() {
+        let ch_id = meta.channel_id.clone();
+        if let Some(name) = tokio::task::spawn_blocking(move || {
+            crate::cli::thread::fetch_channel_name(&ch_id)
+        })
+        .await
+        .map_err(|e| format!("Task failed: {}", e))?
+        {
+            meta.channel_name = name;
+            let _ = crate::cli::thread::write_thread_meta(&dir_path, &meta);
+        }
+    }
+
+    let channel_id = meta.channel_id.clone();
+    let thread_ts = meta.thread_ts.clone();
+
+    let messages = tokio::task::spawn_blocking(move || {
+        crate::cli::thread::fetch_thread_messages(&channel_id, &thread_ts, 100)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))??;
+
+    // Return both updated meta and messages so frontend picks up healed channel_name
+    Ok(serde_json::json!({
+        "meta": meta,
+        "messages": messages,
+    }))
+}
+
+#[tauri::command]
+async fn resolve_channel_name(channel_id: String) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(crate::cli::thread::fetch_channel_name(&channel_id))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+async fn resolve_slack_users(user_ids: Vec<String>) -> Result<std::collections::HashMap<String, String>, String> {
+    let result = tokio::task::spawn_blocking(move || {
+        crate::cli::thread::resolve_user_names(&user_ids)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn send_thread_reply(text: String, config: tauri::State<'_, GuiArgs>) -> Result<(), String> {
+    let cwd = config.cwd.as_deref().unwrap_or(".");
+    let dir = std::path::Path::new(cwd);
+
+    let meta = crate::cli::thread::read_thread_meta(dir)
+        .ok_or_else(|| "No thread followed".to_string())?;
+
+    let channel_id = meta.channel_id.clone();
+    let thread_ts = meta.thread_ts.clone();
+
+    tokio::task::spawn_blocking(move || {
+        crate::cli::thread::send_thread_reply(&channel_id, &thread_ts, &text)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
 fn get_default_permissions() -> Vec<String> {
     crate::cli::permissions::load_default_permissions()
 }
@@ -1589,6 +1728,7 @@ async fn delete_session(directory: String, delete_everything: bool) -> Result<()
         // Remove twapp metadata files
         let _ = std::fs::remove_file(work_dir.join(".twapp-session.json"));
         let _ = std::fs::remove_file(work_dir.join(".twapp-ticket.json"));
+        let _ = std::fs::remove_file(work_dir.join(".twapp-thread.json"));
 
         // Remove all .twapp-notes*.json and .twapp-prompts*.json
         if let Ok(entries) = std::fs::read_dir(&work_dir) {
@@ -2472,6 +2612,15 @@ pub fn run(args: GuiArgs) {
             set_monitor_float,
             list_monitor_logs,
             reveal_in_finder,
+            get_slack_enabled,
+            set_slack_enabled,
+            get_thread_info,
+            follow_thread,
+            unfollow_thread,
+            fetch_thread_messages,
+            resolve_channel_name,
+            resolve_slack_users,
+            send_thread_reply,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
