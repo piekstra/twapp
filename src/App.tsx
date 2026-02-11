@@ -193,6 +193,24 @@ type SortMode = "recent" | "alpha";
 
 type LauncherView = "sessions" | "settings" | "new-session" | "import";
 
+/** Format a ticket key for the collapsed badge. Jira keys pass through as-is.
+ *  GitHub keys like "org/repo#123" become "repo#123", truncated if still long. */
+function formatTicketBadge(key: string): string {
+  if (key.includes("#")) {
+    // GitHub: strip org prefix
+    const hashIdx = key.indexOf("#");
+    const beforeHash = key.substring(0, hashIdx);
+    const number = key.substring(hashIdx);
+    const parts = beforeHash.split("/");
+    const repo = parts[parts.length - 1];
+    if (repo.length > 20) {
+      return repo.substring(0, 18) + ".." + number;
+    }
+    return repo + number;
+  }
+  return key;
+}
+
 function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [sessions, setSessions] = useState<LauncherSession[]>([]);
   const [homeDir, setHomeDir] = useState("");
@@ -3695,7 +3713,7 @@ function App() {
               <span className={`prompt-chevron${ticketSectionExpanded ? " expanded" : ""}`}>&#9654;</span>
               Ticket
               {!ticketSectionExpanded && ticket && (
-                <span className="notes-count">{ticket.key}</span>
+                <span className="notes-count">{formatTicketBadge(ticket.key)}</span>
               )}
             </h2>
             <div className="ticket-header-actions">
