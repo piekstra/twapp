@@ -482,7 +482,7 @@ pub fn create_session_core(
         custom.clone()
     } else if let Some(ref old_id) = fork_session_id {
         let cd_prefix = if claude_cwd != work_dir.to_string_lossy() {
-            format!("cd {} && ", claude_cwd)
+            format!("cd '{}' && ", claude_cwd.replace('\'', "'\\''"))
         } else {
             String::new()
         };
@@ -607,7 +607,7 @@ fn cmd_resume(fork: bool) -> i32 {
     let cd_prefix = if !session_data.claude_cwd.is_empty()
         && session_data.claude_cwd != work_dir.to_string_lossy()
     {
-        format!("cd {} && ", session_data.claude_cwd)
+        format!("cd '{}' && ", session_data.claude_cwd.replace('\'', "'\\''"))
     } else {
         String::new()
     };

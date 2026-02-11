@@ -1274,7 +1274,7 @@ async fn launch_session(_session_id: String, directory: String) -> Result<(), St
     let cd_prefix = if !session_data.claude_cwd.is_empty()
         && session_data.claude_cwd != work_dir.to_string_lossy()
     {
-        format!("cd {} && ", session_data.claude_cwd)
+        format!("cd '{}' && ", session_data.claude_cwd.replace('\'', "'\\''"))
     } else {
         String::new()
     };
