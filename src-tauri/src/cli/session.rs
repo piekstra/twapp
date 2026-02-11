@@ -23,6 +23,22 @@ pub struct SessionData {
     pub imported_from: Option<String>,
 }
 
+/// Derive a filesystem-safe name from a session name.
+/// Filters to alphanumeric, spaces, hyphens, underscores; replaces spaces with hyphens;
+/// truncates to 64 chars; falls back to "twapp" if empty.
+pub fn safe_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .collect();
+    let safe = safe.trim().replace(' ', "-");
+    if safe.is_empty() {
+        "twapp".to_string()
+    } else {
+        safe[..safe.len().min(64)].to_string()
+    }
+}
+
 /// Scan a directory recursively for .twapp-session.json files.
 /// Returns (SessionData, directory_path) pairs sorted by most recent activity.
 pub fn list_sessions(scan_dir: &Path) -> Vec<(SessionData, PathBuf)> {

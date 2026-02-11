@@ -1536,6 +1536,49 @@ async fn preflight_delete_session(directory: String) -> Result<DeletePreflight, 
 }
 
 #[tauri::command]
+async fn rename_session(directory: String, new_name: String) -> Result<(), String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    let mut data = crate::cli::session::read_session(&work_dir)?;
+
+    if check_instance_running(&data.name) {
+        return Err("Session is currently running. Close it before renaming.".to_string());
+    }
+
+    let old_safe = crate::cli::session::safe_name(&data.name);
+    let new_safe = crate::cli::session::safe_name(&new_name);
+
+    data.name = new_name;
+    crate::cli::session::write_session(&work_dir, &data)?;
+
+    if old_safe != new_safe {
+        // Rename notes file
+        let old_notes = work_dir.join(format!(".twapp-notes-{}.json", old_safe));
+        let new_notes = work_dir.join(format!(".twapp-notes-{}.json", new_safe));
+        if old_notes.exists() && !new_notes.exists() {
+            let _ = std::fs::rename(&old_notes, &new_notes);
+        }
+
+        // Rename prompts file
+        let old_prompts = work_dir.join(format!(".twapp-prompts-{}.json", old_safe));
+        let new_prompts = work_dir.join(format!(".twapp-prompts-{}.json", new_safe));
+        if old_prompts.exists() && !new_prompts.exists() {
+            let _ = std::fs::rename(&old_prompts, &new_prompts);
+        }
+
+        // Remove old instance bundle (recreated on next launch)
+        let home = dirs::home_dir().unwrap_or_default();
+        let old_app = home
+            .join(".config/twapp/instances")
+            .join(format!("{}.app", old_safe));
+        if old_app.exists() {
+            let _ = std::fs::remove_dir_all(&old_app);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn delete_session(directory: String, delete_everything: bool) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let session_data = crate::cli::session::read_session(&work_dir)?;
@@ -2456,6 +2499,7 @@ pub fn run(args: GuiArgs) {
             remove_default_permission,
             create_and_launch_session,
             preflight_delete_session,
+            rename_session,
             delete_session,
             discover_claude_sessions,
             import_sessions,

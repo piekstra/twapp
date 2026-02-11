@@ -104,6 +104,12 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Rename the current session
+    #[command(after_help = "Examples:\n  twapp rename \"MON-5678 Better Name\"    Rename session in current directory")]
+    Rename {
+        /// New session name
+        name: String,
+    },
     /// Rebuild, reinstall, relaunch (dev workflow)
     #[command(name = "dev-reload")]
     DevReload {
@@ -322,6 +328,7 @@ pub fn run(cmd: Commands) -> i32 {
                 1
             }
         }
+        Commands::Rename { name } => cmd_rename(&name),
         Commands::DevReload {
             pid,
             cwd,
@@ -1024,6 +1031,56 @@ fn cmd_set_session(session_id: &str, cwd: Option<&str>, dir: Option<&str>) -> i3
         }
     }
 
+    0
+}
+
+fn cmd_rename(new_name: &str) -> i32 {
+    let work_dir = std::env::current_dir().unwrap_or_default();
+    let mut data = match session::read_session(&work_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    let old_name = data.name.clone();
+    let old_safe = session::safe_name(&old_name);
+    let new_safe = session::safe_name(new_name);
+
+    // Update session name
+    data.name = new_name.to_string();
+    if let Err(e) = session::write_session(&work_dir, &data) {
+        eprintln!("Error: {}", e);
+        return 1;
+    }
+
+    // Rename notes file
+    if old_safe != new_safe {
+        let old_notes = work_dir.join(format!(".twapp-notes-{}.json", old_safe));
+        let new_notes = work_dir.join(format!(".twapp-notes-{}.json", new_safe));
+        if old_notes.exists() && !new_notes.exists() {
+            let _ = std::fs::rename(&old_notes, &new_notes);
+        }
+
+        // Rename prompts file
+        let old_prompts = work_dir.join(format!(".twapp-prompts-{}.json", old_safe));
+        let new_prompts = work_dir.join(format!(".twapp-prompts-{}.json", new_safe));
+        if old_prompts.exists() && !new_prompts.exists() {
+            let _ = std::fs::rename(&old_prompts, &new_prompts);
+        }
+
+        // Remove old instance bundle (will be recreated on next launch)
+        let home = dirs::home_dir().unwrap_or_default();
+        let old_app = home
+            .join(".config/twapp/instances")
+            .join(format!("{}.app", old_safe));
+        if old_app.exists() {
+            let _ = std::fs::remove_dir_all(&old_app);
+        }
+    }
+
+    println!("Renamed: \"{}\" -> \"{}\"", old_name, new_name);
     0
 }
 

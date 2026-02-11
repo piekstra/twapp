@@ -227,6 +227,8 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [monitorEnabled, setMonitorEnabled] = useState(false);
 
   // Delete session state
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<LauncherSession | null>(null);
   const [deletePreflight, setDeletePreflight] = useState<DeletePreflight | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -683,6 +685,30 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
     setDeleteLoading(false);
     setDeleting(false);
     setDeleteError(null);
+  };
+
+  // Rename session handlers
+  const handleRenameClick = (e: React.MouseEvent, session: LauncherSession) => {
+    e.stopPropagation();
+    setRenamingSessionId(session.session_id);
+    setRenameValue(session.name);
+  };
+
+  const handleRenameConfirm = async (session: LauncherSession) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === session.name) {
+      setRenamingSessionId(null);
+      return;
+    }
+    try {
+      await invoke("rename_session", { directory: session.directory, newName: trimmed });
+      setSessions((prev) =>
+        prev.map((s) => (s.session_id === session.session_id ? { ...s, name: trimmed } : s))
+      );
+    } catch (err) {
+      console.error("Rename failed:", err);
+    }
+    setRenamingSessionId(null);
   };
 
   // Import session handlers
@@ -1429,9 +1455,26 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                 >
                   <div className="launcher-session-main">
                     <div className="launcher-session-name">
-                      {session.name}
-                      {session.is_running && (
-                        <span className="launcher-running-badge">Running</span>
+                      {renamingSessionId === session.session_id ? (
+                        <input
+                          className="launcher-rename-input"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleRenameConfirm(session);
+                            if (e.key === "Escape") setRenamingSessionId(null);
+                          }}
+                          onBlur={() => handleRenameConfirm(session)}
+                          onClick={(e) => e.stopPropagation()}
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          {session.name}
+                          {session.is_running && (
+                            <span className="launcher-running-badge">Running</span>
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="launcher-session-meta">
@@ -1454,7 +1497,16 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
                       </span>
                     )}
                     <button
-                      className="launcher-session-delete"
+                      className="launcher-session-action"
+                      title="Rename session"
+                      onClick={(e) => handleRenameClick(e, session)}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" />
+                      </svg>
+                    </button>
+                    <button
+                      className="launcher-session-action"
                       title="Delete session"
                       onClick={(e) => handleDeleteClick(e, session)}
                     >
