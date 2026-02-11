@@ -1740,7 +1740,10 @@ fn extract_jsonl_metadata(
     let mut git_branch: Option<String> = None;
     let mut message_count: u32 = 0;
     {
-        let f = std::io::BufReader::new(&file);
+        use std::io::Seek;
+        let mut file_ref = &file;
+        let _ = file_ref.seek(SeekFrom::Start(0));
+        let f = std::io::BufReader::new(file_ref);
         let head_limit = 64 * 1024; // 64KB for head scan
         let mut bytes_read: usize = 0;
         let mut found_first = false;
@@ -1750,7 +1753,7 @@ fn extract_jsonl_metadata(
             bytes_read += line.len() + 1;
 
             // Count messages throughout (for head portion)
-            if line.contains("\"type\":\"human\"") || line.contains("\"type\":\"assistant\"") {
+            if line.contains("\"type\":\"user\"") || line.contains("\"type\":\"assistant\"") {
                 message_count += 1;
             }
 
