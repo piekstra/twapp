@@ -1281,10 +1281,13 @@ body,
 }
 
 .ticket-header {
-  padding: 12px 16px 8px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
 }
 
 .ticket-header-actions {
@@ -1320,6 +1323,9 @@ body,
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .ticket-content {

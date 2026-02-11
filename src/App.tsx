@@ -1582,6 +1582,7 @@ function App() {
   const [reloading, setReloading] = useState(false);
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
   const [ticketExpanded, setTicketExpanded] = useState(false);
+  const [ticketSectionExpanded, setTicketSectionExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
 
   // Ticket linking state
@@ -1599,7 +1600,7 @@ function App() {
   // Quick Prompts state
   const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
   const [projectPrompts, setProjectPrompts] = useState<PromptStore>({ sections: [] });
-  const [promptsExpanded, setPromptsExpanded] = useState(true);
+  const [promptsExpanded, setPromptsExpanded] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [editingPrompt, setEditingPrompt] = useState<{
     mode: "new-section" | "new-prompt" | "edit-prompt" | "edit-section";
@@ -3637,12 +3638,18 @@ function App() {
 
         {/* Ticket Info Panel */}
         <div className="ticket-panel">
-          <div className="ticket-header">
-            <h2>Ticket</h2>
+          <div className="ticket-header" onClick={() => setTicketSectionExpanded(!ticketSectionExpanded)}>
+            <h2>
+              <span className={`prompt-chevron${ticketSectionExpanded ? " expanded" : ""}`}>&#9654;</span>
+              Ticket
+              {!ticketSectionExpanded && ticket && (
+                <span className="notes-count">{ticket.key}</span>
+              )}
+            </h2>
             <div className="ticket-header-actions">
               <button
                 className="ticket-refresh-button"
-                onClick={handleRefreshTicket}
+                onClick={(e) => { e.stopPropagation(); handleRefreshTicket(); }}
                 disabled={refreshingTicket}
                 title={ticket ? "Refresh ticket details" : "Check for linked ticket"}
               >
@@ -3651,7 +3658,7 @@ function App() {
               {ticket && (
                 <button
                   className="ticket-change-button"
-                  onClick={() => { setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
                   title="Change ticket"
                 >
                   Change
@@ -3659,7 +3666,7 @@ function App() {
               )}
             </div>
           </div>
-          {ticket ? (
+          {ticketSectionExpanded && (ticket ? (
             <div className="ticket-content">
               <div className="ticket-badges">
                 <span className="ticket-key">{ticket.key}</span>
@@ -3726,7 +3733,7 @@ function App() {
                 Or run: <code>twapp ticket link MON-1234</code> or <code>owner/repo#123</code>
               </div>
             </div>
-          )}
+          ))}
         </div>
 
       </div>
