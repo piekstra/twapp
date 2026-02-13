@@ -12,6 +12,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
@@ -1702,6 +1703,7 @@ function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [jsonRawView, setJsonRawView] = useState(false);
+  const [htmlRawView, setHtmlRawView] = useState(false);
   const [jsonCollapsed, setJsonCollapsed] = useState<Set<string>>(new Set());
   const [previewSearchOpen, setPreviewSearchOpen] = useState(false);
   const [previewSearchQuery, setPreviewSearchQuery] = useState("");
@@ -1844,6 +1846,8 @@ function App() {
 
   // File preview
   const filePreviewRef = useRef<(filePath: string) => void>(() => {});
+  const isYamlFile = (path: string) => /\.(ya?ml)$/i.test(path);
+  const isHtmlFile = (path: string) => /\.html?$/i.test(path);
   const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"]);
   const isImageFile = (path: string) => {
     const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
@@ -1862,6 +1866,7 @@ function App() {
     setPreviewLoading(true);
     setPreviewError(null);
     setJsonRawView(false);
+    setHtmlRawView(false);
     setJsonCollapsed(new Set());
     setPreviewSearchOpen(false);
     setPreviewSearchQuery("");
@@ -1891,6 +1896,15 @@ function App() {
     if (!previewFile?.path.endsWith(".json")) return null;
     try {
       return JSON.parse(previewFile.content);
+    } catch {
+      return null;
+    }
+  }, [previewFile]);
+
+  const parsedYaml = useMemo(() => {
+    if (!previewFile || !isYamlFile(previewFile.path)) return null;
+    try {
+      return yaml.load(previewFile.content);
     } catch {
       return null;
     }
@@ -1969,6 +1983,81 @@ function App() {
           )}
           {!collapsed && <div style={{ paddingLeft: `${depth * 16}px` }}><span className="json-bracket">{"}"}</span></div>}
           {collapsed && <span className="json-bracket">{"}"}</span>}
+        </span>
+      );
+    }
+
+    return <span>{String(value)}</span>;
+  };
+
+  const renderYamlNode = (value: unknown, path: string, depth: number): React.ReactNode => {
+    if (value === null) return <span className="json-null">null</span>;
+    if (typeof value === "boolean") return <span className="json-boolean">{String(value)}</span>;
+    if (typeof value === "number") return <span className="json-number">{value}</span>;
+    if (typeof value === "string") return <span className="json-string">{value}</span>;
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return <span className="json-bracket">[]</span>;
+      const collapsed = jsonCollapsed.has(path);
+      return (
+        <span>
+          <span className="json-collapse-toggle" onClick={() => toggleJsonCollapse(path)}>
+            <span className={`prompt-chevron${collapsed ? "" : " expanded"}`}>&#9654;</span>
+          </span>
+          {collapsed ? (
+            <span className="json-collapsed-indicator" onClick={() => toggleJsonCollapse(path)}>
+              {value.length} {value.length === 1 ? "item" : "items"}
+            </span>
+          ) : (
+            <div className="json-children">
+              {value.map((item, i) => {
+                const isComplex = item !== null && typeof item === "object";
+                return (
+                  <div key={i} className="json-entry" style={{ paddingLeft: `${(depth + 1) * 16}px` }}>
+                    <span className="yaml-dash">- </span>
+                    {isComplex ? renderYamlNode(item, `${path}[${i}]`, depth + 1) : renderYamlNode(item, `${path}[${i}]`, depth + 1)}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </span>
+      );
+    }
+
+    if (typeof value === "object") {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0) return <span className="json-bracket">{"{}"}</span>;
+      const collapsed = jsonCollapsed.has(path);
+      return (
+        <span>
+          {depth > 0 && (
+            <span className="json-collapse-toggle" onClick={() => toggleJsonCollapse(path)}>
+              <span className={`prompt-chevron${collapsed ? "" : " expanded"}`}>&#9654;</span>
+            </span>
+          )}
+          {collapsed ? (
+            <span className="json-collapsed-indicator" onClick={() => toggleJsonCollapse(path)}>
+              {entries.length} {entries.length === 1 ? "key" : "keys"}
+            </span>
+          ) : (
+            <div className={depth === 0 ? "json-children" : "json-children"}>
+              {entries.map(([key, val]) => {
+                const isComplex = val !== null && typeof val === "object";
+                return (
+                  <div key={key} className="json-entry" style={{ paddingLeft: `${(depth > 0 ? (depth + 1) : 0) * 16}px` }}>
+                    <span className="json-key">{key}</span>
+                    <span className="json-colon">:</span>
+                    {isComplex ? (
+                      <>{" "}{renderYamlNode(val, `${path}.${key}`, depth + 1)}</>
+                    ) : (
+                      <> <span>{renderYamlNode(val, `${path}.${key}`, depth + 1)}</span></>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </span>
       );
     }
@@ -2432,7 +2521,7 @@ function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "f") {
         const path = previewFile?.path || "";
-        if (path.endsWith(".md") || path.endsWith(".json")) {
+        if (path.endsWith(".md") || path.endsWith(".json") || isYamlFile(path)) {
           e.preventDefault();
           e.stopPropagation();
           setPreviewSearchOpen(true);
@@ -3823,7 +3912,23 @@ function App() {
                     {jsonRawView ? "Tree" : "Raw"}
                   </button>
                 )}
-                {previewFile && (previewFile.path.endsWith(".md") || previewFile.path.endsWith(".json")) && (
+                {previewFile && isYamlFile(previewFile.path) && parsedYaml !== null && (
+                  <button
+                    className="file-preview-toggle"
+                    onClick={() => setJsonRawView(!jsonRawView)}
+                  >
+                    {jsonRawView ? "Tree" : "Raw"}
+                  </button>
+                )}
+                {previewFile && isHtmlFile(previewFile.path) && (
+                  <button
+                    className="file-preview-toggle"
+                    onClick={() => setHtmlRawView(!htmlRawView)}
+                  >
+                    {htmlRawView ? "Rendered" : "Source"}
+                  </button>
+                )}
+                {previewFile && (previewFile.path.endsWith(".md") || previewFile.path.endsWith(".json") || isYamlFile(previewFile.path)) && (
                   <button
                     className="file-preview-search-btn"
                     onClick={() => {
@@ -3882,6 +3987,27 @@ function App() {
                     <pre className="file-preview-code">{JSON.stringify(parsedJson, null, 2)}</pre>
                   ) : (
                     <div className="json-tree">{renderJsonNode(parsedJson, "$", 0)}</div>
+                  )}
+                </div>
+              ) : previewFile && isYamlFile(previewFile.path) && parsedYaml !== null ? (
+                <div className="file-preview-json">
+                  {jsonRawView ? (
+                    <pre className="file-preview-code">{previewFile.content}</pre>
+                  ) : (
+                    <div className="json-tree">{renderYamlNode(parsedYaml, "$", 0)}</div>
+                  )}
+                </div>
+              ) : previewFile && isHtmlFile(previewFile.path) ? (
+                <div className="file-preview-html">
+                  {htmlRawView ? (
+                    <pre className="file-preview-code">{previewFile.content}</pre>
+                  ) : (
+                    <iframe
+                      srcDoc={previewFile.content}
+                      sandbox="allow-same-origin"
+                      className="file-preview-html-iframe"
+                      title="HTML Preview"
+                    />
                   )}
                 </div>
               ) : previewFile && isImageFile(previewFile.path) ? (
