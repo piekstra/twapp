@@ -170,6 +170,24 @@ Then `source ~/.zshrc` and verify:
 twapp --version
 ```
 
+### Spotlight Visibility
+
+Neither the Homebrew cellar nor `~/.config/twapp/` is indexed by Spotlight. To launch twapp from Spotlight, symlink the app bundle into `/Applications`:
+
+**Homebrew install:**
+
+```bash
+ln -s "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app" /Applications/twapp.app
+```
+
+**Manual install:**
+
+```bash
+ln -s ~/.config/twapp/twapp.app /Applications/twapp.app
+```
+
+> **Note:** After a Homebrew upgrade the symlink will point to the old version. Re-run the command above to update it.
+
 ### Code Signing + Full Disk Access (Recommended)
 
 Without this setup, macOS will repeatedly prompt for permission to access Apple Music, Photos, Documents, etc. This happens because Claude runs shell commands (like `find`, `ls`, `grep`) as subprocesses of twapp, and macOS attributes their filesystem access to the host app. Every protected directory traversal triggers a separate prompt.
