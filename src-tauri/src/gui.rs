@@ -1006,6 +1006,9 @@ async fn install_update(download_url: String) -> Result<String, String> {
         ));
     }
 
+    // Clean stray files from bundle root before signing
+    crate::cli::app_bundle::clean_bundle_root(&target)?;
+
     // Re-sign
     crate::cli::app_bundle::resign_app_bundle(&target)?;
 

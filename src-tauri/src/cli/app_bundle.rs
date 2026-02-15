@@ -70,6 +70,10 @@ pub fn prepare_instance_app(name: &str) -> Result<PathBuf, String> {
         ));
     }
 
+    // Remove anything in the bundle root that isn't Contents/ —
+    // stray files (e.g. symlinks) cause "unsealed contents" codesign failures.
+    clean_bundle_root(&instance_app)?;
+
     // Patch CFBundleName/CFBundleDisplayName but keep the shared
     // CFBundleIdentifier so TCC remembers permission grants across instances.
     let plist_path = instance_app.join("Contents/Info.plist");
@@ -98,6 +102,24 @@ pub fn prepare_instance_app(name: &str) -> Result<PathBuf, String> {
         .output();
 
     Ok(instance_app)
+}
+
+/// Remove any entries in the .app bundle root that aren't `Contents/`.
+/// Stray files or symlinks cause codesign "unsealed contents" errors.
+pub fn clean_bundle_root(app_path: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(app_path).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_name() != "Contents" {
+            let path = entry.path();
+            if path.is_dir() && !path.is_symlink() {
+                std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Re-sign a .app bundle with the twapp-codesign certificate.

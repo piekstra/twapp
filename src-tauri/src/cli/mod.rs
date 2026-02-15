@@ -1158,6 +1158,12 @@ fn cmd_install_gui(binary_path: &str) -> i32 {
         }
     }
 
+    // Clean stray files from bundle root before signing
+    if let Err(e) = app_bundle::clean_bundle_root(&target) {
+        eprintln!("Error cleaning bundle: {}", e);
+        return 1;
+    }
+
     // Re-sign
     if let Err(e) = app_bundle::resign_app_bundle(&target) {
         eprintln!("Error signing: {}", e);
