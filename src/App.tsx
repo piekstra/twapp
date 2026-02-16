@@ -1758,6 +1758,21 @@ function App() {
   const monitorLogsRef = useRef<HTMLButtonElement>(null);
   const [monitorLogsPos, setMonitorLogsPos] = useState<{ top: number; left: number } | null>(null);
 
+  // Terminal tabs
+  interface TabInfo {
+    id: string;
+    term: Terminal | null;
+    fit: FitAddon | null;
+    containerRef: HTMLDivElement | null;
+    unlisten: (() => void) | null;
+  }
+  const [tabs, setTabs] = useState<{ id: string; name: string }[]>([{ id: "main", name: "Main" }]);
+  const [activeTabId, setActiveTabId] = useState("main");
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  const [renameTabValue, setRenameTabValue] = useState("");
+  const tabInstances = useRef<Map<string, TabInfo>>(new Map());
+  const tabCounter = useRef(0);
+
   // Theme mode
   type ThemeMode = "light" | "dark" | "system";
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -2228,6 +2243,10 @@ function App() {
 
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
+      // Update main tab name from session name
+      if (config.name && config.name !== "twapp") {
+        setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: config.name } : t));
+      }
 
       // Launcher mode — don't spawn shell or initialize terminal peripherals
       if (!config.command && !config.session_id) {
@@ -2402,9 +2421,11 @@ function App() {
     const timeout = setTimeout(() => {
       fitAddon.current?.fit();
       monitorFit.current?.fit();
+      // Refit all tab terminals too
+      tabInstances.current.forEach((tab) => tab.fit?.fit());
     }, monitorFloat ? 300 : 50); // longer delay in float mode for CSS transition
     return () => clearTimeout(timeout);
-  }, [sidebarWidth, monitorExpanded, monitorPosition, monitorSize, monitorFloat]);
+  }, [sidebarWidth, monitorExpanded, monitorPosition, monitorSize, monitorFloat, activeTabId, tabs]);
 
   // Float mode: collapse on click outside the monitor bar
   useEffect(() => {
@@ -2433,6 +2454,10 @@ function App() {
       if (monitorTerm.current) {
         monitorTerm.current.options.theme = isDark ? darkTheme : lightTheme;
       }
+      // Apply theme to all tab terminals
+      tabInstances.current.forEach((tab) => {
+        if (tab.term) tab.term.options.theme = isDark ? darkTheme : lightTheme;
+      });
 
       if (appConfig?.color) {
         applyThemeColor(appConfig.color, isDark);
@@ -2532,6 +2557,56 @@ function App() {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [previewFile, previewSearchOpen]);
+
+  // Tab + session keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      // Cmd+T — new tab within session
+      if (e.key === "t" && !e.shiftKey) {
+        e.preventDefault();
+        handleNewTab();
+      }
+      // Cmd+W — close active tab (only when 2+ tabs; otherwise let default close-window behavior through)
+      if (e.key === "w" && !e.shiftKey && tabs.length > 1) {
+        e.preventDefault();
+        handleCloseTab(activeTabId);
+      }
+      // Cmd+N — new fresh session
+      if (e.key === "n" && !e.shiftKey) {
+        e.preventDefault();
+        invoke("create_and_launch_session", { ticket: null, name: null, github: false }).catch(console.error);
+      }
+      // Cmd+Shift+N — fork current session
+      if (e.key === "N" || (e.shiftKey && e.key === "n")) {
+        e.preventDefault();
+        invoke("fork_session", { ticketKey: null }).catch(console.error);
+      }
+      // Cmd+Shift+] — next tab
+      if (e.key === "}" || (e.shiftKey && e.key === "]")) {
+        e.preventDefault();
+        setTabs((prev) => {
+          const idx = prev.findIndex((t) => t.id === activeTabId);
+          const next = prev[(idx + 1) % prev.length];
+          setActiveTabId(next.id);
+          return prev;
+        });
+      }
+      // Cmd+Shift+[ — prev tab
+      if (e.key === "{" || (e.shiftKey && e.key === "[")) {
+        e.preventDefault();
+        setTabs((prev) => {
+          const idx = prev.findIndex((t) => t.id === activeTabId);
+          const next = prev[(idx - 1 + prev.length) % prev.length];
+          setActiveTabId(next.id);
+          return prev;
+        });
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [tabs, activeTabId]);
 
   // Zoom (CMD+= / CMD+- / CMD+0)
   const zoomRef = useRef(parseFloat(localStorage.getItem("twapp-zoom") || "1"));
@@ -2753,6 +2828,141 @@ function App() {
     }
   };
 
+  // --- Tab management ---
+  const isDarkMode = () => {
+    if (themeMode === "dark") return true;
+    if (themeMode === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  };
+
+  const createTabTerminal = (tabId: string, container: HTMLDivElement) => {
+    const dark = isDarkMode();
+    const term = new Terminal({
+      theme: dark ? darkTheme : lightTheme,
+      fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace',
+      fontSize: 14,
+      cursorBlink: true,
+      cursorStyle: "block",
+      allowProposedApi: true,
+      linkHandler: {
+        activate: (_event, uri) => {
+          openUrl(uri).catch(console.error);
+        },
+      },
+    });
+
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(container);
+
+    try {
+      term.loadAddon(new WebglAddon());
+    } catch {
+      // WebGL not available
+    }
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        openUrl(uri).catch(console.error);
+      })
+    );
+
+    // Load font preference
+    invoke<string>("get_font_family_preference")
+      .then((fontFamily) => {
+        term.options.fontFamily = fontFamily;
+        fit.fit();
+      })
+      .catch(() => {});
+
+    requestAnimationFrame(() => fit.fit());
+
+    // Route output from this tab's PTY
+    let unlistenFn: (() => void) | null = null;
+    listen<{ tab_id: string; data: string }>("pty-tab-output", (event) => {
+      if (event.payload.tab_id === tabId) {
+        term.write(event.payload.data);
+      }
+    }).then((fn) => { unlistenFn = fn; });
+
+    // Send input to the correct tab's PTY
+    term.onData((data) => {
+      invoke("write_to_pty", { data, tabId }).catch(console.error);
+    });
+
+    term.onResize(({ cols, rows }) => {
+      invoke("resize_pty", { rows, cols, tabId }).catch(console.error);
+    });
+
+    const tabInfo: TabInfo = { id: tabId, term, fit, containerRef: container, unlisten: null };
+    // Store unlisten cleanup function
+    Object.defineProperty(tabInfo, 'unlisten', {
+      get: () => unlistenFn,
+      configurable: true,
+    });
+    tabInstances.current.set(tabId, tabInfo);
+
+    return tabInfo;
+  };
+
+  const handleNewTab = async () => {
+    tabCounter.current += 1;
+    const num = tabCounter.current;
+    const tabId = `tab-${num}`;
+    const tabName = `Shell ${num}`;
+
+    setTabs((prev) => [...prev, { id: tabId, name: tabName }]);
+    setActiveTabId(tabId);
+
+    // Spawn shell for the new tab (after DOM mounts)
+    setTimeout(async () => {
+      const container = document.getElementById(`tab-terminal-${tabId}`);
+      if (!container) return;
+
+      const tabInfo = createTabTerminal(tabId, container as HTMLDivElement);
+      if (tabInfo.fit) tabInfo.fit.fit();
+      const dims = tabInfo.fit?.proposeDimensions();
+
+      await invoke("spawn_shell", {
+        cwd: appConfig?.cwd || null,
+        command: null,
+        prefill: null,
+        rows: dims?.rows ?? null,
+        cols: dims?.cols ?? null,
+        tabId,
+      });
+    }, 50);
+  };
+
+  const handleCloseTab = async (tabId: string) => {
+    // Don't close the last tab — close the window instead
+    if (tabs.length <= 1) {
+      // Let the default Cmd+W behavior close the window
+      return;
+    }
+
+    // Clean up the terminal instance
+    const tabInfo = tabInstances.current.get(tabId);
+    if (tabInfo) {
+      if (tabInfo.unlisten) tabInfo.unlisten();
+      tabInfo.term?.dispose();
+      tabInstances.current.delete(tabId);
+    }
+
+    // Close the PTY on the backend
+    await invoke("close_tab", { tabId }).catch(console.error);
+
+    setTabs((prev) => {
+      const remaining = prev.filter((t) => t.id !== tabId);
+      // If we closed the active tab, switch to adjacent
+      if (tabId === activeTabId && remaining.length > 0) {
+        const closedIdx = prev.findIndex((t) => t.id === tabId);
+        const newIdx = Math.min(closedIdx, remaining.length - 1);
+        setActiveTabId(remaining[newIdx].id);
+      }
+      return remaining;
+    });
+  };
+
   const addNote = () => {
     if (!newNote.trim()) return;
     const note: Note = {
@@ -2862,7 +3072,7 @@ function App() {
   };
 
   const sendPrompt = (text: string) => {
-    invoke("write_to_pty", { data: text }).catch(console.error);
+    invoke("write_to_pty", { data: text, tabId: activeTabId }).catch(console.error);
   };
 
   const renderPromptSections = (sections: PromptSection[], scope: "global" | "project") => {
@@ -3080,18 +3290,101 @@ function App() {
         {reloading && (
           <div className="reload-banner">{rebuildStatus || "Rebuilding..."}</div>
         )}
+        {/* Tab bar — only visible with 2+ tabs */}
+        {tabs.length > 1 && (
+          <div className="tab-bar">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                className={`tab-item${tab.id === activeTabId ? " active" : ""}`}
+                onClick={() => {
+                  setActiveTabId(tab.id);
+                  // Refit the terminal when switching tabs
+                  setTimeout(() => {
+                    if (tab.id === "main") {
+                      fitAddon.current?.fit();
+                    } else {
+                      tabInstances.current.get(tab.id)?.fit?.fit();
+                    }
+                  }, 50);
+                }}
+                onDoubleClick={() => {
+                  setRenamingTabId(tab.id);
+                  setRenameTabValue(tab.name);
+                }}
+              >
+                {renamingTabId === tab.id ? (
+                  <input
+                    className="tab-rename-input"
+                    value={renameTabValue}
+                    onChange={(e) => setRenameTabValue(e.target.value)}
+                    onBlur={() => {
+                      if (renameTabValue.trim()) {
+                        setTabs((prev) => prev.map((t) => t.id === tab.id ? { ...t, name: renameTabValue.trim() } : t));
+                      }
+                      setRenamingTabId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (renameTabValue.trim()) {
+                          setTabs((prev) => prev.map((t) => t.id === tab.id ? { ...t, name: renameTabValue.trim() } : t));
+                        }
+                        setRenamingTabId(null);
+                      }
+                      if (e.key === "Escape") setRenamingTabId(null);
+                    }}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span className="tab-label">{tab.name}</span>
+                )}
+                {tab.id !== "main" && renamingTabId !== tab.id && (
+                  <button
+                    className="tab-close"
+                    onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+            ))}
+            <button className="tab-add" onClick={handleNewTab} title="New tab (Cmd+T)">+</button>
+          </div>
+        )}
+        {/* Main terminal */}
         <div
           ref={terminalRef}
           className="terminal"
           style={{
-            top: !monitorEnabled ? 8
-              : monitorPosition === "top" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 8,
+            top: !monitorEnabled
+              ? (tabs.length > 1 ? 36 : 8)
+              : monitorPosition === "top" ? (monitorFloat ? (tabs.length > 1 ? 56 : 28) : (monitorShowOutput ? monitorSize + (tabs.length > 1 ? 28 : 0) : (tabs.length > 1 ? 56 : 28))) : (tabs.length > 1 ? 36 : 8),
             left: 8,
             right: 0,
             bottom: !monitorEnabled ? 0
               : monitorPosition === "bottom" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 0,
+            display: activeTabId === "main" ? undefined : "none",
           }}
         />
+        {/* Extra tab terminals */}
+        {tabs.filter((t) => t.id !== "main").map((tab) => (
+          <div
+            key={tab.id}
+            id={`tab-terminal-${tab.id}`}
+            className="terminal"
+            style={{
+              top: !monitorEnabled
+                ? (tabs.length > 1 ? 36 : 8)
+                : monitorPosition === "top" ? (monitorFloat ? (tabs.length > 1 ? 56 : 28) : (monitorShowOutput ? monitorSize + (tabs.length > 1 ? 28 : 0) : (tabs.length > 1 ? 56 : 28))) : (tabs.length > 1 ? 36 : 8),
+              left: 8,
+              right: 0,
+              bottom: !monitorEnabled ? 0
+                : monitorPosition === "bottom" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 0,
+              display: activeTabId === tab.id ? undefined : "none",
+            }}
+          />
+        ))}
         {monitorEnabled && <div
           className={`monitor-bar dock-${monitorPosition}${monitorFloat ? " float-mode" : ""}`}
           style={{
@@ -3676,7 +3969,7 @@ function App() {
                   <button
                     className="note-send"
                     onClick={() => {
-                      invoke("write_to_pty", { data: note.text }).catch(console.error);
+                      invoke("write_to_pty", { data: note.text, tabId: activeTabId }).catch(console.error);
                       deleteNote(note.id);
                     }}
                     title="Send to terminal"

@@ -41,8 +41,8 @@ pub struct GuiArgs {
     pub session_id: Option<String>,
 }
 
-// Shared PTY state
-struct PtyState {
+// Per-tab PTY state
+struct TabPty {
     writer: Option<Box<dyn Write + Send>>,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send>>,
@@ -51,7 +51,7 @@ struct PtyState {
     total_bytes_read: usize,
 }
 
-impl Default for PtyState {
+impl Default for TabPty {
     fn default() -> Self {
         Self {
             writer: None,
@@ -63,6 +63,24 @@ impl Default for PtyState {
         }
     }
 }
+
+// Manages multiple terminal tabs within a session
+struct TabManager {
+    tabs: std::collections::HashMap<String, TabPty>,
+    tab_order: Vec<String>,
+}
+
+impl Default for TabManager {
+    fn default() -> Self {
+        Self {
+            tabs: std::collections::HashMap::new(),
+            tab_order: Vec::new(),
+        }
+    }
+}
+
+// Backwards-compatible alias — single-pty commands still use this
+type PtyState = TabManager;
 
 // Shared monitor state for background process
 struct MonitorState {
@@ -107,6 +125,12 @@ struct MonitorStatusInfo {
     log_path: Option<String>,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct TabOutputEvent {
+    tab_id: String,
+    data: String,
+}
+
 #[tauri::command]
 fn get_app_config(config: tauri::State<'_, GuiArgs>) -> GuiArgs {
     config.inner().clone()
@@ -121,7 +145,9 @@ fn spawn_shell(
     prefill: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
-) -> Result<(), String> {
+    tab_id: Option<String>,
+) -> Result<String, String> {
+    let tab_id = tab_id.unwrap_or_else(|| "main".to_string());
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -167,13 +193,21 @@ fn spawn_shell(
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    // Store writer, master, and child in state
+    // Store writer, master, and child in tab state
     {
-        let mut pty_state = state.lock();
-        pty_state.writer = Some(writer);
-        pty_state.master = Some(pair.master);
-        pty_state.child = Some(child);
-        pty_state.reader_running = true;
+        let mut mgr = state.lock();
+        let tab = TabPty {
+            writer: Some(writer),
+            master: Some(pair.master),
+            child: Some(child),
+            reader_running: true,
+            last_output_time: std::time::Instant::now(),
+            total_bytes_read: 0,
+        };
+        mgr.tabs.insert(tab_id.clone(), tab);
+        if !mgr.tab_order.contains(&tab_id) {
+            mgr.tab_order.push(tab_id.clone());
+        }
     }
 
     // Spawn reader thread to forward output to frontend.
@@ -182,6 +216,7 @@ fn spawn_shell(
     // only emit valid UTF-8 to avoid replacement-character corruption.
     let app_handle = app.clone();
     let state_clone = Arc::clone(&state);
+    let reader_tab_id = tab_id.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let mut pending = Vec::new();
@@ -201,25 +236,36 @@ fn spawn_shell(
                         let data = std::str::from_utf8(&pending[..valid_len])
                             .unwrap()
                             .to_string();
-                        let _ = app_handle.emit("pty-output", data);
+                        // Emit tab-aware event; also emit legacy event for main tab
+                        let _ = app_handle.emit("pty-tab-output", TabOutputEvent {
+                            tab_id: reader_tab_id.clone(),
+                            data: data.clone(),
+                        });
+                        if reader_tab_id == "main" {
+                            let _ = app_handle.emit("pty-output", data);
+                        }
                     }
 
                     // Keep any incomplete trailing bytes for next read
                     pending = pending[valid_len..].to_vec();
 
-                    let mut pty_state = state_clone.lock();
-                    pty_state.last_output_time = std::time::Instant::now();
-                    pty_state.total_bytes_read += n;
+                    let mut mgr = state_clone.lock();
+                    if let Some(tab) = mgr.tabs.get_mut(&reader_tab_id) {
+                        tab.last_output_time = std::time::Instant::now();
+                        tab.total_bytes_read += n;
+                    }
                 }
                 Err(_) => break,
             }
         }
-        let mut pty_state = state_clone.lock();
-        pty_state.reader_running = false;
+        let mut mgr = state_clone.lock();
+        if let Some(tab) = mgr.tabs.get_mut(&reader_tab_id) {
+            tab.reader_running = false;
+        }
     });
 
     // Helper: wait for PTY output to settle (no new output for `quiet_ms`)
-    fn wait_for_settle(state: &Arc<Mutex<PtyState>>, quiet_ms: u64, timeout_ms: u64) {
+    fn wait_for_settle(state: &Arc<Mutex<TabManager>>, tab_id: &str, quiet_ms: u64, timeout_ms: u64) {
         let start = std::time::Instant::now();
         let quiet_duration = std::time::Duration::from_millis(quiet_ms);
         let timeout = std::time::Duration::from_millis(timeout_ms);
@@ -227,9 +273,11 @@ fn spawn_shell(
         // Wait for at least some output first
         loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            let pty_state = state.lock();
-            if pty_state.total_bytes_read > 0 {
-                break;
+            let mgr = state.lock();
+            if let Some(tab) = mgr.tabs.get(tab_id) {
+                if tab.total_bytes_read > 0 {
+                    break;
+                }
             }
             if start.elapsed() > timeout {
                 return;
@@ -239,10 +287,11 @@ fn spawn_shell(
         // Now wait for output to go quiet
         loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            let pty_state = state.lock();
-            let since_last = pty_state.last_output_time.elapsed();
-            if since_last >= quiet_duration {
-                break;
+            let mgr = state.lock();
+            if let Some(tab) = mgr.tabs.get(tab_id) {
+                if tab.last_output_time.elapsed() >= quiet_duration {
+                    break;
+                }
             }
             if start.elapsed() > timeout {
                 break;
@@ -256,18 +305,21 @@ fn spawn_shell(
     // If a command was specified, wait for shell to be ready then send it
     if let Some(cmd_str) = command {
         let state_clone = Arc::clone(&state);
+        let tid = tab_id.clone();
         std::thread::spawn(move || {
             // Wait for the shell prompt to settle (no output for 300ms, timeout 10s)
-            wait_for_settle(&state_clone, 300, 10000);
+            wait_for_settle(&state_clone, &tid, 300, 10000);
             {
-                let mut pty_state = state_clone.lock();
-                if let Some(ref mut writer) = pty_state.writer {
-                    let _ = writer.write_all(cmd_str.as_bytes());
-                    let _ = writer.write_all(b"\n");
-                }
-                // Reset byte counter so prefill can wait for command output
-                if has_prefill {
-                    pty_state.total_bytes_read = 0;
+                let mut mgr = state_clone.lock();
+                if let Some(tab) = mgr.tabs.get_mut(&tid) {
+                    if let Some(ref mut writer) = tab.writer {
+                        let _ = writer.write_all(cmd_str.as_bytes());
+                        let _ = writer.write_all(b"\n");
+                    }
+                    // Reset byte counter so prefill can wait for command output
+                    if has_prefill {
+                        tab.total_bytes_read = 0;
+                    }
                 }
             }
         });
@@ -276,24 +328,27 @@ fn spawn_shell(
     // If prefill text was specified, wait for the command to initialize then type it
     if let Some(prefill_str) = prefill {
         let state_clone = Arc::clone(&state);
+        let tid = tab_id.clone();
         std::thread::spawn(move || {
             if has_command {
                 // Wait for the command (e.g., claude) to produce output and settle
                 // Longer quiet period since claude has a loading phase
-                wait_for_settle(&state_clone, 1000, 30000);
+                wait_for_settle(&state_clone, &tid, 1000, 30000);
             } else {
                 // No command — just wait for shell prompt
-                wait_for_settle(&state_clone, 300, 10000);
+                wait_for_settle(&state_clone, &tid, 300, 10000);
             }
-            let mut pty_state = state_clone.lock();
-            if let Some(ref mut writer) = pty_state.writer {
-                let _ = writer.write_all(prefill_str.as_bytes());
-                // No \n — text appears in input but is not submitted
+            let mut mgr = state_clone.lock();
+            if let Some(tab) = mgr.tabs.get_mut(&tid) {
+                if let Some(ref mut writer) = tab.writer {
+                    let _ = writer.write_all(prefill_str.as_bytes());
+                    // No \n — text appears in input but is not submitted
+                }
             }
         });
     }
 
-    Ok(())
+    Ok(tab_id)
 }
 
 fn read_ticket_file(path: &std::path::Path) -> Result<Option<serde_json::Value>, String> {
@@ -795,21 +850,25 @@ async fn fork_session(
 }
 
 /// Kill the PTY process and clean up state. Frontend should call spawn_shell after to restart.
+/// When tab_id is provided, only kills that tab. Otherwise kills the "main" tab (legacy behavior).
 #[tauri::command]
-fn kill_pty(state: tauri::State<'_, Arc<Mutex<PtyState>>>) -> Result<(), String> {
-    let mut pty_state = state.lock();
+fn kill_pty(state: tauri::State<'_, Arc<Mutex<PtyState>>>, tab_id: Option<String>) -> Result<(), String> {
+    let tid = tab_id.unwrap_or_else(|| "main".to_string());
+    let mut mgr = state.lock();
 
-    // Kill the child process
-    if let Some(ref mut child) = pty_state.child {
-        let _ = child.kill();
+    if let Some(tab) = mgr.tabs.get_mut(&tid) {
+        // Kill the child process
+        if let Some(ref mut child) = tab.child {
+            let _ = child.kill();
+        }
+
+        // Drop everything to clean up
+        tab.child = None;
+        tab.writer = None;
+        tab.master = None;
+        tab.reader_running = false;
+        tab.total_bytes_read = 0;
     }
-
-    // Drop everything to clean up
-    pty_state.child = None;
-    pty_state.writer = None;
-    pty_state.master = None;
-    pty_state.reader_running = false;
-    pty_state.total_bytes_read = 0;
 
     Ok(())
 }
@@ -1034,12 +1093,16 @@ fn set_theme_preference(mode: String, app: AppHandle) -> Result<(), String> {
 fn write_to_pty(
     state: tauri::State<'_, Arc<Mutex<PtyState>>>,
     data: String,
+    tab_id: Option<String>,
 ) -> Result<(), String> {
-    let mut pty_state = state.lock();
-    if let Some(ref mut writer) = pty_state.writer {
-        writer
-            .write_all(data.as_bytes())
-            .map_err(|e| e.to_string())?;
+    let tid = tab_id.unwrap_or_else(|| "main".to_string());
+    let mut mgr = state.lock();
+    if let Some(tab) = mgr.tabs.get_mut(&tid) {
+        if let Some(ref mut writer) = tab.writer {
+            writer
+                .write_all(data.as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -1049,19 +1112,53 @@ fn resize_pty(
     state: tauri::State<'_, Arc<Mutex<PtyState>>>,
     rows: u16,
     cols: u16,
+    tab_id: Option<String>,
 ) -> Result<(), String> {
-    let pty_state = state.lock();
-    if let Some(ref master) = pty_state.master {
-        master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| e.to_string())?;
+    let tid = tab_id.unwrap_or_else(|| "main".to_string());
+    let mgr = state.lock();
+    if let Some(tab) = mgr.tabs.get(&tid) {
+        if let Some(ref master) = tab.master {
+            master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
+}
+
+#[tauri::command]
+fn close_tab(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<Mutex<PtyState>>>,
+    tab_id: String,
+) -> Result<(), String> {
+    let mut mgr = state.lock();
+    if let Some(mut tab) = mgr.tabs.remove(&tab_id) {
+        // Kill the child process
+        if let Some(ref mut child) = tab.child {
+            let _ = child.kill();
+        }
+        // Drop writer/master to close the PTY
+        tab.writer = None;
+        tab.master = None;
+    }
+    mgr.tab_order.retain(|id| id != &tab_id);
+    // Notify frontend
+    let _ = app.emit("tab-closed", &tab_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn list_tabs(
+    state: tauri::State<'_, Arc<Mutex<PtyState>>>,
+) -> Vec<String> {
+    let mgr = state.lock();
+    mgr.tab_order.clone()
 }
 
 // ---- Session Launcher ----
@@ -2479,6 +2576,8 @@ pub fn run(args: GuiArgs) {
             refresh_ticket,
             fork_session,
             kill_pty,
+            close_tab,
+            list_tabs,
             dev_reload,
             read_rebuild_log,
             read_file,
