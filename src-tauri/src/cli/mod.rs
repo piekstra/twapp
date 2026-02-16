@@ -110,6 +110,12 @@ pub enum Commands {
         /// New session name
         name: String,
     },
+    /// Generate shell completions
+    #[command(name = "completions")]
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
+    },
     /// Rebuild, reinstall, relaunch (dev workflow)
     #[command(name = "dev-reload")]
     DevReload {
@@ -329,6 +335,15 @@ pub fn run(cmd: Commands) -> i32 {
             }
         }
         Commands::Rename { name } => cmd_rename(&name),
+        Commands::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut <crate::Cli as clap::CommandFactory>::command(),
+                "twapp",
+                &mut std::io::stdout(),
+            );
+            0
+        }
         Commands::DevReload {
             pid,
             cwd,

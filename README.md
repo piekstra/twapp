@@ -287,6 +287,24 @@ open ~/.config/twapp/twapp.app
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |
 | `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |
+| `twapp completions <shell>` | Generate shell completions (zsh, bash, fish) |
+
+### Shell Completions
+
+Tab completion for subcommands, flags, and arguments:
+
+```bash
+# zsh (default macOS shell)
+mkdir -p ~/.zfunc
+twapp completions zsh > ~/.zfunc/_twapp
+# Add to ~/.zshrc: fpath+=~/.zfunc; autoload -Uz compinit && compinit
+
+# bash
+twapp completions bash > "$(brew --prefix)/etc/bash_completion.d/twapp"
+
+# fish
+twapp completions fish > ~/.config/fish/completions/twapp.fish
+```
 
 ## Updating
 
