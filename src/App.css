@@ -98,6 +98,99 @@ body,
   overflow-y: auto !important;
 }
 
+/* Tab Bar */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 4px;
+  gap: 1px;
+  -webkit-app-region: drag;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  transition: background 0.1s;
+}
+
+.tab-item:hover {
+  background: var(--bg-hover);
+}
+
+.tab-item.active {
+  background: var(--bg-terminal);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tab-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.tab-item:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+
+.tab-add:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* Monitor Bar */
 .monitor-bar {
   position: absolute;
