@@ -28,10 +28,14 @@ npx tsc --noEmit          # type check
 ### Project Structure
 
 ```
-src/              # React/TypeScript frontend (sidebar, terminal, overlays)
+src/              # React/TypeScript frontend
+  App.tsx         # Main terminal UI component
+  types.ts        # Shared TypeScript types
+  utils/          # Utility functions (format, file, version)
+  components/     # Extracted components (SessionLauncher, FilePreview, PromptSections)
 src-tauri/        # Rust backend
   src/cli/        # CLI subcommands (work, resume, note, prompt, etc.)
-  src/gui.rs      # Tauri commands for GUI features
+  src/gui/        # Tauri commands split into modules (pty, sessions, tickets, monitor, etc.)
   src/lib.rs      # Clap routing between CLI and GUI modes
 ```
 
