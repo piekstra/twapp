@@ -191,6 +191,18 @@ body,
   color: var(--text-primary);
 }
 
+.tab-rename-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 1px 4px;
+  width: 80px;
+  outline: none;
+  font-family: inherit;
+}
+
 /* Monitor Bar */
 .monitor-bar {
   position: absolute;

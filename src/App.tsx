@@ -1766,8 +1766,10 @@ function App() {
     containerRef: HTMLDivElement | null;
     unlisten: (() => void) | null;
   }
-  const [tabs, setTabs] = useState<{ id: string }[]>([{ id: "main" }]);
+  const [tabs, setTabs] = useState<{ id: string; name: string }[]>([{ id: "main", name: "Main" }]);
   const [activeTabId, setActiveTabId] = useState("main");
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  const [renameTabValue, setRenameTabValue] = useState("");
   const tabInstances = useRef<Map<string, TabInfo>>(new Map());
   const tabCounter = useRef(0);
 
@@ -2241,6 +2243,10 @@ function App() {
 
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
+      // Update main tab name from session name
+      if (config.name && config.name !== "twapp") {
+        setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: config.name } : t));
+      }
 
       // Launcher mode — don't spawn shell or initialize terminal peripherals
       if (!config.command && !config.session_id) {
@@ -2900,9 +2906,11 @@ function App() {
 
   const handleNewTab = async () => {
     tabCounter.current += 1;
-    const tabId = `tab-${tabCounter.current}`;
+    const num = tabCounter.current;
+    const tabId = `tab-${num}`;
+    const tabName = `Shell ${num}`;
 
-    setTabs((prev) => [...prev, { id: tabId }]);
+    setTabs((prev) => [...prev, { id: tabId, name: tabName }]);
     setActiveTabId(tabId);
 
     // Spawn shell for the new tab (after DOM mounts)
@@ -3064,7 +3072,7 @@ function App() {
   };
 
   const sendPrompt = (text: string) => {
-    invoke("write_to_pty", { data: text }).catch(console.error);
+    invoke("write_to_pty", { data: text, tabId: activeTabId }).catch(console.error);
   };
 
   const renderPromptSections = (sections: PromptSection[], scope: "global" | "project") => {
@@ -3300,9 +3308,38 @@ function App() {
                     }
                   }, 50);
                 }}
+                onDoubleClick={() => {
+                  setRenamingTabId(tab.id);
+                  setRenameTabValue(tab.name);
+                }}
               >
-                <span className="tab-label">{tab.id === "main" ? (appConfig?.name || "Session") : `Shell ${tab.id.replace("tab-", "")}`}</span>
-                {tab.id !== "main" && (
+                {renamingTabId === tab.id ? (
+                  <input
+                    className="tab-rename-input"
+                    value={renameTabValue}
+                    onChange={(e) => setRenameTabValue(e.target.value)}
+                    onBlur={() => {
+                      if (renameTabValue.trim()) {
+                        setTabs((prev) => prev.map((t) => t.id === tab.id ? { ...t, name: renameTabValue.trim() } : t));
+                      }
+                      setRenamingTabId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (renameTabValue.trim()) {
+                          setTabs((prev) => prev.map((t) => t.id === tab.id ? { ...t, name: renameTabValue.trim() } : t));
+                        }
+                        setRenamingTabId(null);
+                      }
+                      if (e.key === "Escape") setRenamingTabId(null);
+                    }}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <span className="tab-label">{tab.name}</span>
+                )}
+                {tab.id !== "main" && renamingTabId !== tab.id && (
                   <button
                     className="tab-close"
                     onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
@@ -3932,7 +3969,7 @@ function App() {
                   <button
                     className="note-send"
                     onClick={() => {
-                      invoke("write_to_pty", { data: note.text }).catch(console.error);
+                      invoke("write_to_pty", { data: note.text, tabId: activeTabId }).catch(console.error);
                       deleteNote(note.id);
                     }}
                     title="Send to terminal"
