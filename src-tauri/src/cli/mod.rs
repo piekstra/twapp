@@ -32,6 +32,9 @@ pub enum Commands {
         /// Directory where the original session was started
         #[arg(long)]
         claude_cwd: Option<String>,
+        /// Use Chrome instead of Claude desktop
+        #[arg(long)]
+        chrome: bool,
     },
     /// Resume session in current directory
     #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
@@ -263,7 +266,8 @@ pub fn run(cmd: Commands) -> i32 {
             github,
             session_id: fork_session_id,
             claude_cwd,
-        } => cmd_work(ticket, name, run, github, fork_session_id, claude_cwd),
+            chrome,
+        } => cmd_work(ticket, name, run, github, fork_session_id, claude_cwd, chrome),
         Commands::Resume { fork } => cmd_resume(fork),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
@@ -390,6 +394,7 @@ pub fn create_session_core(
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
+    chrome: bool,
 ) -> Result<SessionCreationResult, String> {
     if ticket_id.is_none() && session_name.is_none() {
         return Err("Provide a ticket or session name".to_string());
@@ -490,9 +495,11 @@ pub fn create_session_core(
         forked_from: fork_session_id.clone(),
         imported: None,
         imported_from: None,
+        use_chrome: if chrome { Some(true) } else { None },
     };
     session::write_session(&work_dir, &session_data)?;
 
+    let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = if let Some(ref custom) = run_command {
         custom.clone()
     } else if let Some(ref old_id) = fork_session_id {
@@ -502,11 +509,11 @@ pub fn create_session_core(
             String::new()
         };
         format!(
-            "{}claude --resume {} --fork-session --session-id {}",
-            cd_prefix, old_id, session_id
+            "{}claude --resume {} --fork-session --session-id {}{}",
+            cd_prefix, old_id, session_id, chrome_flag
         )
     } else {
-        format!("claude --session-id {}", session_id)
+        format!("claude --session-id {}{}", session_id, chrome_flag)
     };
 
     let prefill = if let Some(ref ti) = ticket_info {
@@ -539,6 +546,9 @@ pub fn create_session_core(
         app_args.push("--ticket".to_string());
         app_args.push(tf.to_string_lossy().to_string());
     }
+    if chrome {
+        app_args.push("--chrome".to_string());
+    }
 
     Ok(SessionCreationResult {
         name: window_name,
@@ -553,6 +563,7 @@ fn cmd_work(
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
+    chrome: bool,
 ) -> i32 {
     if ticket_id.is_none() && session_name.is_none() {
         eprintln!("Error: Provide a ticket or --name for the session.");
@@ -566,7 +577,7 @@ fn cmd_work(
         return 1;
     }
 
-    let result = match create_session_core(ticket_id, session_name, run_command, github, fork_session_id, claude_cwd_arg) {
+    let result = match create_session_core(ticket_id, session_name, run_command, github, fork_session_id, claude_cwd_arg, chrome) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -627,12 +638,15 @@ fn cmd_resume(fork: bool) -> i32 {
         String::new()
     };
 
+    let chrome = session_data.use_chrome.unwrap_or(false);
+    let chrome_flag = if chrome { " --chrome" } else { "" };
+
     let session_id;
     if fork {
         let new_id = uuid::Uuid::new_v4().to_string();
         let command = format!(
-            "{}claude --resume {} --fork-session --session-id {}",
-            cd_prefix, session_data.session_id, new_id
+            "{}claude --resume {} --fork-session --session-id {}{}",
+            cd_prefix, session_data.session_id, new_id, chrome_flag
         );
         session_data = session::SessionData {
             session_id: new_id.clone(),
@@ -645,6 +659,7 @@ fn cmd_resume(fork: bool) -> i32 {
             forked_from: Some(session_data.session_id),
             imported: None,
             imported_from: None,
+            use_chrome: if chrome { Some(true) } else { None },
         };
         session_id = new_id;
         // Write the forked session file
@@ -652,16 +667,16 @@ fn cmd_resume(fork: bool) -> i32 {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, &session_id, &command)
+        build_and_launch(&work_dir, &window_name, &color, &session_id, &command, chrome)
     } else {
         session_id = session_data.session_id.clone();
-        let command = format!("{}claude --resume {}", cd_prefix, session_id);
+        let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
         if let Err(e) = session::write_session(&work_dir, &session_data) {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, &session_id, &command)
+        build_and_launch(&work_dir, &window_name, &color, &session_id, &command, chrome)
     }
 }
 
@@ -672,6 +687,7 @@ fn build_and_launch(
     color: &str,
     session_id: &str,
     command: &str,
+    chrome: bool,
 ) -> i32 {
     let mut app_args = vec![
         "--name".to_string(),
@@ -690,6 +706,9 @@ fn build_and_launch(
     if ticket_file.exists() {
         app_args.push("--ticket".to_string());
         app_args.push(ticket_file.to_string_lossy().to_string());
+    }
+    if chrome {
+        app_args.push("--chrome".to_string());
     }
 
     let instance_app = match app_bundle::prepare_instance_app(window_name) {

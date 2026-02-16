@@ -30,6 +30,10 @@ pub struct GuiArgs {
     /// Claude session ID (for display in UI when resuming)
     #[arg(long)]
     pub session_id: Option<String>,
+
+    /// Use Chrome instead of Claude desktop
+    #[arg(long)]
+    pub chrome: bool,
 }
 
 // Per-tab PTY state

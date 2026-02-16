@@ -32,6 +32,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [newSessionTicket, setNewSessionTicket] = useState("");
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionGithub, setNewSessionGithub] = useState(false);
+  const [newSessionChrome, setNewSessionChrome] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -421,11 +422,13 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
         ticket: ticket || null,
         name: name || null,
         github: newSessionGithub,
+        chrome: newSessionChrome,
       });
       setLauncherView("sessions");
       setNewSessionTicket("");
       setNewSessionName("");
       setNewSessionGithub(false);
+      setNewSessionChrome(false);
       setTimeout(loadSessions, 1000);
     } catch (e) {
       setCreateError(String(e));
@@ -1206,6 +1209,14 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
               onChange={(e) => setNewSessionGithub(e.target.checked)}
             />
             <span>GitHub issue</span>
+          </label>
+          <label className="launcher-checkbox-field">
+            <input
+              type="checkbox"
+              checked={newSessionChrome}
+              onChange={(e) => setNewSessionChrome(e.target.checked)}
+            />
+            <span>Use Chrome</span>
           </label>
         </div>
         {createError && <div className="launcher-create-error">{createError}</div>}
