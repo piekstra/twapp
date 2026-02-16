@@ -263,6 +263,33 @@ twapp sessions
 open ~/.config/twapp/twapp.app
 ```
 
+## Importing Existing Claude Sessions
+
+Already using Claude CLI? You can bring existing sessions into twapp.
+
+### From the session launcher (GUI)
+
+Open the session launcher and click the import icon (download arrow) in the header. twapp scans `~/.claude/projects/` for unmanaged sessions, groups them by directory, and lets you pick which ones to import. Imported sessions get their own working directories and show an "Imported" badge.
+
+### From the CLI
+
+Fork an existing Claude session into a new twapp session:
+
+```bash
+# Find your Claude session IDs
+claude sessions list
+
+# Import a session by forking it
+twapp work --name "my-session" -s <session-id>
+```
+
+> **Note:** `--cwd` is a top-level flag, not a subcommand flag:
+> ```bash
+> twapp --cwd ~/projects/my-repo work --name "my-session" -s <session-id>
+> ```
+
+The forked session gets a new ID but carries full Claude context from the original.
+
 ## CLI Reference
 
 | Command | Description |
