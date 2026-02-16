@@ -193,21 +193,13 @@ twapp --version
 
 ### Spotlight Visibility
 
-Neither the Homebrew cellar nor `~/.config/twapp/` is indexed by Spotlight. To launch twapp from Spotlight, symlink the app bundle into `/Applications`:
-
-**Homebrew install:**
+Neither the Homebrew cellar nor `~/.config/twapp/` is indexed by Spotlight, and Spotlight ignores symlinked `.app` bundles. To launch twapp from Spotlight, create a lightweight wrapper app:
 
 ```bash
-ln -s "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app" /Applications/twapp.app
+osacompile -o ~/Applications/twapp.app -e 'do shell script "open ~/.config/twapp/twapp.app"'
 ```
 
-**Manual install:**
-
-```bash
-ln -s ~/.config/twapp/twapp.app /Applications/twapp.app
-```
-
-> **Note:** After a Homebrew upgrade the symlink will point to the old version. Re-run the command above to update it.
+This creates a real `.app` in `~/Applications` that Spotlight indexes. It just opens the actual twapp bundle, so updates are always picked up.
 
 ### Code Signing + Full Disk Access (Recommended)
 
