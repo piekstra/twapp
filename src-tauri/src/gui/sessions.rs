@@ -198,7 +198,8 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     } else {
         String::new()
     };
-    let command = format!("{}claude --resume {}", cd_prefix, session_data.session_id);
+    let chrome_flag = if session_data.use_chrome.unwrap_or(false) { " --chrome" } else { "" };
+    let command = format!("{}claude --resume {}{}", cd_prefix, session_data.session_id, chrome_flag);
 
     let color = if session_data.color.is_empty() {
         crate::cli::theme::random_color().to_string()
@@ -224,6 +225,9 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push("--ticket".to_string());
         app_args.push(ticket_file.to_string_lossy().to_string());
     }
+    if session_data.use_chrome.unwrap_or(false) {
+        app_args.push("--chrome".to_string());
+    }
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
@@ -236,8 +240,9 @@ pub async fn create_and_launch_session(
     ticket: Option<String>,
     name: Option<String>,
     github: bool,
+    chrome: bool,
 ) -> Result<(), String> {
-    let result = crate::cli::create_session_core(ticket, name, None, github, None, None)?;
+    let result = crate::cli::create_session_core(ticket, name, None, github, None, None, chrome)?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
@@ -872,6 +877,7 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             forked_from: None,
             imported: Some(true),
             imported_from: Some(original_cwd),
+            use_chrome: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
@@ -957,16 +963,18 @@ pub async fn fork_session(
     let new_id = uuid::Uuid::new_v4().to_string();
 
     // Build command — always use --fork-session for proper session isolation
+    let chrome = config.chrome;
+    let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = match &old_session_id {
         Some(old_id) => format!(
-            "claude --resume {} --fork-session --session-id {}",
-            old_id, new_id
+            "claude --resume {} --fork-session --session-id {}{}",
+            old_id, new_id, chrome_flag
         ),
-        None => format!("claude --session-id {}", new_id),
+        None => format!("claude --session-id {}{}", new_id, chrome_flag),
     };
 
     // Write .twapp-session.json in the new work directory
-    let session_data = serde_json::json!({
+    let mut session_data = serde_json::json!({
         "session_id": new_id,
         "name": window_name,
         "color": color.to_string(),
@@ -975,6 +983,9 @@ pub async fn fork_session(
         "created": chrono::Utc::now().to_rfc3339(),
         "forked_from": old_session_id,
     });
+    if chrome {
+        session_data["use_chrome"] = serde_json::json!(true);
+    }
     std::fs::write(
         std::path::Path::new(&work_dir).join(".twapp-session.json"),
         serde_json::to_string_pretty(&session_data).unwrap(),
@@ -999,6 +1010,9 @@ pub async fn fork_session(
     if let Some(ref tf) = ticket_file {
         app_args.push("--ticket".to_string());
         app_args.push(tf.clone());
+    }
+    if chrome {
+        app_args.push("--chrome".to_string());
     }
 
     // Use 'open -n' to allow multiple instances on macOS
