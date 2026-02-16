@@ -1126,6 +1126,17 @@ fn cmd_install_gui(binary_path: &str) -> i32 {
         }
     }
 
+    // Check if source and target resolve to the same path
+    let source_canonical = app_source.canonicalize().unwrap_or_else(|_| app_source.clone());
+    let target_canonical = target.canonicalize().unwrap_or_else(|_| target.clone());
+    if source_canonical == target_canonical {
+        eprintln!(
+            "Error: Source and target are the same path: {}\nProvide a different source .app bundle (e.g. from the Homebrew Cellar or a build directory).",
+            source_canonical.display()
+        );
+        return 1;
+    }
+
     // Remove old bundle
     if target.exists() {
         if let Err(e) = std::fs::remove_dir_all(&target) {

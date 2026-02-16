@@ -215,6 +215,15 @@ Without this setup, macOS will repeatedly prompt for permission to access Apple 
 
 **Step 1: Code signing** — creates a stable certificate so macOS recognizes all twapp instances as the same app:
 
+**Homebrew install:**
+
+```bash
+twapp setup-cert
+twapp install-gui "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app"
+```
+
+**Manual install:**
+
 ```bash
 twapp setup-cert
 twapp install-gui ~/.config/twapp/twapp.app
