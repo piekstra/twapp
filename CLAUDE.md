@@ -47,8 +47,8 @@ When to use each:
 
 Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
 
-- **Frontend**: `src/App.tsx`, `src/App.css` - Single-component React app with sidebar panels
-- **Backend GUI**: `src-tauri/src/gui.rs` - Tauri commands for PTY, notes, prompts, tickets, session launcher, settings, permissions, session creation, monitor process management
+- **Frontend**: `src/App.tsx` (main terminal UI), `src/components/SessionLauncher.tsx` (session management), `src/components/FilePreview/` (file preview renderers), `src/components/PromptSections.tsx` (quick prompts UI), `src/types.ts` (shared types), `src/utils/` (format, file, version helpers), `src/App.css`
+- **Backend GUI**: `src-tauri/src/gui/` - Tauri commands split into modules: `pty.rs` (terminal), `sessions.rs` (session management), `tickets.rs` (ticket integration), `monitor.rs` (background process), `config.rs` (settings), `files.rs` (file operations), `notes.rs`, `prompts.rs`, `types.rs`, `mod.rs` (app setup)
 - **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.). `create_session_core()` in `mod.rs` is shared between CLI and GUI. `monitor.rs` handles CLI monitor commands.
 - **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
 - **Config**: `src-tauri/tauri.conf.json`
@@ -87,7 +87,7 @@ npx tsc --noEmit
 
 ## Key Patterns
 
-- **CLI/GUI parity**: The CLI (`src-tauri/src/cli/`) and GUI (`src-tauri/src/gui.rs` + `src/App.tsx`) often implement the same operations. When modifying one, check if the other needs a matching change. Examples: fork, ticket link/refresh, session management. Not all features need parity (some are UI-only like theme switching) but session-related operations should stay in sync.
+- **CLI/GUI parity**: The CLI (`src-tauri/src/cli/`) and GUI (`src-tauri/src/gui/` + `src/`) often implement the same operations. When modifying one, check if the other needs a matching change. Examples: fork, ticket link/refresh, session management. Not all features need parity (some are UI-only like theme switching) but session-related operations should stay in sync.
 - **Tauri commands**: `invoke<ReturnType>("command_name", { args })` from frontend, `#[tauri::command]` in Rust
 - **State persistence**: `useEffect` hooks auto-save to disk on state change, guarded by `loaded` refs to skip initial empty state
 - **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)
@@ -105,4 +105,4 @@ npx tsc --noEmit
   - **Cleanup**: Monitor log files (`.twapp-monitor-*.log`) and request/active JSON files are cleaned up with session deletion.
 - **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
 - **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session" | "import"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
-- **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `App.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.
+- **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `SessionLauncher.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.
