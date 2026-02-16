@@ -21,5 +21,6 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npx tsc --noEmit
+      - run: npm test
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       - run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
