@@ -20,6 +20,7 @@ A structured terminal companion for Claude coding sessions — with notes, ticke
 - **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
 - **Two-way Claude integration** — Claude reads your session and manages twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
 - **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click. Create new sessions, manage settings, and configure permissions — all from the launcher.
+- **Terminal tabs** — open extra shell tabs within a session for quick commands without leaving your workspace. Tabs are ephemeral and scoped to the session.
 - **Background monitor** — run a dev server or watcher alongside Claude without leaving twapp. One command at a time, auto-logged to timestamped files, with a collapsible status bar at the bottom of the terminal. Claude can trigger it too.
 - **In-app updates** — checks automatically, shows release notes, one-click update.
 - **Default permissions** — set Claude permissions once, auto-apply to every new session.
@@ -79,6 +80,26 @@ twapp work PROJ-1234                    # auto-links on creation
 twapp ticket link owner/repo#42        # link a GitHub issue
 twapp ticket create "Fix the thing"    # create a new Jira ticket
 ```
+
+### Terminal Tabs
+
+Need to run a quick `git log`, check a port, or tail a log without leaving your session? Open a tab.
+
+- **Cmd+T** — open a new shell tab within the current session
+- **Cmd+W** — close the active tab (closes the window if it's the only tab)
+- **Cmd+Shift+]** / **Cmd+Shift+[** — switch between tabs
+- **Double-click** a tab label to rename it
+
+Tabs are **session-scoped** — they share the session's notes, tickets, and prompts. They don't appear in the Session Launcher or get their own metadata. When the session closes, its tabs close with it. Think tmux panes, not browser tabs.
+
+Sidebar actions (quick prompts, note injection) always target the active tab.
+
+### Session Hotkeys
+
+Quick keyboard access to session management:
+
+- **Cmd+N** — create and launch a new fresh session
+- **Cmd+Shift+N** — fork the current session (preserves Claude context)
 
 ### Quick Prompts
 
