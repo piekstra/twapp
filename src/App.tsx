@@ -339,6 +339,27 @@ function App() {
     },
   };
 
+  // macOS Option+Arrow word jumping for xterm.js
+  // Intercepts Option+Arrow and Option+Backspace to send the correct escape sequences
+  const attachMacOptionKeys = (term: import("@xterm/xterm").Terminal) => {
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown" || !e.altKey || e.metaKey || e.ctrlKey) return true;
+      if (e.key === "ArrowLeft") {
+        term.input("\x1bb"); // Meta+b = backward-word
+        return false;
+      }
+      if (e.key === "ArrowRight") {
+        term.input("\x1bf"); // Meta+f = forward-word
+        return false;
+      }
+      if (e.key === "Backspace") {
+        term.input("\x1b\x7f"); // Meta+Backspace = backward-kill-word
+        return false;
+      }
+      return true;
+    });
+  };
+
   // Initialize terminal and PTY
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -350,6 +371,7 @@ function App() {
       fontSize: 14,
       cursorBlink: true,
       cursorStyle: "block",
+      macOptionIsMeta: true,
       allowProposedApi: true,
       // Handle OSC 8 hyperlinks (e.g. from Claude CLI output)
       linkHandler: {
@@ -363,6 +385,7 @@ function App() {
     fitAddon.current = fit;
     term.loadAddon(fit);
     term.open(terminalRef.current);
+    attachMacOptionKeys(term);
 
     // Try WebGL renderer, fall back to DOM
     try {
@@ -437,8 +460,12 @@ function App() {
     requestAnimationFrame(() => fit.fit());
 
     // Fetch app config from backend, then spawn shell
-    // Load app version
-    getVersion().then(setAppVersion).catch(console.error);
+    // Load app version — prefer git-derived version for dev builds
+    getVersion().then((tauriVersion) => {
+      invoke<string | null>("get_dev_version").then((gitVersion) => {
+        setAppVersion(gitVersion || tauriVersion);
+      }).catch(() => setAppVersion(tauriVersion));
+    }).catch(console.error);
 
     invoke<AppConfig>("get_app_config").then((config) => {
       setAppConfig(config);
@@ -1042,6 +1069,7 @@ function App() {
       fontSize: 14,
       cursorBlink: true,
       cursorStyle: "block",
+      macOptionIsMeta: true,
       allowProposedApi: true,
       linkHandler: {
         activate: (_event, uri) => {
@@ -1053,6 +1081,7 @@ function App() {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
+    attachMacOptionKeys(term);
 
     try {
       term.loadAddon(new WebglAddon());

@@ -48,6 +48,7 @@ pub fn run(args: GuiArgs) {
             pty::resize_pty,
             get_app_config,
             tickets::get_ticket_info,
+            config::get_dev_version,
             config::get_theme_preference,
             config::set_theme_preference,
             tickets::link_ticket,

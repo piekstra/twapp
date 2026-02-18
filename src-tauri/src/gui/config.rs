@@ -1,5 +1,24 @@
 use tauri::{AppHandle, Emitter};
 
+/// Returns a git-derived version string for dev builds.
+/// Format: "0.5.42-abc1234" (tag + short hash) or "0.5.42-abc1234-dirty" if uncommitted changes.
+/// Falls back to None if not in a git repo or git is unavailable.
+#[tauri::command]
+pub fn get_dev_version() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["describe", "--tags", "--always", "--dirty"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let desc = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Strip leading 'v' from tag
+    let desc = desc.strip_prefix('v').unwrap_or(&desc).to_string();
+    Some(desc)
+}
+
 #[tauri::command]
 pub fn get_theme_preference() -> String {
     crate::cli::config::get_theme_preference()
