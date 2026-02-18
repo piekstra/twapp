@@ -67,22 +67,28 @@ pub fn dev_reload(config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
     Ok(log_path.to_string_lossy().to_string())
 }
 
-/// Close the current instance and relaunch via `twapp resume`.
-/// Picks up any newly-installed binary without a full rebuild.
+/// Close the current instance and relaunch.
+/// In session mode: `twapp resume` in the session's cwd.
+/// In launcher mode (no session): just `twapp` to reopen the launcher.
 #[tauri::command]
 pub fn reload_app(config: tauri::State<'_, GuiArgs>) -> Result<(), String> {
-    let cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+    let is_launcher = config.session_id.is_none() && config.command.is_none();
 
-    // Spawn `twapp resume` as detached process in the cwd
+    let cmd = if is_launcher {
+        "twapp".to_string()
+    } else {
+        let cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+        format!("cd '{}' && twapp resume", cwd.replace('\'', "'\\''"))
+    };
+
     // Use login shell so PATH includes twapp
-    let cmd = format!("cd '{}' && twapp resume", cwd.replace('\'', "'\\''"));
     Command::new("/bin/zsh")
         .args(["-lc", &cmd])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| format!("Failed to spawn twapp resume: {}", e))?;
+        .map_err(|e| format!("Failed to relaunch twapp: {}", e))?;
 
     // Exit current instance after brief delay for spawn
     std::thread::spawn(|| {
