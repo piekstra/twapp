@@ -2440,6 +2440,22 @@ a.file-link {
   font-size: 11px;
   font-family: "SF Mono", "Fira Code", monospace;
   color: var(--text-muted);
+  cursor: pointer;
+}
+
+.launcher-version:hover {
+  opacity: 0.8;
+}
+
+.launcher-version.has-update {
+  color: var(--accent);
+}
+
+.launcher .update-panel {
+  margin: 0 16px 8px;
+  max-width: 480px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
 }
 
 .launcher-search input {

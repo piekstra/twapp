@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
 import type {
@@ -16,7 +17,25 @@ import type {
   PromptStore,
 } from "../types";
 
-function SessionLauncher({ appVersion }: { appVersion: string | null }) {
+function SessionLauncher({
+  appVersion,
+  updateInfo,
+  updateError,
+  updateIsLatest,
+  updateInstalling,
+  updateInstallError,
+  checkForUpdate,
+  handleInstallUpdate,
+}: {
+  appVersion: string | null;
+  updateInfo: { latestVersion: string; releaseNotes: string; releaseUrl: string; downloadUrl: string } | null;
+  updateError: string | null;
+  updateIsLatest: boolean;
+  updateInstalling: boolean;
+  updateInstallError: string | null;
+  checkForUpdate: (force?: boolean) => Promise<void>;
+  handleInstallUpdate: () => Promise<void>;
+}) {
   const [sessions, setSessions] = useState<LauncherSession[]>([]);
   const [homeDir, setHomeDir] = useState("");
   const [loading, setLoading] = useState(true);
@@ -27,6 +46,7 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [launcherView, setLauncherView] = useState<LauncherView>("sessions");
   const [settingsTab, setSettingsTab] = useState<"general" | "prompts" | "permissions">("general");
+  const [showUpdatePanel, setShowUpdatePanel] = useState(false);
 
   // New session form
   const [newSessionTicket, setNewSessionTicket] = useState("");
@@ -69,6 +89,12 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
   const [importNames, setImportNames] = useState<Map<string, string>>(new Map());
   const [importSearch, setImportSearch] = useState("");
   const [showImported, setShowImported] = useState(true);
+
+  // Check for updates on mount
+  useEffect(() => {
+    const timer = setTimeout(() => checkForUpdate(), 5000);
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Streaming initial load — each session appears as it's discovered
   useEffect(() => {
@@ -966,7 +992,17 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
           ) : (
             <>
               <h1>twapp</h1>
-              {appVersion && <span className="launcher-version">v{appVersion}</span>}
+              {appVersion && (
+                <span
+                  className={`launcher-version${updateInfo ? " has-update" : ""}`}
+                  onClick={() => { setShowUpdatePanel(!showUpdatePanel); checkForUpdate(); }}
+                  title={updateInfo ? `Update available: v${updateInfo.latestVersion}` : `v${appVersion}`}
+                >
+                  v{appVersion}
+                  {updateInfo && <span className="update-dot" />}
+                  {updateIsLatest && !updateInfo && <span className="update-latest-badge">(latest)</span>}
+                </span>
+              )}
             </>
           )}
           <div className="launcher-header-actions">
@@ -1003,6 +1039,76 @@ function SessionLauncher({ appVersion }: { appVersion: string | null }) {
             </button>
           </div>
         </div>
+        {showUpdatePanel && (
+          <div className="update-panel">
+            <div className="update-panel-header">
+              <span>Update</span>
+              <button
+                className="update-panel-close"
+                onClick={() => setShowUpdatePanel(false)}
+              >
+                x
+              </button>
+            </div>
+            <div className="update-versions">
+              <div className="update-version-row">
+                <span className="update-label">Current:</span>
+                <span className="update-value">v{appVersion}</span>
+              </div>
+              {updateInfo && (
+                <div className="update-version-row">
+                  <span className="update-label">Latest:</span>
+                  <span className="update-value update-latest">
+                    v{updateInfo.latestVersion}
+                  </span>
+                </div>
+              )}
+            </div>
+            {updateInfo ? (
+              <>
+                <div className="update-notes">
+                  {updateInfo.releaseNotes}
+                </div>
+                <a
+                  className="update-release-link"
+                  href={updateInfo.releaseUrl}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(updateInfo.releaseUrl).catch(console.error);
+                  }}
+                >
+                  View on GitHub
+                </a>
+                {updateInstallError && (
+                  <div className="update-install-error">
+                    {updateInstallError}
+                  </div>
+                )}
+                <button
+                  className="update-install-button"
+                  onClick={handleInstallUpdate}
+                  disabled={updateInstalling || !updateInfo.downloadUrl}
+                >
+                  {updateInstalling ? "Installing..." : "Update & Restart"}
+                </button>
+              </>
+            ) : updateError ? (
+              <div className="update-error-state">
+                <span className="update-error-text">
+                  Could not check for updates
+                </span>
+                <button
+                  className="update-retry-button"
+                  onClick={() => checkForUpdate(true)}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <div className="update-up-to-date">Up to date</div>
+            )}
+          </div>
+        )}
         {launcherView === "sessions" && (
           <>
             <div className="launcher-search">
