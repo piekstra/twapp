@@ -913,7 +913,7 @@ pub async fn fork_session(
         // Fetch ticket via jtk
         let output = tokio::process::Command::new("jtk")
             .args(["issues", "get", key, "-o", "json"])
-            .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
+            .env("PATH", super::gui_path_env())
             .output()
             .await
             .map_err(|e| format!("Failed to run jtk: {}", e))?;

@@ -11,6 +11,19 @@ pub mod files;
 pub use types::GuiArgs;
 pub use tickets::{extract_adf_text, truncate_str};
 
+/// Build a PATH suitable for spawning CLI tools from a GUI context.
+/// macOS GUI apps inherit a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin),
+/// so we prepend common tool locations.
+pub fn gui_path_env() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    format!(
+        "{}/.local/bin:{}/.config/twapp/bin:/opt/homebrew/bin:/usr/local/bin:{}",
+        home,
+        home,
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
 use types::*;
 use parking_lot::Mutex;
 use std::sync::Arc;

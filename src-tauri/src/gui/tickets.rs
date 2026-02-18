@@ -139,7 +139,7 @@ pub async fn link_ticket(key: String, config: tauri::State<'_, GuiArgs>) -> Resu
     // Run jtk with explicit PATH for macOS GUI apps
     let output = tokio::process::Command::new("jtk")
         .args(["issues", "get", &key, "-o", "json"])
-        .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
+        .env("PATH", super::gui_path_env())
         .output()
         .await
         .map_err(|e| format!("Failed to run jtk: {}", e))?;
@@ -186,10 +186,7 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
     let source = old["source"].as_str().unwrap_or("jira");
     let key = old["key"].as_str().ok_or("No ticket key in file")?;
 
-    let path_env = format!(
-        "/opt/homebrew/bin:/usr/local/bin:{}",
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let path_env = super::gui_path_env();
 
     let ticket = if source == "github" {
         // gh issue view
