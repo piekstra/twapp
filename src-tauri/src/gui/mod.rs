@@ -38,6 +38,11 @@ fn get_app_config(config: tauri::State<'_, GuiArgs>) -> GuiArgs {
 }
 
 pub fn run(args: GuiArgs) {
+    // Set PATH early so all child processes (jtk, gh, sh, etc.) can find
+    // tools installed in user-local directories. Without this, macOS GUI
+    // apps inherit only /usr/bin:/bin:/usr/sbin:/sbin.
+    std::env::set_var("PATH", gui_path_env());
+
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
     let monitor_state = Arc::new(Mutex::new(MonitorState::default()));
 
