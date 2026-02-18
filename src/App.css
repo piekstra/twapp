@@ -2453,6 +2453,7 @@ a.file-link {
 
 .launcher .update-panel {
   margin: 0 16px 8px;
+  max-width: 480px;
   border-radius: 8px;
   border: 1px solid var(--border-color);
 }
