@@ -365,7 +365,7 @@ pub struct SessionCreationResult {
 /// Combine ticket key + shortened title for the session name.
 /// e.g. "MON-1234 Implement Great Feature" instead of just "MON-1234".
 /// Truncates at word boundaries to stay under 50 chars total.
-fn format_session_name(key: &str, title: &str) -> String {
+pub fn format_session_name(key: &str, title: &str) -> String {
     let max_total = 50;
     let title = title.trim();
     if title.is_empty() {

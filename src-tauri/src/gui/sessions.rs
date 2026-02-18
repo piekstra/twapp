@@ -932,7 +932,8 @@ pub async fn fork_session(
 
         let ticket = normalize_jtk_ticket(&data, key);
         let ticket_key_str = ticket["key"].as_str().unwrap_or(key);
-        window_name = ticket_key_str.to_string();
+        let ticket_title = ticket["title"].as_str().unwrap_or("");
+        window_name = crate::cli::format_session_name(ticket_key_str, ticket_title);
         ticket_key_for_session = Some(ticket_key_str.to_string());
 
         // Create work directory under parent of current cwd
