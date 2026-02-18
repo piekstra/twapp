@@ -899,7 +899,8 @@ pub async fn fork_session(
     ticket_key: Option<String>,
     config: tauri::State<'_, GuiArgs>,
 ) -> Result<String, String> {
-    let mut work_dir = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+    let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+    let mut work_dir = original_cwd.clone();
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
         .and_then(|n| n.to_str())
@@ -960,24 +961,36 @@ pub async fn fork_session(
     // Always generate a new session ID for the fork
     let new_id = uuid::Uuid::new_v4().to_string();
 
-    // Build command — always use --fork-session for proper session isolation
+    // Build command — always use --fork-session for proper session isolation.
+    // When forking to a new directory, cd to the original cwd first so Claude
+    // can find the session context (stored under ~/.claude/projects/{original-path}/).
     let chrome = config.chrome;
     let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = match &old_session_id {
-        Some(old_id) => format!(
-            "claude --resume {} --fork-session --session-id {}{}",
-            old_id, new_id, chrome_flag
-        ),
+        Some(old_id) => {
+            let cd_prefix = if work_dir != original_cwd {
+                format!("cd '{}' && ", original_cwd.replace('\'', "'\\''"))
+            } else {
+                String::new()
+            };
+            format!(
+                "{}claude --resume {} --fork-session --session-id {}{}",
+                cd_prefix, old_id, new_id, chrome_flag
+            )
+        }
         None => format!("claude --session-id {}{}", new_id, chrome_flag),
     };
 
-    // Write .twapp-session.json in the new work directory
+    // Write .twapp-session.json in the new work directory.
+    // claude_cwd points to the original directory so future resumes know where
+    // the Claude session context lives.
+    let claude_cwd = if old_session_id.is_some() { &original_cwd } else { &work_dir };
     let mut session_data = serde_json::json!({
         "session_id": new_id,
         "name": window_name,
         "color": color.to_string(),
         "ticket_key": ticket_key_for_session,
-        "claude_cwd": work_dir,
+        "claude_cwd": claude_cwd,
         "created": chrono::Utc::now().to_rfc3339(),
         "forked_from": old_session_id,
     });
