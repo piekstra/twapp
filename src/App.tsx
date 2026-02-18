@@ -1347,7 +1347,18 @@ function App() {
   // Launcher mode: show session list instead of terminal
   const isLauncherMode = appConfig && !appConfig.command && !appConfig.session_id;
   if (isLauncherMode) {
-    return <SessionLauncher appVersion={appVersion} />;
+    return (
+      <SessionLauncher
+        appVersion={appVersion}
+        updateInfo={updateInfo}
+        updateError={updateError}
+        updateIsLatest={updateIsLatest}
+        updateInstalling={updateInstalling}
+        updateInstallError={updateInstallError}
+        checkForUpdate={checkForUpdate}
+        handleInstallUpdate={handleInstallUpdate}
+      />
+    );
   }
 
   return (
