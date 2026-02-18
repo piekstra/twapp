@@ -1004,14 +1004,6 @@ pub async fn fork_session(
     )
     .map_err(|e| format!("Failed to write session file: {}", e))?;
 
-    // Find the .app bundle: current exe is inside twapp.app/Contents/MacOS/twapp
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("Failed to get executable path: {}", e))?;
-    let app_bundle = exe.parent() // MacOS/
-        .and_then(|p| p.parent()) // Contents/
-        .and_then(|p| p.parent()) // twapp.app/
-        .ok_or("Failed to resolve .app bundle path")?;
-
     let mut app_args = vec![
         "--name".to_string(), window_name.clone(),
         "--color".to_string(), color.to_string(),
@@ -1027,19 +1019,8 @@ pub async fn fork_session(
         app_args.push("--chrome".to_string());
     }
 
-    // Use 'open -n' to allow multiple instances on macOS
-    let mut open_args = vec![
-        "-n".to_string(),
-        "-a".to_string(),
-        app_bundle.to_string_lossy().to_string(),
-        "--args".to_string(),
-    ];
-    open_args.extend(app_args);
-
-    std::process::Command::new("open")
-        .args(&open_args)
-        .spawn()
-        .map_err(|e| format!("Failed to launch fork: {}", e))?;
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&window_name)?;
+    crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
     Ok(window_name)
 }
