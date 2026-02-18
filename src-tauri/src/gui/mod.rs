@@ -7,6 +7,7 @@ pub mod sessions;
 pub mod monitor;
 pub mod config;
 pub mod files;
+pub mod shell_env;
 
 pub use types::GuiArgs;
 pub use tickets::{extract_adf_text, truncate_str};
@@ -25,6 +26,9 @@ fn get_app_config(config: tauri::State<'_, GuiArgs>) -> GuiArgs {
 }
 
 pub fn run(args: GuiArgs) {
+    // Discover user's PATH from login shell (GUI apps inherit minimal PATH)
+    shell_env::init_path();
+
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
     let monitor_state = Arc::new(Mutex::new(MonitorState::default()));
 

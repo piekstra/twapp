@@ -911,12 +911,10 @@ pub async fn fork_session(
     // If ticket provided, fetch and set up directory
     if let Some(ref key) = ticket_key {
         // Fetch ticket via jtk
-        let output = tokio::process::Command::new("jtk")
-            .args(["issues", "get", key, "-o", "json"])
-            .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run jtk: {}", e))?;
+        let output = super::shell_env::run_tool(
+            &super::shell_env::TOOL_JTK,
+            &["issues", "get", key, "-o", "json"],
+        ).await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

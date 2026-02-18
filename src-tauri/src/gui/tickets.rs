@@ -136,13 +136,10 @@ pub fn normalize_jtk_ticket(data: &serde_json::Value, key_hint: &str) -> serde_j
 pub async fn link_ticket(key: String, config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
     let cwd = config.cwd.as_deref().unwrap_or(".");
 
-    // Run jtk with explicit PATH for macOS GUI apps
-    let output = tokio::process::Command::new("jtk")
-        .args(["issues", "get", &key, "-o", "json"])
-        .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run jtk: {}", e))?;
+    let output = super::shell_env::run_tool(
+        &super::shell_env::TOOL_JTK,
+        &["issues", "get", &key, "-o", "json"],
+    ).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -186,11 +183,6 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
     let source = old["source"].as_str().unwrap_or("jira");
     let key = old["key"].as_str().ok_or("No ticket key in file")?;
 
-    let path_env = format!(
-        "/opt/homebrew/bin:/usr/local/bin:{}",
-        std::env::var("PATH").unwrap_or_default()
-    );
-
     let ticket = if source == "github" {
         // gh issue view
         let parts: Vec<&str> = key.splitn(2, '#').collect();
@@ -200,16 +192,10 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
             return Err(format!("Invalid GitHub key: {}", key));
         };
 
-        let output = tokio::process::Command::new("gh")
-            .args([
-                "issue", "view", number,
-                "--repo", repo,
-                "--json", "title,body,state,labels,milestone,assignees,number,url",
-            ])
-            .env("PATH", &path_env)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run gh: {}", e))?;
+        let output = super::shell_env::run_tool(
+            &super::shell_env::TOOL_GH,
+            &["issue", "view", number, "--repo", repo, "--json", "title,body,state,labels,milestone,assignees,number,url"],
+        ).await?;
 
         if !output.status.success() {
             return Err(format!("gh failed: {}", String::from_utf8_lossy(&output.stderr)));
@@ -246,12 +232,10 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
         })
     } else {
         // Jira via jtk
-        let output = tokio::process::Command::new("jtk")
-            .args(["issues", "get", key, "-o", "json"])
-            .env("PATH", &path_env)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run jtk: {}", e))?;
+        let output = super::shell_env::run_tool(
+            &super::shell_env::TOOL_JTK,
+            &["issues", "get", key, "-o", "json"],
+        ).await?;
 
         if !output.status.success() {
             return Err(format!("jtk failed: {}", String::from_utf8_lossy(&output.stderr)));
