@@ -1603,6 +1603,7 @@ body,
   font-size: 11px;
   color: var(--danger);
   margin-top: 6px;
+  white-space: pre-line;
 }
 
 .ticket-hint {
