@@ -34,6 +34,10 @@ pub struct GuiArgs {
     /// Use Chrome instead of Claude desktop
     #[arg(long)]
     pub chrome: bool,
+
+    /// Override terminal theme with session color
+    #[arg(long)]
+    pub override_terminal_theme: bool,
 }
 
 // Per-tab PTY state

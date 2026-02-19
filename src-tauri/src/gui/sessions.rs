@@ -228,6 +228,9 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     if session_data.use_chrome.unwrap_or(false) {
         app_args.push("--chrome".to_string());
     }
+    if session_data.override_terminal_theme.unwrap_or(false) {
+        app_args.push("--override-terminal-theme".to_string());
+    }
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
@@ -394,7 +397,11 @@ pub async fn rename_session(directory: String, new_name: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn update_session_color(directory: String, color: String) -> Result<(), String> {
+pub async fn update_session_color(
+    directory: String,
+    color: String,
+    override_terminal_theme: Option<bool>,
+) -> Result<(), String> {
     // Validate hex color format (#rrggbb)
     if !color.starts_with('#')
         || color.len() != 7
@@ -406,6 +413,7 @@ pub async fn update_session_color(directory: String, color: String) -> Result<()
     let work_dir = std::path::PathBuf::from(&directory);
     let mut data = crate::cli::session::read_session(&work_dir)?;
     data.color = color;
+    data.override_terminal_theme = override_terminal_theme;
     crate::cli::session::write_session(&work_dir, &data)?;
 
     Ok(())
@@ -896,6 +904,7 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             imported: Some(true),
             imported_from: Some(original_cwd),
             use_chrome: None,
+            override_terminal_theme: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 

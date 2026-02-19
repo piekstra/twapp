@@ -17,7 +17,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
 import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
-import { lightTheme, darkTheme } from "./types";
+import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath } from "./utils/file";
 import { isNewerVersion } from "./utils/version";
@@ -694,19 +694,30 @@ function App() {
 
       document.documentElement.classList.toggle("dark", isDark);
 
+      // Determine terminal theme: use session color as bg when override is on
+      const termBg = appConfig?.override_terminal_theme && appConfig?.color
+        ? (isDark ? getDarkModeAccentColor(appConfig.color) : appConfig.color)
+        : undefined;
+      const theme = isDark ? getDarkTheme(termBg) : getLightTheme(termBg);
+
       if (terminalInstance.current) {
-        terminalInstance.current.options.theme = isDark ? darkTheme : lightTheme;
+        terminalInstance.current.options.theme = theme;
       }
       if (monitorTerm.current) {
-        monitorTerm.current.options.theme = isDark ? darkTheme : lightTheme;
+        monitorTerm.current.options.theme = theme;
       }
       // Apply theme to all tab terminals
       tabInstances.current.forEach((tab) => {
-        if (tab.term) tab.term.options.theme = isDark ? darkTheme : lightTheme;
+        if (tab.term) tab.term.options.theme = theme;
       });
 
+      // Terminal container background always follows session color
       if (appConfig?.color) {
+        const containerBg = isDark ? getDarkModeAccentColor(appConfig.color) : appConfig.color;
+        document.documentElement.style.setProperty("--bg-terminal", containerBg);
         applyThemeColor(appConfig.color, isDark);
+      } else {
+        document.documentElement.style.removeProperty("--bg-terminal");
       }
     };
 
@@ -716,7 +727,7 @@ function App() {
     const handler = () => applyTheme();
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
-  }, [themeMode, appConfig?.color]);
+  }, [themeMode, appConfig?.color, appConfig?.override_terminal_theme]);
 
   // Refit terminal when sidebar changes (debounced to avoid mid-stream reflow)
   useEffect(() => {
@@ -985,7 +996,22 @@ function App() {
     applyThemeColor(color, isDark);
     setAppConfig((prev) => prev ? { ...prev, color } : prev);
     if (appConfig?.cwd) {
-      invoke("update_session_color", { directory: appConfig.cwd, color }).catch(console.error);
+      invoke("update_session_color", {
+        directory: appConfig.cwd,
+        color,
+        overrideTerminalTheme: appConfig?.override_terminal_theme || false,
+      }).catch(console.error);
+    }
+  };
+
+  const handleTerminalThemeToggle = (checked: boolean) => {
+    setAppConfig((prev) => prev ? { ...prev, override_terminal_theme: checked } : prev);
+    if (appConfig?.cwd && appConfig?.color) {
+      invoke("update_session_color", {
+        directory: appConfig.cwd,
+        color: appConfig.color,
+        overrideTerminalTheme: checked,
+      }).catch(console.error);
     }
   };
 
@@ -2086,6 +2112,14 @@ function App() {
                         onInput={(e) => handleSessionColorChange((e.target as HTMLInputElement).value)}
                       />
                     </div>
+                    <label className="session-settings-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={appConfig?.override_terminal_theme || false}
+                        onChange={(e) => handleTerminalThemeToggle(e.target.checked)}
+                      />
+                      Apply to terminal
+                    </label>
                   </div>
                 )}
               </div>

@@ -23,6 +23,8 @@ pub struct SessionData {
     pub imported_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_chrome: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_terminal_theme: Option<bool>,
 }
 
 /// Derive a filesystem-safe name from a session name.
