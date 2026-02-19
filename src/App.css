@@ -807,6 +807,84 @@ body,
   margin: 4px 0;
 }
 
+/* Color Panel Popover */
+.color-panel-dropdown {
+  position: relative;
+}
+
+.color-panel-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px !important;
+}
+
+.color-circle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+}
+
+.color-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  width: 200px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  padding: 8px 12px;
+}
+
+.color-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.color-panel-reset {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.color-panel-reset:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.color-panel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.color-panel-row input[type="color"] {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+}
+
 /* Notes Section Header (collapsible) */
 .notes-section-header {
   padding: 8px 16px;

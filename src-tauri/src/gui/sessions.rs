@@ -228,10 +228,39 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     if session_data.use_chrome.unwrap_or(false) {
         app_args.push("--chrome".to_string());
     }
+    if let Some(ref bg) = session_data.terminal_bg {
+        app_args.push("--terminal-bg".to_string());
+        app_args.push(bg.clone());
+    }
+    if let Some(ref bg) = session_data.sidebar_bg {
+        app_args.push("--sidebar-bg".to_string());
+        app_args.push(bg.clone());
+    }
+    if let Some(ref tc) = session_data.text_color {
+        app_args.push("--text-color".to_string());
+        app_args.push(tc.clone());
+    }
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_session_appearance(
+    config: tauri::State<'_, super::types::GuiArgs>,
+    terminal_bg: Option<String>,
+    sidebar_bg: Option<String>,
+    text_color: Option<String>,
+) -> Result<(), String> {
+    let cwd = config.cwd.as_deref().ok_or("No working directory")?;
+    let work_dir = std::path::PathBuf::from(cwd);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+    session_data.terminal_bg = terminal_bg;
+    session_data.sidebar_bg = sidebar_bg;
+    session_data.text_color = text_color;
+    crate::cli::session::write_session(&work_dir, &session_data)?;
     Ok(())
 }
 
@@ -878,6 +907,9 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             imported: Some(true),
             imported_from: Some(original_cwd),
             use_chrome: None,
+            terminal_bg: None,
+            sidebar_bg: None,
+            text_color: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 

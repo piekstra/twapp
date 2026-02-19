@@ -91,6 +91,7 @@ pub fn run(args: GuiArgs) {
             sessions::delete_session,
             sessions::discover_claude_sessions,
             sessions::import_sessions,
+            sessions::update_session_appearance,
             monitor::start_monitor,
             monitor::stop_monitor,
             monitor::get_monitor_status,

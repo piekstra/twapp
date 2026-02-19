@@ -496,6 +496,9 @@ pub fn create_session_core(
         imported: None,
         imported_from: None,
         use_chrome: if chrome { Some(true) } else { None },
+        terminal_bg: None,
+        sidebar_bg: None,
+        text_color: None,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -660,6 +663,9 @@ fn cmd_resume(fork: bool) -> i32 {
             imported: None,
             imported_from: None,
             use_chrome: if chrome { Some(true) } else { None },
+            terminal_bg: None,
+            sidebar_bg: None,
+            text_color: None,
         };
         session_id = new_id;
         // Write the forked session file

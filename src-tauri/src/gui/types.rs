@@ -34,6 +34,18 @@ pub struct GuiArgs {
     /// Use Chrome instead of Claude desktop
     #[arg(long)]
     pub chrome: bool,
+
+    /// Custom terminal background color (hex, e.g. "#1a1a2e")
+    #[arg(long)]
+    pub terminal_bg: Option<String>,
+
+    /// Custom sidebar background color (hex, e.g. "#ffe0e0")
+    #[arg(long)]
+    pub sidebar_bg: Option<String>,
+
+    /// Custom text color (hex, e.g. "#eeeeee")
+    #[arg(long)]
+    pub text_color: Option<String>,
 }
 
 // Per-tab PTY state

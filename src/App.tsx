@@ -17,7 +17,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor } from "./color";
 import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
-import { lightTheme, darkTheme } from "./types";
+import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath } from "./utils/file";
 import { isNewerVersion } from "./utils/version";
@@ -102,6 +102,10 @@ function App() {
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+
+  // Color popover
+  const [colorPanelOpen, setColorPanelOpen] = useState(false);
+  const colorPanelRef = useRef<HTMLDivElement>(null);
 
   // Monitor state
   const [monitorStatus, setMonitorStatus] = useState<MonitorStatusInfo | null>(null);
@@ -665,7 +669,7 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, [monitorFloat, monitorExpanded]);
 
-  // Apply theme whenever themeMode or accent color changes
+  // Apply theme whenever themeMode or accent/custom colors change
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -674,18 +678,37 @@ function App() {
 
       document.documentElement.classList.toggle("dark", isDark);
 
+      const termBg = appConfig?.terminal_bg ?? undefined;
+      const textCol = appConfig?.text_color ?? undefined;
+      const theme = isDark ? getDarkTheme(termBg, textCol) : getLightTheme(termBg, textCol);
+
       if (terminalInstance.current) {
-        terminalInstance.current.options.theme = isDark ? darkTheme : lightTheme;
+        terminalInstance.current.options.theme = theme;
       }
       if (monitorTerm.current) {
-        monitorTerm.current.options.theme = isDark ? darkTheme : lightTheme;
+        monitorTerm.current.options.theme = theme;
       }
       // Apply theme to all tab terminals
       tabInstances.current.forEach((tab) => {
-        if (tab.term) tab.term.options.theme = isDark ? darkTheme : lightTheme;
+        if (tab.term) tab.term.options.theme = theme;
       });
 
-      if (appConfig?.color) {
+      // Set CSS variables for terminal background and text
+      if (appConfig?.terminal_bg) {
+        document.documentElement.style.setProperty("--bg-terminal", appConfig.terminal_bg);
+      } else {
+        document.documentElement.style.removeProperty("--bg-terminal");
+      }
+      if (appConfig?.text_color) {
+        document.documentElement.style.setProperty("--text-terminal", appConfig.text_color);
+      } else {
+        document.documentElement.style.removeProperty("--text-terminal");
+      }
+
+      // Apply sidebar color: custom sidebar_bg takes precedence over session accent
+      if (appConfig?.sidebar_bg) {
+        applyThemeColor(appConfig.sidebar_bg, isDark);
+      } else if (appConfig?.color) {
         applyThemeColor(appConfig.color, isDark);
       }
     };
@@ -696,7 +719,7 @@ function App() {
     const handler = () => applyTheme();
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
-  }, [themeMode, appConfig?.color]);
+  }, [themeMode, appConfig?.color, appConfig?.terminal_bg, appConfig?.sidebar_bg, appConfig?.text_color]);
 
   // Refit terminal when sidebar changes (debounced to avoid mid-stream reflow)
   useEffect(() => {
@@ -739,6 +762,18 @@ function App() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
+
+  // Close color popover on outside click
+  useEffect(() => {
+    if (!colorPanelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (colorPanelRef.current && !colorPanelRef.current.contains(e.target as Node)) {
+        setColorPanelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [colorPanelOpen]);
 
   // Close monitor logs dropdown on outside click
   useEffect(() => {
@@ -945,6 +980,18 @@ function App() {
     if (marks[newIndex]) {
       marks[newIndex].classList.add("search-highlight-active");
       marks[newIndex].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  };
+
+  const handleAppearanceChange = (fields: Partial<Record<"terminal_bg" | "sidebar_bg" | "text_color", string | null>>) => {
+    setAppConfig((prev) => prev ? { ...prev, ...fields } : prev);
+    if (appConfig) {
+      const updated = {
+        terminalBg: "terminal_bg" in fields ? fields.terminal_bg ?? null : appConfig.terminal_bg,
+        sidebarBg: "sidebar_bg" in fields ? fields.sidebar_bg ?? null : appConfig.sidebar_bg,
+        textColor: "text_color" in fields ? fields.text_color ?? null : appConfig.text_color,
+      };
+      invoke("update_session_appearance", updated).catch(console.error);
     }
   };
 
@@ -1944,6 +1991,52 @@ function App() {
                     >
                       {reloading ? "Building..." : "Rebuild"}
                     </button>
+                  </div>
+                )}
+              </div>
+              <div className="color-panel-dropdown" ref={colorPanelRef}>
+                <button
+                  className="sidebar-action-button color-panel-trigger"
+                  onClick={() => setColorPanelOpen(!colorPanelOpen)}
+                  title="Customize colors"
+                  style={appConfig?.terminal_bg || appConfig?.sidebar_bg || appConfig?.text_color ? {
+                    borderColor: "var(--accent-indicator, var(--border-hover))",
+                  } : undefined}
+                >
+                  <span className="color-circle" style={{ background: appConfig?.terminal_bg || appConfig?.sidebar_bg || "var(--text-secondary)" }} />
+                </button>
+                {colorPanelOpen && (
+                  <div className="color-panel">
+                    <div className="color-panel-header">
+                      <span>Appearance</span>
+                      <button className="color-panel-reset" onClick={() => {
+                        handleAppearanceChange({ terminal_bg: null, sidebar_bg: null, text_color: null });
+                      }}>Reset</button>
+                    </div>
+                    <label className="color-panel-row">
+                      <span>Terminal</span>
+                      <input
+                        type="color"
+                        value={appConfig?.terminal_bg || (document.documentElement.classList.contains("dark") ? "#1a1a2e" : "#f5f5f7")}
+                        onChange={(e) => handleAppearanceChange({ terminal_bg: e.target.value })}
+                      />
+                    </label>
+                    <label className="color-panel-row">
+                      <span>Sidebar</span>
+                      <input
+                        type="color"
+                        value={appConfig?.sidebar_bg || appConfig?.color || (document.documentElement.classList.contains("dark") ? "#16162a" : "#f5f5f7")}
+                        onChange={(e) => handleAppearanceChange({ sidebar_bg: e.target.value })}
+                      />
+                    </label>
+                    <label className="color-panel-row">
+                      <span>Text</span>
+                      <input
+                        type="color"
+                        value={appConfig?.text_color || (document.documentElement.classList.contains("dark") ? "#eeeeee" : "#1d1d1f")}
+                        onChange={(e) => handleAppearanceChange({ text_color: e.target.value })}
+                      />
+                    </label>
                   </div>
                 )}
               </div>

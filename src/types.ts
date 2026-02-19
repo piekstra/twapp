@@ -9,6 +9,9 @@ export interface AppConfig {
   prefill: string | null;
   ticket: string | null;
   session_id: string | null;
+  terminal_bg: string | null;
+  sidebar_bg: string | null;
+  text_color: string | null;
 }
 
 export interface TicketInfo {
@@ -63,53 +66,60 @@ export interface PromptStore {
   sections: PromptSection[];
 }
 
-export const lightTheme = {
-  background: "#f5f5f7",
-  foreground: "#1d1d1f",
-  cursor: "#1d1d1f",
-  cursorAccent: "#f5f5f7",
-  selectionBackground: "#b4d7ff",
-  black: "#1d1d1f",
-  red: "#c41a16",
-  green: "#007400",
-  yellow: "#826b28",
-  blue: "#0451a5",
-  magenta: "#a626a4",
-  cyan: "#0997b3",
-  white: "#d4d4d4",
-  brightBlack: "#86868b",
-  brightRed: "#ff3b30",
-  brightGreen: "#34c759",
-  brightYellow: "#ffcc00",
-  brightBlue: "#007aff",
-  brightMagenta: "#af52de",
-  brightCyan: "#5ac8fa",
-  brightWhite: "#ffffff",
-};
+export function getLightTheme(bg?: string, fg?: string) {
+  return {
+    background: bg ?? "#f5f5f7",
+    foreground: fg ?? "#1d1d1f",
+    cursor: fg ?? "#1d1d1f",
+    cursorAccent: bg ?? "#f5f5f7",
+    selectionBackground: "#b4d7ff",
+    black: "#1d1d1f",
+    red: "#c41a16",
+    green: "#007400",
+    yellow: "#826b28",
+    blue: "#0451a5",
+    magenta: "#a626a4",
+    cyan: "#0997b3",
+    white: "#d4d4d4",
+    brightBlack: "#86868b",
+    brightRed: "#ff3b30",
+    brightGreen: "#34c759",
+    brightYellow: "#ffcc00",
+    brightBlue: "#007aff",
+    brightMagenta: "#af52de",
+    brightCyan: "#5ac8fa",
+    brightWhite: "#ffffff",
+  };
+}
 
-export const darkTheme = {
-  background: "#1a1a2e",
-  foreground: "#eee",
-  cursor: "#eee",
-  cursorAccent: "#1a1a2e",
-  selectionBackground: "#3a3a5e",
-  black: "#1a1a2e",
-  red: "#ff6b6b",
-  green: "#69db7c",
-  yellow: "#ffd43b",
-  blue: "#4dabf7",
-  magenta: "#da77f2",
-  cyan: "#66d9e8",
-  white: "#eee",
-  brightBlack: "#495057",
-  brightRed: "#ff8787",
-  brightGreen: "#8ce99a",
-  brightYellow: "#ffe066",
-  brightBlue: "#74c0fc",
-  brightMagenta: "#e599f7",
-  brightCyan: "#99e9f2",
-  brightWhite: "#fff",
-};
+export function getDarkTheme(bg?: string, fg?: string) {
+  return {
+    background: bg ?? "#1a1a2e",
+    foreground: fg ?? "#eee",
+    cursor: fg ?? "#eee",
+    cursorAccent: bg ?? "#1a1a2e",
+    selectionBackground: "#3a3a5e",
+    black: "#1a1a2e",
+    red: "#ff6b6b",
+    green: "#69db7c",
+    yellow: "#ffd43b",
+    blue: "#4dabf7",
+    magenta: "#da77f2",
+    cyan: "#66d9e8",
+    white: "#eee",
+    brightBlack: "#495057",
+    brightRed: "#ff8787",
+    brightGreen: "#8ce99a",
+    brightYellow: "#ffe066",
+    brightBlue: "#74c0fc",
+    brightMagenta: "#e599f7",
+    brightCyan: "#99e9f2",
+    brightWhite: "#fff",
+  };
+}
+
+export const lightTheme = getLightTheme();
+export const darkTheme = getDarkTheme();
 
 export interface LauncherSession {
   session_id: string;
