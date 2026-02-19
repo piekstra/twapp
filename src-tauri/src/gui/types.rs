@@ -211,5 +211,5 @@ pub struct MonitorLogEntry {
 // Theme palette matching the Python CLI
 pub const THEME_COLORS: &[&str] = &[
     "#ffe0e0", "#e0e8ff", "#e0ffe0", "#fff0e0", "#f0e0ff",
-    "#e0ffff", "#fff5e0", "#ffe0f0", "#e8f0e0",
+    "#e0ffff", "#fef3c7", "#e8d8cc", "#e8f0e0",
 ];

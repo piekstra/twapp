@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
-import { applyThemeColor } from "./color";
+import { applyThemeColor, getDarkModeAccentColor } from "./color";
 import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
 import { lightTheme, darkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
@@ -26,6 +26,18 @@ import PromptSections from "./components/PromptSections";
 import type { EditingPromptState } from "./components/PromptSections";
 import SessionLauncher from "./components/SessionLauncher";
 
+
+const SESSION_COLORS = [
+  { hex: "#ffe0e0", name: "Rose" },
+  { hex: "#e0e8ff", name: "Cornflower" },
+  { hex: "#e0ffe0", name: "Mint" },
+  { hex: "#fff0e0", name: "Peach" },
+  { hex: "#f0e0ff", name: "Lavender" },
+  { hex: "#e0ffff", name: "Seafoam" },
+  { hex: "#fef3c7", name: "Lemon" },
+  { hex: "#e8d8cc", name: "Cappuccino" },
+  { hex: "#e8f0e0", name: "Sage" },
+];
 
 function App() {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -102,6 +114,10 @@ function App() {
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+
+  // Session settings popover
+  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
+  const sessionSettingsRef = useRef<HTMLDivElement>(null);
 
   // Monitor state
   const [monitorStatus, setMonitorStatus] = useState<MonitorStatusInfo | null>(null);
@@ -744,6 +760,18 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
 
+  // Close session settings on outside click
+  useEffect(() => {
+    if (!sessionSettingsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sessionSettingsRef.current && !sessionSettingsRef.current.contains(e.target as Node)) {
+        setSessionSettingsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [sessionSettingsOpen]);
+
   // Close monitor logs dropdown on outside click
   useEffect(() => {
     if (!monitorLogsOpen) return;
@@ -949,6 +977,15 @@ function App() {
     if (marks[newIndex]) {
       marks[newIndex].classList.add("search-highlight-active");
       marks[newIndex].scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  };
+
+  const handleSessionColorChange = (color: string) => {
+    const isDark = document.documentElement.classList.contains("dark");
+    applyThemeColor(color, isDark);
+    setAppConfig((prev) => prev ? { ...prev, color } : prev);
+    if (appConfig?.cwd) {
+      invoke("update_session_color", { directory: appConfig.cwd, color }).catch(console.error);
     }
   };
 
@@ -2009,6 +2046,46 @@ function App() {
                     >
                       {reloading ? "Building..." : "Rebuild"}
                     </button>
+                  </div>
+                )}
+              </div>
+              <div className="session-settings-dropdown" ref={sessionSettingsRef}>
+                <button
+                  className="sidebar-action-button"
+                  onClick={() => setSessionSettingsOpen(!sessionSettingsOpen)}
+                  title="Session settings"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="6" cy="6" r="1.5" />
+                    <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.17 2.17l1.06 1.06M8.77 8.77l1.06 1.06M9.83 2.17l-1.06 1.06M3.23 8.77l-1.06 1.06" />
+                  </svg>
+                </button>
+                {sessionSettingsOpen && (
+                  <div className="session-settings-menu">
+                    <div className="session-settings-label">Session Color</div>
+                    <div className="session-color-grid">
+                      {SESSION_COLORS.map(({ hex, name }) => {
+                        const isDark = document.documentElement.classList.contains("dark");
+                        const displayColor = isDark ? getDarkModeAccentColor(hex) : hex;
+                        return (
+                          <div
+                            key={hex}
+                            className={`session-color-dot${appConfig?.color === hex ? " selected" : ""}`}
+                            style={{ backgroundColor: displayColor }}
+                            title={name}
+                            onClick={() => { handleSessionColorChange(hex); setSessionSettingsOpen(false); }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="session-color-custom">
+                      <label className="session-settings-label">Custom</label>
+                      <input
+                        type="color"
+                        value={appConfig?.color || "#e0e8ff"}
+                        onInput={(e) => handleSessionColorChange((e.target as HTMLInputElement).value)}
+                      />
+                    </div>
                   </div>
                 )}
               </div>

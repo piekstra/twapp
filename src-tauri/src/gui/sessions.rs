@@ -394,6 +394,24 @@ pub async fn rename_session(directory: String, new_name: String) -> Result<(), S
 }
 
 #[tauri::command]
+pub async fn update_session_color(directory: String, color: String) -> Result<(), String> {
+    // Validate hex color format (#rrggbb)
+    if !color.starts_with('#')
+        || color.len() != 7
+        || !color[1..].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err(format!("Invalid color: {}", color));
+    }
+
+    let work_dir = std::path::PathBuf::from(&directory);
+    let mut data = crate::cli::session::read_session(&work_dir)?;
+    data.color = color;
+    crate::cli::session::write_session(&work_dir, &data)?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn delete_session(directory: String, delete_everything: bool) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let session_data = crate::cli::session::read_session(&work_dir)?;

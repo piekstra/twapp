@@ -834,6 +834,94 @@ body,
   margin: 4px 0;
 }
 
+/* Session Settings Dropdown */
+.session-settings-dropdown {
+  position: relative;
+}
+
+.session-settings-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  padding: 12px;
+  min-width: 160px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+}
+
+:root.dark .session-settings-menu {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.session-settings-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.session-color-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.session-color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.session-color-dot:hover {
+  transform: scale(1.15);
+  border-color: var(--text-muted);
+}
+
+.session-color-dot.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.session-color-custom {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-color-custom .session-settings-label {
+  margin-bottom: 0;
+}
+
+.session-color-custom input[type="color"] {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.session-color-custom input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.session-color-custom input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
 /* Notes Section Header (collapsible) */
 .notes-section-header {
   padding: 8px 16px;
