@@ -127,6 +127,33 @@ body,
   transition: background 0.1s;
 }
 
+.tab-item.primary {
+  cursor: default;
+}
+
+.tab-item:not(.primary) {
+  cursor: grab;
+}
+
+.tab-item.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.tab-item.drop-left {
+  box-shadow: -2px 0 0 0 var(--accent);
+}
+
+.tab-item.drop-right {
+  box-shadow: 2px 0 0 0 var(--accent);
+}
+
+.tab-primary-indicator {
+  font-size: 7px;
+  color: var(--accent);
+  line-height: 1;
+}
+
 .tab-item:hover {
   background: var(--bg-hover);
 }

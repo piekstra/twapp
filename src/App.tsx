@@ -144,6 +144,10 @@ function App() {
   const [activeTabId, setActiveTabId] = useState("main");
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renameTabValue, setRenameTabValue] = useState("");
+  const [dragTabId, setDragTabId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; side: "left" | "right" } | null>(null);
+  const dragStartX = useRef(0);
+  const dragStarted = useRef(false);
   const tabInstances = useRef<Map<string, TabInfo>>(new Map());
   const tabCounter = useRef(0);
 
@@ -1399,12 +1403,72 @@ function App() {
         )}
         {/* Tab bar — only visible with 2+ tabs */}
         {tabs.length > 1 && (
-          <div className="tab-bar">
+          <div
+            className="tab-bar"
+            onPointerMove={(e) => {
+              if (!dragTabId) return;
+              // Require minimum movement to start drag (avoid accidental drags on click)
+              if (!dragStarted.current) {
+                if (Math.abs(e.clientX - dragStartX.current) < 5) return;
+                dragStarted.current = true;
+              }
+              // Find which tab we're hovering over
+              const els = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(".tab-item");
+              let found = false;
+              for (const el of els) {
+                const rect = el.getBoundingClientRect();
+                if (e.clientX >= rect.left && e.clientX <= rect.right) {
+                  const tabId = el.dataset.tabId;
+                  if (tabId && tabId !== dragTabId) {
+                    const side = e.clientX < rect.left + rect.width / 2 ? "left" : "right";
+                    setDropTarget({ id: tabId, side });
+                    found = true;
+                  }
+                  break;
+                }
+              }
+              if (!found) setDropTarget(null);
+            }}
+            onPointerUp={() => {
+              if (dragTabId && dropTarget && dragStarted.current) {
+                const dragId = dragTabId;
+                const targetId = dropTarget.id;
+                const dropBefore = dropTarget.side === "left";
+                setTabs((prev) => {
+                  const dragged = prev.find((t) => t.id === dragId);
+                  if (!dragged) return prev;
+                  const without = prev.filter((t) => t.id !== dragId);
+                  const targetIdx = without.findIndex((t) => t.id === targetId);
+                  const insertIdx = dropBefore ? targetIdx : targetIdx + 1;
+                  // Don't allow dropping before the primary tab
+                  const safeIdx = Math.max(1, insertIdx);
+                  without.splice(safeIdx, 0, dragged);
+                  return without;
+                });
+              }
+              setDragTabId(null);
+              setDropTarget(null);
+              dragStarted.current = false;
+            }}
+            onPointerLeave={() => {
+              setDragTabId(null);
+              setDropTarget(null);
+              dragStarted.current = false;
+            }}
+          >
             {tabs.map((tab) => (
               <div
                 key={tab.id}
-                className={`tab-item${tab.id === activeTabId ? " active" : ""}`}
+                data-tab-id={tab.id}
+                className={`tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === "main" ? " primary" : ""}${dragTabId === tab.id ? " dragging" : ""}${dropTarget?.id === tab.id ? ` drop-${dropTarget.side}` : ""}`}
+                onPointerDown={(e) => {
+                  if (tab.id === "main" || renamingTabId === tab.id) return;
+                  dragStartX.current = e.clientX;
+                  dragStarted.current = false;
+                  setDragTabId(tab.id);
+                }}
                 onClick={() => {
+                  if (dragStarted.current) return;
                   setActiveTabId(tab.id);
                   // Refit the terminal when switching tabs
                   setTimeout(() => {
@@ -1420,6 +1484,7 @@ function App() {
                   setRenameTabValue(tab.name);
                 }}
               >
+                {tab.id === "main" && <span className="tab-primary-indicator" title="Primary session">&#9670;</span>}
                 {renamingTabId === tab.id ? (
                   <input
                     className="tab-rename-input"
