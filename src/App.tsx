@@ -1999,6 +1999,7 @@ function App() {
               placeholder="Ticket (optional) — e.g. MON-1234"
               value={forkTicketKey}
               onChange={(e) => setForkTicketKey(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !forking) handleFork(); }}
             />
             {forkError && <div className="fork-error">{forkError}</div>}
             <div className="fork-actions">
