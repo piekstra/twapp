@@ -149,13 +149,15 @@ twapp permissions add 'Bash(npm test:*)'
 
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli)
 
-### Homebrew (Recommended)
+### Step 1: Install the binary
+
+**Homebrew (Recommended):**
 
 ```bash
 brew install piekstra/tap/twapp
 ```
 
-### Manual Install
+**Manual:**
 
 ```bash
 # Determine architecture
@@ -185,13 +187,50 @@ Add to your PATH (`~/.zshrc`):
 export PATH="$HOME/.config/twapp/bin:$PATH"
 ```
 
-Then `source ~/.zshrc` and verify:
+Then `source ~/.zshrc`.
+
+### Step 2: Set up code signing
+
+This creates a local certificate so macOS recognizes all twapp sessions as the same app. Without it, each session window gets a different identity — breaking session naming in Mission Control and causing repeated permission prompts.
 
 ```bash
-twapp --version
+twapp setup-cert
 ```
 
-### Spotlight Visibility
+Then register the app bundle:
+
+**Homebrew install:**
+
+```bash
+twapp install-gui "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app"
+```
+
+**Manual install:**
+
+```bash
+twapp install-gui ~/.config/twapp/twapp.app
+```
+
+### Step 3: Grant Full Disk Access
+
+Claude runs shell commands (`find`, `ls`, `grep`) as subprocesses of twapp. macOS attributes their filesystem access to the host app, so without Full Disk Access every protected directory triggers a separate permission prompt.
+
+1. **System Settings > Privacy & Security > Full Disk Access**
+2. Click **+**, then press **Cmd+Shift+G** to open the path dialog
+3. Type `~/.config/twapp/` and press Enter
+4. Select **twapp.app** and click Open
+
+All twapp instances share the same bundle identifier and certificate, so FDA covers every session. You should only need to do this once.
+
+### Step 4: Verify
+
+```bash
+twapp work --name "test-session"
+```
+
+The window title and Mission Control label should show "test-session". If it works, you're all set.
+
+### Optional: Spotlight visibility
 
 Neither the Homebrew cellar nor `~/.config/twapp/` is indexed by Spotlight, and Spotlight ignores symlinked `.app` bundles. To launch twapp from Spotlight, create a lightweight wrapper app:
 
@@ -201,36 +240,7 @@ osacompile -o ~/Applications/twapp.app -e 'do shell script "open ~/.config/twapp
 
 This creates a real `.app` in `~/Applications` that Spotlight indexes. It just opens the actual twapp bundle, so updates are always picked up.
 
-### Code Signing + Full Disk Access (Recommended)
-
-Without this setup, macOS will repeatedly prompt for permission to access Apple Music, Photos, Documents, etc. This happens because Claude runs shell commands (like `find`, `ls`, `grep`) as subprocesses of twapp, and macOS attributes their filesystem access to the host app. Every protected directory traversal triggers a separate prompt.
-
-**Step 1: Code signing** — creates a stable certificate so macOS recognizes all twapp instances as the same app:
-
-**Homebrew install:**
-
-```bash
-twapp setup-cert
-twapp install-gui "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app"
-```
-
-**Manual install:**
-
-```bash
-twapp setup-cert
-twapp install-gui ~/.config/twapp/twapp.app
-```
-
-**Step 2: Full Disk Access** — grants blanket filesystem access so no individual prompts appear:
-
-1. **System Settings > Privacy & Security > Full Disk Access**
-2. Click **+**, then press **Cmd+Shift+G** to open the path dialog
-3. Type `~/.config/twapp/` and press Enter
-4. Select **twapp.app** and click Open
-
-All twapp instances share the same bundle identifier and certificate, so FDA covers every session. You should only need to do this once.
-
-### Optional Dependencies
+### Optional dependencies
 
 Ticket integration requires external CLIs:
 
