@@ -50,6 +50,9 @@ pub fn spawn_shell(
         "xterm-256color"
     };
     cmd.env("TERM", term_value);
+    // Remove CLAUDECODE so nested `claude` invocations don't think they're inside
+    // an existing session (Claude Code sets this env var to detect nesting).
+    cmd.env_remove("CLAUDECODE");
 
     // Set working directory
     if let Some(dir) = cwd {
