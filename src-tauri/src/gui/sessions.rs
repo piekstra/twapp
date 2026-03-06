@@ -212,7 +212,7 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         "--name".to_string(),
         session_data.name.clone(),
         "--color".to_string(),
-        color,
+        color.clone(),
         "--cwd".to_string(),
         directory.clone(),
         "--command".to_string(),
@@ -232,7 +232,7 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push("--override-terminal-theme".to_string());
     }
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name)?;
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name, &color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
     Ok(())
@@ -247,7 +247,7 @@ pub async fn create_and_launch_session(
 ) -> Result<(), String> {
     let result = crate::cli::create_session_core(ticket, name, None, github, None, None, chrome)?;
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name)?;
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
 
     Ok(())
@@ -1046,7 +1046,7 @@ pub async fn fork_session(
         app_args.push("--chrome".to_string());
     }
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&window_name)?;
+    let instance_app = crate::cli::app_bundle::prepare_instance_app(&window_name, color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
     Ok(window_name)

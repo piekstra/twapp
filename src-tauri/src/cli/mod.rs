@@ -359,6 +359,7 @@ pub fn run(cmd: Commands) -> i32 {
 
 pub struct SessionCreationResult {
     pub name: String,
+    pub color: String,
     pub app_args: Vec<String>,
 }
 
@@ -531,7 +532,7 @@ pub fn create_session_core(
         "--name".to_string(),
         window_name.clone(),
         "--color".to_string(),
-        color,
+        color.clone(),
         "--cwd".to_string(),
         work_dir.to_string_lossy().to_string(),
         "--command".to_string(),
@@ -553,6 +554,7 @@ pub fn create_session_core(
 
     Ok(SessionCreationResult {
         name: window_name,
+        color,
         app_args,
     })
 }
@@ -586,7 +588,7 @@ fn cmd_work(
         }
     };
 
-    let instance_app = match app_bundle::prepare_instance_app(&result.name) {
+    let instance_app = match app_bundle::prepare_instance_app(&result.name, &result.color) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error preparing app instance: {}", e);
@@ -713,7 +715,7 @@ fn build_and_launch(
         app_args.push("--chrome".to_string());
     }
 
-    let instance_app = match app_bundle::prepare_instance_app(window_name) {
+    let instance_app = match app_bundle::prepare_instance_app(window_name, color) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error preparing app instance: {}", e);

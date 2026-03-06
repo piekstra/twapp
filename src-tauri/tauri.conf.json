@@ -35,6 +35,9 @@
     ],
     "macOS": {
       "entitlements": "Entitlements.plist"
-    }
+    },
+    "resources": [
+      "icons/variants/*.icns"
+    ]
   }
 }

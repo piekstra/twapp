@@ -1,6 +1,10 @@
-# twapp
+<p align="center">
+  <img src="docs/images/twapp-logo.png" alt="twapp logo" width="300">
+</p>
 
-A structured terminal companion for Claude coding sessions — with notes, tickets, session forking, and two-way Claude integration.
+<h1 align="center">twapp</h1>
+
+<p align="center">A structured terminal companion for Claude coding sessions — with notes, tickets, session forking, and two-way Claude integration.</p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/piekstra/twapp)](https://github.com/piekstra/twapp/releases/latest)

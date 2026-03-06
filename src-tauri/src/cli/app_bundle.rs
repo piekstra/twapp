@@ -28,10 +28,54 @@ pub fn check_gui_installed() -> Result<(), String> {
     }
 }
 
-/// Create a per-instance .app bundle clone with a custom CFBundleName.
+/// Map a session hex color to the icon variant base name (without mode suffix).
+/// Returns None for unknown/custom colors (falls back to default icon).
+fn icon_variant_name_for_color(hex_color: &str) -> Option<&'static str> {
+    match hex_color {
+        "#ffe0e0" => Some("rose"),
+        "#e0e8ff" => Some("cornflower"),
+        "#e0ffe0" => Some("mint"),
+        "#fff0e0" => Some("peach"),
+        "#f0e0ff" => Some("lavender"),
+        "#e0ffff" => Some("seafoam"),
+        "#fef3c7" => Some("lemon"),
+        "#e8d8cc" => Some("cappuccino"),
+        "#e8f0e0" => Some("sage"),
+        _ => None,
+    }
+}
+
+/// Resolve the icon variant filename for a color + theme combination.
+/// Theme should be "light" or "dark". Falls back to "dark" for "system" or unknown.
+fn icon_variant_filename(hex_color: &str, theme: &str) -> Option<String> {
+    let name = icon_variant_name_for_color(hex_color)?;
+    let mode = if theme == "light" { "light" } else { "dark" };
+    Some(format!("icon-{}-{}.icns", name, mode))
+}
+
+/// Resolve "system" theme to "light" or "dark" based on macOS appearance.
+fn resolve_theme(theme: &str) -> &str {
+    match theme {
+        "light" => "light",
+        "dark" => "dark",
+        _ => {
+            // "system" or unknown — check macOS dark mode via defaults
+            let output = std::process::Command::new("defaults")
+                .args(["read", "-g", "AppleInterfaceStyle"])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => "dark",  // "Dark" is set
+                _ => "light",                             // key absent = light mode
+            }
+        }
+    }
+}
+
+/// Create a per-instance .app bundle clone with a custom CFBundleName
+/// and a color-matched icon variant.
 /// Uses APFS clonefile (cp -Rc) so the copy is nearly instant and shares
 /// storage with the master bundle (copy-on-write).
-pub fn prepare_instance_app(name: &str) -> Result<PathBuf, String> {
+pub fn prepare_instance_app(name: &str, color: &str) -> Result<PathBuf, String> {
     let instances = instances_dir();
     std::fs::create_dir_all(&instances).map_err(|e| e.to_string())?;
 
@@ -88,6 +132,25 @@ pub fn prepare_instance_app(name: &str) -> Result<PathBuf, String> {
         "CFBundleDisplayName".to_string(),
         plist::Value::String(name.to_string()),
     );
+
+    // Swap the icon to a color-matched variant if available
+    let theme = crate::cli::config::get_theme_preference();
+    let resolved_theme = resolve_theme(&theme);
+    if let Some(variant_file) = icon_variant_filename(color, resolved_theme) {
+        let resources = instance_app.join("Contents/Resources");
+        let variant_src = resources.join("icons/variants").join(&variant_file);
+        if variant_src.exists() {
+            let icon_dst = resources.join("icon.icns");
+            std::fs::copy(&variant_src, &icon_dst).map_err(|e| {
+                format!("Failed to copy icon variant: {}", e)
+            })?;
+            // Update plist to point to our icon (should already be "icon" but be explicit)
+            plist_data.insert(
+                "CFBundleIconFile".to_string(),
+                plist::Value::String("icon".to_string()),
+            );
+        }
+    }
 
     let mut file = std::fs::File::create(&plist_path).map_err(|e| e.to_string())?;
     plist::to_writer_binary(&mut file, &plist_data)
