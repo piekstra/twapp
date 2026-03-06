@@ -78,9 +78,9 @@ def invert_logo_for_light_bg(logo: Image.Image) -> Image.Image:
 
 
 def composite_logo(bg: Image.Image, logo: Image.Image) -> Image.Image:
-    """Center the logo on the background, scaled to ~65% width."""
+    """Center the logo on the background, scaled to ~85% width."""
     size = bg.size[0]
-    logo_w = int(size * 0.85)
+    logo_w = int(size * 0.90)
     aspect = logo.size[1] / logo.size[0]
     logo_h = int(logo_w * aspect)
     logo_resized = logo.resize((logo_w, logo_h), Image.LANCZOS)
