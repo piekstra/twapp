@@ -143,6 +143,7 @@ pub struct LauncherSession {
     pub is_running: bool,
     pub message_count: Option<u32>,
     pub imported: bool,
+    pub forked_from: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]

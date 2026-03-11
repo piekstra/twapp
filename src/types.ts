@@ -131,6 +131,7 @@ export interface LauncherSession {
   is_running: boolean;
   message_count: number | null;
   imported: boolean;
+  forked_from: string | null;
 }
 
 export interface LauncherResponse {

@@ -3712,9 +3712,10 @@ a.file-link {
   cursor: default;
 }
 
-/* ---- Imported Badge ---- */
+/* ---- Imported / Forked Badge ---- */
 
-.launcher-imported-badge {
+.launcher-imported-badge,
+.launcher-forked-badge {
   font-size: 10px;
   padding: 0 4px;
   border-radius: 3px;

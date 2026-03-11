@@ -1387,6 +1387,9 @@ function SessionLauncher({
                       )}
                     </div>
                     <div className="launcher-session-meta">
+                      {session.forked_from && (
+                        <span className="launcher-forked-badge" title={`Forked from ${session.forked_from.slice(0, 12)}`}>Forked</span>
+                      )}
                       {session.imported && (
                         <span className="launcher-imported-badge">Imported</span>
                       )}

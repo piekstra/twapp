@@ -83,6 +83,7 @@ pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize
                         let last_active =
                             data.last_resumed.clone().or_else(|| Some(data.created.clone()));
                         let imported = data.imported.unwrap_or(false);
+                        let forked_from = data.forked_from.clone();
                         let _ = app.emit(
                             "launcher:session",
                             LauncherSession {
@@ -97,6 +98,7 @@ pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize
                                 is_running,
                                 message_count,
                                 imported,
+                                forked_from,
                             },
                         );
                     }
@@ -143,6 +145,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
         let last_active = data.last_resumed.clone().or_else(|| Some(data.created.clone()));
 
         let imported = data.imported.unwrap_or(false);
+        let forked_from = data.forked_from.clone();
         results.push(LauncherSession {
             session_id: data.session_id,
             name: data.name,
@@ -155,6 +158,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
             is_running,
             message_count,
             imported,
+            forked_from,
         });
     }
 
