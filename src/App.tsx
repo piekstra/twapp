@@ -65,6 +65,7 @@ function App() {
   // Fork dialog state
   const [showForkDialog, setShowForkDialog] = useState(false);
   const [forkTicketKey, setForkTicketKey] = useState("");
+  const [forkName, setForkName] = useState("");
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<string | null>(null);
 
@@ -1111,9 +1112,11 @@ function App() {
     try {
       await invoke<string>("fork_session", {
         ticketKey: forkTicketKey.trim() || null,
+        name: forkName.trim() || null,
       });
       setShowForkDialog(false);
       setForkTicketKey("");
+      setForkName("");
     } catch (e) {
       setForkError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2172,9 +2175,17 @@ function App() {
             <input
               type="text"
               className="fork-input"
-              placeholder="Ticket (optional) — e.g. MON-1234"
+              placeholder="Ticket — e.g. MON-1234"
               value={forkTicketKey}
               onChange={(e) => setForkTicketKey(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !forking) handleFork(); }}
+            />
+            <input
+              type="text"
+              className="fork-input"
+              placeholder="Name — e.g. refactor auth"
+              value={forkName}
+              onChange={(e) => setForkName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !forking) handleFork(); }}
             />
             {forkError && <div className="fork-error">{forkError}</div>}

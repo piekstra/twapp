@@ -924,6 +924,7 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
 #[tauri::command]
 pub async fn fork_session(
     ticket_key: Option<String>,
+    name: Option<String>,
     config: tauri::State<'_, GuiArgs>,
 ) -> Result<String, String> {
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
@@ -935,6 +936,14 @@ pub async fn fork_session(
         .to_string();
     let mut ticket_file: Option<String> = None;
     let mut ticket_key_for_session: Option<String> = None;
+
+    // Custom name takes priority over directory-derived name (ticket overrides both)
+    if let Some(ref n) = name {
+        let filtered: String = n.chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_')
+            .collect();
+        window_name = filtered.split_whitespace().collect::<Vec<_>>().join("-");
+    }
 
     // If ticket provided, fetch and set up directory
     if let Some(ref key) = ticket_key {
