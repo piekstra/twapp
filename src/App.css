@@ -95,7 +95,7 @@ body,
 }
 
 .terminal .xterm-viewport {
-  overflow-y: auto !important;
+  overflow-y: scroll !important;
 }
 
 /* Tab Bar */

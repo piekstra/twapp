@@ -527,9 +527,15 @@ function App() {
 
     }).catch(console.error);
 
-    // Listen for PTY output
+    // Listen for PTY output — preserve scroll position when user has scrolled up
     const unlistenPromise = listen<string>("pty-output", (event) => {
-      term.write(event.payload);
+      const buf = term.buffer.active;
+      if (buf.viewportY >= buf.baseY) {
+        term.write(event.payload);
+      } else {
+        const savedPos = buf.viewportY;
+        term.write(event.payload, () => term.scrollToLine(savedPos));
+      }
     });
 
     // Send input to PTY
@@ -1174,11 +1180,17 @@ function App() {
 
     requestAnimationFrame(() => fit.fit());
 
-    // Route output from this tab's PTY
+    // Route output from this tab's PTY — preserve scroll position when user has scrolled up
     let unlistenFn: (() => void) | null = null;
     listen<{ tab_id: string; data: string }>("pty-tab-output", (event) => {
       if (event.payload.tab_id === tabId) {
-        term.write(event.payload.data);
+        const buf = term.buffer.active;
+        if (buf.viewportY >= buf.baseY) {
+          term.write(event.payload.data);
+        } else {
+          const savedPos = buf.viewportY;
+          term.write(event.payload.data, () => term.scrollToLine(savedPos));
+        }
       }
     }).then((fn) => { unlistenFn = fn; });
 
