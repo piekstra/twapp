@@ -424,6 +424,34 @@ pub async fn update_session_color(
 }
 
 #[tauri::command]
+pub async fn update_session_fields(
+    directory: String,
+    name: Option<String>,
+    session_id: Option<String>,
+    claude_cwd: Option<String>,
+    ticket_key: Option<String>,
+) -> Result<(), String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    let mut data = crate::cli::session::read_session(&work_dir)?;
+
+    if let Some(ref n) = name {
+        data.name = n.clone();
+    }
+    if let Some(ref sid) = session_id {
+        data.session_id = sid.clone();
+    }
+    if let Some(ref cwd) = claude_cwd {
+        data.claude_cwd = cwd.clone();
+    }
+    if let Some(ref tk) = ticket_key {
+        data.ticket_key = if tk.is_empty() { None } else { Some(tk.clone()) };
+    }
+
+    crate::cli::session::write_session(&work_dir, &data)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn delete_session(directory: String, delete_everything: bool) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let session_data = crate::cli::session::read_session(&work_dir)?;

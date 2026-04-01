@@ -89,6 +89,7 @@ pub fn run(args: GuiArgs) {
             sessions::preflight_delete_session,
             sessions::rename_session,
             sessions::update_session_color,
+            sessions::update_session_fields,
             sessions::delete_session,
             sessions::discover_claude_sessions,
             sessions::import_sessions,

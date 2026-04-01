@@ -835,26 +835,76 @@ body,
 }
 
 /* Session Settings Dropdown */
-.session-settings-dropdown {
-  position: relative;
+/* Session Config Modal */
+.config-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.session-settings-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  padding: 12px;
-  min-width: 160px;
+.config-panel {
+  width: 360px;
+  max-width: 90vw;
+  max-height: 80vh;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 100;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-:root.dark .session-settings-menu {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.config-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.config-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  font-size: 20px;
+}
+
+.config-close:hover {
+  color: var(--text-primary);
+}
+
+.config-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.config-section {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.config-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
 }
 
 .session-settings-label {
@@ -937,6 +987,63 @@ body,
 .session-settings-checkbox input[type="checkbox"] {
   margin: 0;
   cursor: pointer;
+}
+
+.session-settings-field {
+  margin-bottom: 8px;
+}
+
+.session-settings-field:last-child {
+  margin-bottom: 0;
+}
+
+.session-settings-field .session-settings-label {
+  margin-bottom: 3px;
+}
+
+.session-settings-input {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.session-settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.config-save-button {
+  margin-top: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.config-save-button:hover {
+  opacity: 0.9;
+}
+
+.config-save-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.config-error {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #e53e3e;
 }
 
 /* Notes Section Header (collapsible) */

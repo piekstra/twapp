@@ -69,6 +69,13 @@ function App() {
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<string | null>(null);
 
+  // Session config editing state
+  type SessionFieldValues = { name: string; session_id: string; claude_cwd: string; ticket_key: string };
+  const [sessionFields, setSessionFields] = useState<SessionFieldValues | null>(null);
+  const [sessionFieldsOriginal, setSessionFieldsOriginal] = useState<SessionFieldValues | null>(null);
+  const [sessionFieldsSaving, setSessionFieldsSaving] = useState(false);
+  const [sessionFieldsError, setSessionFieldsError] = useState<string | null>(null);
+
   // Quick Prompts state
   const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
   const [projectPrompts, setProjectPrompts] = useState<PromptStore>({ sections: [] });
@@ -118,7 +125,6 @@ function App() {
 
   // Session settings popover
   const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
-  const sessionSettingsRef = useRef<HTMLDivElement>(null);
 
   // Monitor state
   const [monitorStatus, setMonitorStatus] = useState<MonitorStatusInfo | null>(null);
@@ -778,16 +784,9 @@ function App() {
     return () => document.removeEventListener("mousedown", handler);
   }, [actionsOpen]);
 
-  // Close session settings on outside click
+  // Load session fields when config modal opens
   useEffect(() => {
-    if (!sessionSettingsOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (sessionSettingsRef.current && !sessionSettingsRef.current.contains(e.target as Node)) {
-        setSessionSettingsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    if (sessionSettingsOpen) loadSessionFields();
   }, [sessionSettingsOpen]);
 
   // Close monitor logs dropdown on outside click
@@ -1019,6 +1018,62 @@ function App() {
         color: appConfig.color,
         overrideTerminalTheme: checked,
       }).catch(console.error);
+    }
+  };
+
+  const loadSessionFields = () => {
+    setSessionFieldsError(null);
+    invoke<Record<string, unknown> | null>("get_session_info").then((data) => {
+      const fields: SessionFieldValues = {
+        name: (data?.name as string) || appConfig?.name || "",
+        session_id: (data?.session_id as string) || appConfig?.session_id || "",
+        claude_cwd: (data?.claude_cwd as string) || appConfig?.cwd || "",
+        ticket_key: (data?.ticket_key as string) || "",
+      };
+      setSessionFields(fields);
+      setSessionFieldsOriginal(fields);
+    }).catch(() => {
+      const fields: SessionFieldValues = {
+        name: appConfig?.name || "",
+        session_id: appConfig?.session_id || "",
+        claude_cwd: appConfig?.cwd || "",
+        ticket_key: "",
+      };
+      setSessionFields(fields);
+      setSessionFieldsOriginal(fields);
+    });
+  };
+
+  const sessionFieldsDirty = sessionFields && sessionFieldsOriginal &&
+    (sessionFields.name !== sessionFieldsOriginal.name ||
+     sessionFields.session_id !== sessionFieldsOriginal.session_id ||
+     sessionFields.claude_cwd !== sessionFieldsOriginal.claude_cwd ||
+     sessionFields.ticket_key !== sessionFieldsOriginal.ticket_key);
+
+  const handleSaveSessionFields = async () => {
+    if (!appConfig?.cwd || !sessionFields) return;
+    setSessionFieldsSaving(true);
+    setSessionFieldsError(null);
+    try {
+      const args: Record<string, string> = { directory: appConfig.cwd };
+      if (sessionFields.name !== sessionFieldsOriginal?.name) args.name = sessionFields.name;
+      if (sessionFields.session_id !== sessionFieldsOriginal?.session_id) args.session_id = sessionFields.session_id;
+      if (sessionFields.claude_cwd !== sessionFieldsOriginal?.claude_cwd) args.claude_cwd = sessionFields.claude_cwd;
+      if (sessionFields.ticket_key !== sessionFieldsOriginal?.ticket_key) args.ticket_key = sessionFields.ticket_key;
+      await invoke("update_session_fields", args);
+      // Update local state
+      if (args.name !== undefined) {
+        setAppConfig((prev) => prev ? { ...prev, name: args.name } : prev);
+        setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: args.name } : t));
+      }
+      if (args.session_id !== undefined) {
+        setAppConfig((prev) => prev ? { ...prev, session_id: args.session_id } : prev);
+      }
+      setSessionFieldsOriginal({ ...sessionFields });
+    } catch (err) {
+      setSessionFieldsError(String(err));
+    } finally {
+      setSessionFieldsSaving(false);
     }
   };
 
@@ -2090,54 +2145,16 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="session-settings-dropdown" ref={sessionSettingsRef}>
-                <button
-                  className="sidebar-action-button"
-                  onClick={() => setSessionSettingsOpen(!sessionSettingsOpen)}
-                  title="Session settings"
-                >
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="6" cy="6" r="1.5" />
-                    <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.17 2.17l1.06 1.06M8.77 8.77l1.06 1.06M9.83 2.17l-1.06 1.06M3.23 8.77l-1.06 1.06" />
-                  </svg>
-                </button>
-                {sessionSettingsOpen && (
-                  <div className="session-settings-menu">
-                    <div className="session-settings-label">Session Color</div>
-                    <div className="session-color-grid">
-                      {SESSION_COLORS.map(({ hex, name }) => {
-                        const isDark = document.documentElement.classList.contains("dark");
-                        const displayColor = isDark ? getDarkModeAccentColor(hex) : hex;
-                        return (
-                          <div
-                            key={hex}
-                            className={`session-color-dot${appConfig?.color === hex ? " selected" : ""}`}
-                            style={{ backgroundColor: displayColor }}
-                            title={name}
-                            onClick={() => { handleSessionColorChange(hex); setSessionSettingsOpen(false); }}
-                          />
-                        );
-                      })}
-                    </div>
-                    <div className="session-color-custom">
-                      <label className="session-settings-label">Custom</label>
-                      <input
-                        type="color"
-                        value={appConfig?.color || "#e0e8ff"}
-                        onInput={(e) => handleSessionColorChange((e.target as HTMLInputElement).value)}
-                      />
-                    </div>
-                    <label className="session-settings-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={appConfig?.override_terminal_theme || false}
-                        onChange={(e) => handleTerminalThemeToggle(e.target.checked)}
-                      />
-                      Apply to terminal
-                    </label>
-                  </div>
-                )}
-              </div>
+              <button
+                className="sidebar-action-button"
+                onClick={() => setSessionSettingsOpen(true)}
+                title="Session settings"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="6" cy="6" r="1.5" />
+                  <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.17 2.17l1.06 1.06M8.77 8.77l1.06 1.06M9.83 2.17l-1.06 1.06M3.23 8.77l-1.06 1.06" />
+                </svg>
+              </button>
             </div>
           </div>
           {appConfig?.session_id && (
@@ -2496,6 +2513,86 @@ function App() {
         </div>
 
       </div>
+
+      {/* Session Config Modal */}
+      {sessionSettingsOpen && (
+        <div className="config-overlay" onClick={() => setSessionSettingsOpen(false)}>
+          <div className="config-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="config-header">
+              <span className="config-title">Session Config</span>
+              <button className="config-close" onClick={() => setSessionSettingsOpen(false)}>&times;</button>
+            </div>
+            <div className="config-body">
+              <div className="config-section">
+                <div className="session-settings-label">Session Color</div>
+                <div className="session-color-grid">
+                  {SESSION_COLORS.map(({ hex, name }) => {
+                    const isDark = document.documentElement.classList.contains("dark");
+                    const displayColor = isDark ? getDarkModeAccentColor(hex) : hex;
+                    return (
+                      <div
+                        key={hex}
+                        className={`session-color-dot${appConfig?.color === hex ? " selected" : ""}`}
+                        style={{ backgroundColor: displayColor }}
+                        title={name}
+                        onClick={() => handleSessionColorChange(hex)}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="session-color-custom">
+                  <label className="session-settings-label">Custom</label>
+                  <input
+                    type="color"
+                    value={appConfig?.color || "#e0e8ff"}
+                    onInput={(e) => handleSessionColorChange((e.target as HTMLInputElement).value)}
+                  />
+                </div>
+                <label className="session-settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={appConfig?.override_terminal_theme || false}
+                    onChange={(e) => handleTerminalThemeToggle(e.target.checked)}
+                  />
+                  Apply to terminal
+                </label>
+              </div>
+              {sessionFields && (
+                <div className="config-section">
+                  {([
+                    ["name", "Name"],
+                    ["session_id", "Session ID"],
+                    ["claude_cwd", "Claude CWD"],
+                    ["ticket_key", "Ticket"],
+                  ] as const).map(([key, label]) => (
+                    <div className="session-settings-field" key={key}>
+                      <label className="session-settings-label">{label}</label>
+                      <input
+                        className="session-settings-input"
+                        value={sessionFields[key]}
+                        onChange={(e) => setSessionFields((prev) => prev ? { ...prev, [key]: e.target.value } : prev)}
+                        spellCheck={false}
+                      />
+                    </div>
+                  ))}
+                  {sessionFieldsError && (
+                    <div className="config-error">{sessionFieldsError}</div>
+                  )}
+                  {sessionFieldsDirty && (
+                    <button
+                      className="config-save-button"
+                      onClick={handleSaveSessionFields}
+                      disabled={sessionFieldsSaving}
+                    >
+                      {sessionFieldsSaving ? "Saving..." : "Save"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* File Preview Overlay */}
       {(previewFile || previewLoading) && (
