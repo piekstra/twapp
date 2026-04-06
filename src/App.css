@@ -2900,6 +2900,26 @@ a.file-link {
   font-family: "SF Mono", "Fira Code", monospace;
 }
 
+.launcher-session-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: "SF Mono", "Fira Code", monospace;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.launcher-session-id:hover {
+  color: var(--text-secondary);
+}
+
+.launcher-session-id:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Trash icon hover-reveal on session rows */
 .launcher-session-action {
   display: flex;
@@ -4037,4 +4057,3 @@ a.file-link {
   color: var(--text-secondary);
   line-height: 1.4;
 }
-

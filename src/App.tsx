@@ -20,6 +20,7 @@ import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, Monit
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath } from "./utils/file";
+import { buildResumeCommand } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
 import PromptSections from "./components/PromptSections";
@@ -1100,12 +1101,11 @@ function App() {
     await invoke("kill_pty");
     terminalInstance.current?.reset();
     const dims = fitAddon.current?.proposeDimensions();
-    const sessionId = appConfig?.session_id;
-    const resumeCmd = appConfig?.provider === "codex"
-      ? (sessionId
-        ? `codex resume ${sessionId} -C '${(appConfig?.cwd || ".").replace(/'/g, `'\\''`)}'`
-        : `codex -C '${(appConfig?.cwd || ".").replace(/'/g, `'\\''`)}'`)
-      : (sessionId ? `claude --resume ${sessionId}` : "claude -c");
+    const resumeCmd = buildResumeCommand(
+      appConfig?.provider || "claude",
+      appConfig?.session_id,
+      appConfig?.cwd,
+    );
     await invoke("spawn_shell", {
       cwd: appConfig?.cwd || null,
       command: resumeCmd,

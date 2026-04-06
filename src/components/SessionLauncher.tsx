@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
+import { maskProviderSessionId } from "../utils/session";
 import type {
   LauncherSession,
   LauncherResponse,
@@ -360,6 +361,11 @@ function SessionLauncher({
     } catch (e) {
       console.error("Failed to save theme:", e);
     }
+  };
+
+  const handleCopyProviderSessionId = (e: MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sessionId).catch(console.error);
   };
 
   const handleAddPermission = async () => {
@@ -764,15 +770,27 @@ function SessionLauncher({
               <div className="launcher-settings-section-header">Configuration</div>
               <div className="launcher-settings-field">
                 <label>Agent Provider</label>
-                <div className="launcher-sort">
-                  <button className={`launcher-sort-btn${agentProvider === "claude" ? " active" : ""}`} onClick={() => {
+                <div className="launcher-sort" role="radiogroup" aria-label="Agent Provider">
+                  <button
+                    role="radio"
+                    aria-checked={agentProvider === "claude"}
+                    aria-pressed={agentProvider === "claude"}
+                    className={`launcher-sort-btn${agentProvider === "claude" ? " active" : ""}`}
+                    onClick={() => {
                     setAgentProvider("claude");
                     handleSaveConfig("agent_provider", "claude");
-                  }}>Claude</button>
-                  <button className={`launcher-sort-btn${agentProvider === "codex" ? " active" : ""}`} onClick={() => {
+                  }}
+                  >Claude</button>
+                  <button
+                    role="radio"
+                    aria-checked={agentProvider === "codex"}
+                    aria-pressed={agentProvider === "codex"}
+                    className={`launcher-sort-btn${agentProvider === "codex" ? " active" : ""}`}
+                    onClick={() => {
                     setAgentProvider("codex");
                     handleSaveConfig("agent_provider", "codex");
-                  }}>Codex</button>
+                  }}
+                  >Codex</button>
                 </div>
                 <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
                   Existing sessions resume natively when this provider already has a session handle. Otherwise twapp preloads a one-time migration prompt.
@@ -1429,9 +1447,15 @@ function SessionLauncher({
                       {formatRelativeTime(session.last_active)}
                     </span>
                     {session.provider_session_id && (
-                      <span className="launcher-messages" title={session.provider_session_id}>
-                        {session.provider_session_id.slice(0, 10)}
-                      </span>
+                      <button
+                        className="launcher-session-id"
+                        type="button"
+                        onClick={(e) => handleCopyProviderSessionId(e, session.provider_session_id!)}
+                        aria-label={`Copy ${session.provider} session id ${session.provider_session_id}`}
+                        title={`Copy ${session.provider} session ID`}
+                      >
+                        {maskProviderSessionId(session.provider_session_id)}
+                      </button>
                     )}
                     {session.message_count != null && (
                       <span className="launcher-messages">
