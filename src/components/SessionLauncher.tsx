@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
+import { maskProviderSessionId } from "../utils/session";
 import type {
   LauncherSession,
   LauncherResponse,
@@ -61,6 +62,7 @@ function SessionLauncher({
   const [configWorkDir, setConfigWorkDir] = useState("");
   const [configJiraProject, setConfigJiraProject] = useState("");
   const [configGithubRepo, setConfigGithubRepo] = useState("");
+  const [agentProvider, setAgentProvider] = useState<"claude" | "codex">("claude");
   const [sessionColorPref, setSessionColorPref] = useState("random");
   const [permissions, setPermissions] = useState<string[]>([]);
   const [newPermission, setNewPermission] = useState("");
@@ -224,12 +226,13 @@ function SessionLauncher({
   // Load settings data on first navigation to settings
   useEffect(() => {
     if (launcherView !== "settings" || settingsLoaded) return;
-    invoke<{ work_directory: string; jira_project: string | null; github_repo: string | null; session_color: string }>("get_global_config")
+    invoke<{ work_directory: string; jira_project: string | null; github_repo: string | null; session_color: string; agent_provider: "claude" | "codex" }>("get_global_config")
       .then((cfg) => {
         setConfigWorkDir(cfg.work_directory);
         setConfigJiraProject(cfg.jira_project || "");
         setConfigGithubRepo(cfg.github_repo || "");
         setSessionColorPref(cfg.session_color || "random");
+        setAgentProvider(cfg.agent_provider || "claude");
       })
       .catch((e) => console.error("Failed to load config:", e));
     invoke<string[]>("get_default_permissions")
@@ -334,6 +337,7 @@ function SessionLauncher({
         workDirectory: field === "work_directory" ? value : null,
         jiraProject: field === "jira_project" ? value : null,
         githubRepo: field === "github_repo" ? value : null,
+        agentProvider: field === "agent_provider" ? value : null,
       };
       await invoke("save_global_config", args);
     } catch (e) {
@@ -357,6 +361,11 @@ function SessionLauncher({
     } catch (e) {
       console.error("Failed to save theme:", e);
     }
+  };
+
+  const handleCopyProviderSessionId = (e: MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sessionId).catch(console.error);
   };
 
   const handleAddPermission = async () => {
@@ -759,6 +768,34 @@ function SessionLauncher({
             {/* Config */}
             <div className="launcher-settings-section">
               <div className="launcher-settings-section-header">Configuration</div>
+              <div className="launcher-settings-field">
+                <label>Agent Provider</label>
+                <div className="launcher-sort" role="radiogroup" aria-label="Agent Provider">
+                  <button
+                    role="radio"
+                    aria-checked={agentProvider === "claude"}
+                    aria-pressed={agentProvider === "claude"}
+                    className={`launcher-sort-btn${agentProvider === "claude" ? " active" : ""}`}
+                    onClick={() => {
+                    setAgentProvider("claude");
+                    handleSaveConfig("agent_provider", "claude");
+                  }}
+                  >Claude</button>
+                  <button
+                    role="radio"
+                    aria-checked={agentProvider === "codex"}
+                    aria-pressed={agentProvider === "codex"}
+                    className={`launcher-sort-btn${agentProvider === "codex" ? " active" : ""}`}
+                    onClick={() => {
+                    setAgentProvider("codex");
+                    handleSaveConfig("agent_provider", "codex");
+                  }}
+                  >Codex</button>
+                </div>
+                <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
+                  Existing sessions resume natively when this provider already has a session handle. Otherwise twapp preloads a one-time migration prompt.
+                </span>
+              </div>
               <div className="launcher-settings-field">
                 <label>Work Directory</label>
                 <input
@@ -1387,6 +1424,7 @@ function SessionLauncher({
                       )}
                     </div>
                     <div className="launcher-session-meta">
+                      <span className="launcher-imported-badge">{session.provider}</span>
                       {session.forked_from && (
                         <span className="launcher-forked-badge" title={`Forked from ${session.forked_from.slice(0, 12)}`}>Forked</span>
                       )}
@@ -1396,6 +1434,11 @@ function SessionLauncher({
                       {session.ticket_key && (
                         <span className="launcher-ticket">{session.ticket_key}</span>
                       )}
+                      {session.needs_migration && (
+                        <span className="launcher-forked-badge" title={`Will migrate existing ${session.provider === "codex" ? "Claude" : "Codex"} context into ${session.provider} on next launch`}>
+                          Migrate on Open
+                        </span>
+                      )}
                       <span className="launcher-path">{shortenPath(session.directory, homeDir)}</span>
                     </div>
                   </div>
@@ -1403,6 +1446,17 @@ function SessionLauncher({
                     <span className="launcher-time">
                       {formatRelativeTime(session.last_active)}
                     </span>
+                    {session.provider_session_id && (
+                      <button
+                        className="launcher-session-id"
+                        type="button"
+                        onClick={(e) => handleCopyProviderSessionId(e, session.provider_session_id!)}
+                        aria-label={`Copy ${session.provider} session id ${session.provider_session_id}`}
+                        title={`Copy ${session.provider} session ID`}
+                      >
+                        {maskProviderSessionId(session.provider_session_id)}
+                      </button>
+                    )}
                     {session.message_count != null && (
                       <span className="launcher-messages">
                         {session.message_count} msgs

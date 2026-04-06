@@ -33,6 +33,11 @@ fn resolve_session_path(config: &GuiArgs) -> std::path::PathBuf {
 }
 
 pub fn read_session_id(config: &GuiArgs) -> Option<String> {
+    if let Some(session_id) = &config.session_id {
+        if !session_id.is_empty() {
+            return Some(session_id.clone());
+        }
+    }
     let path = resolve_session_path(config);
     if path.exists() {
         std::fs::read_to_string(&path)

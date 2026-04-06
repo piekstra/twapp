@@ -1,6 +1,8 @@
 use clap::Args;
 use std::io::Write;
 
+use crate::cli::session::AgentProvider;
+
 #[derive(Args, Debug, Clone, serde::Serialize)]
 pub struct GuiArgs {
     /// Instance name (shown in title bar)
@@ -30,6 +32,14 @@ pub struct GuiArgs {
     /// Claude session ID (for display in UI when resuming)
     #[arg(long)]
     pub session_id: Option<String>,
+
+    /// Active agent provider for this window
+    #[arg(long, default_value = "claude")]
+    pub provider: AgentProvider,
+
+    /// Timestamp used to capture a newly-created provider session ID
+    #[arg(long)]
+    pub capture_started_at: Option<String>,
 
     /// Use Chrome instead of Claude desktop
     #[arg(long)]
@@ -133,6 +143,9 @@ pub struct TabOutputEvent {
 #[derive(Clone, serde::Serialize)]
 pub struct LauncherSession {
     pub session_id: String,
+    pub provider: String,
+    pub provider_session_id: Option<String>,
+    pub needs_migration: bool,
     pub name: String,
     pub color: String,
     pub ticket_key: Option<String>,

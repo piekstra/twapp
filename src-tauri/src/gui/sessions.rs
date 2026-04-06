@@ -4,6 +4,11 @@ use rand::Rng;
 use std::io::{BufRead, Seek, SeekFrom};
 use tauri::Emitter;
 
+use crate::cli::session::{
+    AgentProvider, SessionData, count_codex_conversation_messages, find_latest_codex_session_for_cwd,
+    other_provider, shell_escape_single,
+};
+
 pub fn sanitize_instance_name(name: &str) -> String {
     let safe: String = name
         .chars()
@@ -55,6 +60,259 @@ pub fn count_conversation_messages(session_id: &str, claude_cwd: &str) -> Option
     Some(count as u32)
 }
 
+fn configured_provider() -> AgentProvider {
+    crate::cli::config::GlobalConfig::load()
+        .map(|cfg| cfg.agent_provider)
+        .unwrap_or(AgentProvider::Claude)
+}
+
+fn count_messages_for_provider(session_data: &SessionData, provider: AgentProvider, work_dir: &std::path::Path) -> Option<u32> {
+    match provider {
+        AgentProvider::Claude => session_data
+            .native_session_id(AgentProvider::Claude)
+            .and_then(|session_id| {
+                count_conversation_messages(session_id, &session_data.native_cwd(AgentProvider::Claude, work_dir))
+            }),
+        AgentProvider::Codex => session_data
+            .native_session_id(AgentProvider::Codex)
+            .and_then(count_codex_conversation_messages),
+    }
+}
+
+fn launcher_session_from_data(
+    session_data: &SessionData,
+    directory: &std::path::Path,
+    preferred: AgentProvider,
+) -> LauncherSession {
+    let is_running = check_instance_running(&session_data.name);
+    let message_count = count_messages_for_provider(session_data, preferred, directory)
+        .or_else(|| count_messages_for_provider(session_data, other_provider(preferred), directory));
+    let last_active = session_data.last_resumed.clone().or_else(|| Some(session_data.created.clone()));
+    let imported = session_data.imported.unwrap_or(false);
+    let forked_from = session_data.forked_from.clone();
+    let fallback_session_key = directory.to_string_lossy().to_string();
+
+    LauncherSession {
+        session_id: session_data
+            .native_session_id(AgentProvider::Claude)
+            .or_else(|| session_data.native_session_id(AgentProvider::Codex))
+            .map(str::to_string)
+            .unwrap_or(fallback_session_key),
+        provider: preferred.to_string(),
+        provider_session_id: session_data.display_session_id(preferred),
+        needs_migration: session_data.needs_migration(preferred),
+        name: session_data.name.clone(),
+        color: session_data.color.clone(),
+        ticket_key: session_data.ticket_key.clone(),
+        directory: directory.to_string_lossy().to_string(),
+        claude_cwd: session_data.claude_cwd.clone(),
+        last_active,
+        created: session_data.created.clone(),
+        is_running,
+        message_count,
+        imported,
+        forked_from,
+    }
+}
+
+fn load_ticket_context(work_dir: &std::path::Path) -> Option<String> {
+    let ticket_path = work_dir.join(".twapp-ticket.json");
+    let content = std::fs::read_to_string(ticket_path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let key = value.get("key").and_then(|v| v.as_str()).unwrap_or("");
+    let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if key.is_empty() && title.is_empty() {
+        return None;
+    }
+    Some(format!("Ticket: {} {} [{}]", key, title, status).trim().to_string())
+}
+
+fn load_note_context(work_dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(work_dir) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(".twapp-notes") || !name.ends_with(".json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        let Some(items) = value.as_array() else {
+            continue;
+        };
+        for item in items.iter().rev().take(3) {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                notes.push(truncate_str(text, 160));
+            }
+        }
+    }
+    notes.truncate(3);
+    notes
+}
+
+fn recent_codex_prompts(session_id: &str) -> Vec<String> {
+    let history_path = match dirs::home_dir() {
+        Some(home) => home.join(".codex/history.jsonl"),
+        None => return Vec::new(),
+    };
+    let Ok(file) = std::fs::File::open(history_path) else {
+        return Vec::new();
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut prompts = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if value.get("session_id").and_then(|v| v.as_str()) != Some(session_id) {
+            continue;
+        }
+        if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
+            prompts.push(truncate_str(text, 180));
+        }
+    }
+    prompts.reverse();
+    prompts.truncate(4);
+    prompts.reverse();
+    prompts
+}
+
+fn build_migration_prompt(
+    session_data: &SessionData,
+    work_dir: &std::path::Path,
+    source: AgentProvider,
+    target: AgentProvider,
+) -> String {
+    let mut sections = vec![format!(
+        "This twapp session is migrating from {} to {}. Continue the same task from the current repository state.",
+        source, target
+    )];
+
+    if let Some(ticket) = load_ticket_context(work_dir) {
+        sections.push(ticket);
+    }
+
+    let notes = load_note_context(work_dir);
+    if !notes.is_empty() {
+        sections.push(format!("Recent notes:\n- {}", notes.join("\n- ")));
+    }
+
+    match source {
+        AgentProvider::Claude => {
+            if let Some(source_id) = session_data.native_session_id(AgentProvider::Claude) {
+                let home = dirs::home_dir().unwrap_or_default();
+                let encoded = session_data.native_cwd(AgentProvider::Claude, work_dir).replace('/', "-");
+                let jsonl_path = home
+                    .join(".claude/projects")
+                    .join(encoded)
+                    .join(format!("{}.jsonl", source_id));
+                let (summary, first_message, _, last_timestamp, _, _) = extract_jsonl_metadata(&jsonl_path);
+                if let Some(summary) = summary.or(first_message) {
+                    sections.push(format!("Claude context summary: {}", summary));
+                }
+                if let Some(last_timestamp) = last_timestamp {
+                    sections.push(format!("Claude transcript last activity: {}", last_timestamp));
+                }
+            }
+        }
+        AgentProvider::Codex => {
+            if let Some(source_id) = session_data.native_session_id(AgentProvider::Codex) {
+                let prompts = recent_codex_prompts(source_id);
+                if !prompts.is_empty() {
+                    sections.push(format!("Recent Codex user requests:\n- {}", prompts.join("\n- ")));
+                }
+            }
+        }
+    }
+
+    sections.push(
+        "Before acting, inspect the repo status, existing diffs, session notes, and linked ticket so you can recover state cleanly."
+            .to_string(),
+    );
+
+    sections.join("\n\n")
+}
+
+fn build_provider_command(
+    provider: AgentProvider,
+    session_data: &SessionData,
+    work_dir: &std::path::Path,
+    prompt: Option<&str>,
+    fork: bool,
+) -> Result<(String, Option<String>), String> {
+    let work_dir_str = work_dir.to_string_lossy().to_string();
+    let prompt_suffix = prompt
+        .map(|text| format!(" '{}'", shell_escape_single(text)))
+        .unwrap_or_default();
+    let chrome_flag = if session_data.use_chrome.unwrap_or(false) { " --chrome" } else { "" };
+
+    match provider {
+        AgentProvider::Claude => {
+            let command = if fork {
+                let current_id = session_data
+                    .native_session_id(AgentProvider::Claude)
+                    .ok_or("No Claude session ID available to fork")?;
+                let new_id = uuid::Uuid::new_v4().to_string();
+                let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
+                let cd_prefix = if cwd != work_dir_str {
+                    format!("cd '{}' && ", shell_escape_single(&cwd))
+                } else {
+                    String::new()
+                };
+                (
+                    format!(
+                        "{}claude --resume {} --fork-session --session-id {}{}{}",
+                        cd_prefix, current_id, new_id, chrome_flag, prompt_suffix
+                    ),
+                    Some(new_id),
+                )
+            } else if let Some(current_id) = session_data.native_session_id(AgentProvider::Claude) {
+                let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
+                let cd_prefix = if cwd != work_dir_str {
+                    format!("cd '{}' && ", shell_escape_single(&cwd))
+                } else {
+                    String::new()
+                };
+                (
+                    format!("{}claude --resume {}{}{}", cd_prefix, current_id, chrome_flag, prompt_suffix),
+                    Some(current_id.to_string()),
+                )
+            } else {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                (
+                    format!("claude --session-id {}{}{}", new_id, chrome_flag, prompt_suffix),
+                    Some(new_id),
+                )
+            };
+            Ok(command)
+        }
+        AgentProvider::Codex => {
+            let escaped_dir = shell_escape_single(&work_dir_str);
+            let command = if fork {
+                let current_id = session_data
+                    .native_session_id(AgentProvider::Codex)
+                    .ok_or("No Codex session ID available to fork")?;
+                (format!("codex fork {} -C '{}'{}", current_id, escaped_dir, prompt_suffix), None)
+            } else if let Some(current_id) = session_data.native_session_id(AgentProvider::Codex) {
+                (
+                    format!("codex resume {} -C '{}'{}", current_id, escaped_dir, prompt_suffix),
+                    Some(current_id.to_string()),
+                )
+            } else {
+                (format!("codex -C '{}'{}", escaped_dir, prompt_suffix), None)
+            };
+            Ok(command)
+        }
+    }
+}
+
 pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
     if depth > 5 {
         return;
@@ -77,30 +335,8 @@ pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize
                     if let Ok(data) =
                         serde_json::from_str::<crate::cli::session::SessionData>(&content)
                     {
-                        let is_running = check_instance_running(&data.name);
-                        let message_count =
-                            count_conversation_messages(&data.session_id, &data.claude_cwd);
-                        let last_active =
-                            data.last_resumed.clone().or_else(|| Some(data.created.clone()));
-                        let imported = data.imported.unwrap_or(false);
-                        let forked_from = data.forked_from.clone();
-                        let _ = app.emit(
-                            "launcher:session",
-                            LauncherSession {
-                                session_id: data.session_id,
-                                name: data.name,
-                                color: data.color,
-                                ticket_key: data.ticket_key,
-                                directory: path.to_string_lossy().to_string(),
-                                claude_cwd: data.claude_cwd,
-                                last_active,
-                                created: data.created,
-                                is_running,
-                                message_count,
-                                imported,
-                                forked_from,
-                            },
-                        );
+                        let preferred = configured_provider();
+                        let _ = app.emit("launcher:session", launcher_session_from_data(&data, &path, preferred));
                     }
                 }
             }
@@ -140,26 +376,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
 
     let mut results = Vec::new();
     for (data, dir) in sessions {
-        let is_running = check_instance_running(&data.name);
-        let message_count = count_conversation_messages(&data.session_id, &data.claude_cwd);
-        let last_active = data.last_resumed.clone().or_else(|| Some(data.created.clone()));
-
-        let imported = data.imported.unwrap_or(false);
-        let forked_from = data.forked_from.clone();
-        results.push(LauncherSession {
-            session_id: data.session_id,
-            name: data.name,
-            color: data.color,
-            ticket_key: data.ticket_key,
-            directory: dir.to_string_lossy().to_string(),
-            claude_cwd: data.claude_cwd,
-            last_active,
-            created: data.created,
-            is_running,
-            message_count,
-            imported,
-            forked_from,
-        });
+        results.push(launcher_session_from_data(&data, &dir, global_config.agent_provider));
     }
 
     Ok(LauncherResponse {
@@ -172,6 +389,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
 pub async fn launch_session(_session_id: String, directory: String) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
+    let preferred = configured_provider();
 
     // If already running, focus the existing window
     if check_instance_running(&session_data.name) {
@@ -189,21 +407,33 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
 
     // Update last_resumed
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
-    crate::cli::session::write_session(&work_dir, &session_data)?;
+    session_data.provider = Some(preferred);
 
     // Run health checks
     crate::cli::session::run_health_checks(&work_dir, Some(&session_data));
 
-    // Build command (mirrors cli/mod.rs cmd_resume)
-    let cd_prefix = if !session_data.claude_cwd.is_empty()
-        && session_data.claude_cwd != work_dir.to_string_lossy()
-    {
-        format!("cd '{}' && ", session_data.claude_cwd.replace('\'', "'\\''"))
+    let migration_prompt = if session_data.needs_migration(preferred) {
+        Some(build_migration_prompt(
+            &session_data,
+            &work_dir,
+            other_provider(preferred),
+            preferred,
+        ))
     } else {
-        String::new()
+        None
     };
-    let chrome_flag = if session_data.use_chrome.unwrap_or(false) { " --chrome" } else { "" };
-    let command = format!("{}claude --resume {}{}", cd_prefix, session_data.session_id, chrome_flag);
+    let (command, provider_session_id) =
+        build_provider_command(preferred, &session_data, &work_dir, migration_prompt.as_deref(), false)?;
+
+    if preferred == AgentProvider::Claude {
+        if let Some(provider_session_id) = provider_session_id.clone() {
+            session_data.set_provider_session(preferred, provider_session_id, work_dir.to_string_lossy().to_string());
+        }
+    } else if session_data.codex_cwd.is_none() {
+        session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
+    }
+
+    crate::cli::session::write_session(&work_dir, &session_data)?;
 
     let color = if session_data.color.is_empty() {
         crate::cli::theme::random_color().to_string()
@@ -221,9 +451,17 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         directory.clone(),
         "--command".to_string(),
         command,
-        "--session-id".to_string(),
-        session_data.session_id.clone(),
+        "--provider".to_string(),
+        preferred.to_string(),
     ];
+    if let Some(provider_session_id) = provider_session_id.clone() {
+        app_args.push("--session-id".to_string());
+        app_args.push(provider_session_id);
+    }
+    if preferred == AgentProvider::Codex && session_data.native_session_id(AgentProvider::Codex).is_none() {
+        app_args.push("--capture-started-at".to_string());
+        app_args.push(chrono::Utc::now().to_rfc3339());
+    }
     let ticket_file = work_dir.join(".twapp-ticket.json");
     if ticket_file.exists() {
         app_args.push("--ticket".to_string());
@@ -253,6 +491,41 @@ pub async fn create_and_launch_session(
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_codex_session_capture(
+    app: tauri::AppHandle,
+    directory: String,
+    started_at: String,
+) -> Result<(), String> {
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let Some(session_id) = find_latest_codex_session_for_cwd(&directory, &started_at) else {
+                continue;
+            };
+
+            let work_dir = std::path::PathBuf::from(&directory);
+            let Ok(mut session_data) = crate::cli::session::read_session(&work_dir) else {
+                return;
+            };
+            session_data.set_provider_session(AgentProvider::Codex, session_id.clone(), directory.clone());
+            session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+            if crate::cli::session::write_session(&work_dir, &session_data).is_ok() {
+                let _ = app.emit(
+                    "session-provider-updated",
+                    serde_json::json!({
+                        "provider": "codex",
+                        "session_id": session_id,
+                    }),
+                );
+            }
+            return;
+        }
+    });
 
     Ok(())
 }
@@ -438,7 +711,11 @@ pub async fn update_session_fields(
         data.name = n.clone();
     }
     if let Some(ref sid) = session_id {
-        data.session_id = sid.clone();
+        if data.provider == Some(AgentProvider::Codex) || (data.session_id.is_empty() && data.codex_session_id.is_some()) {
+            data.codex_session_id = if sid.is_empty() { None } else { Some(sid.clone()) };
+        } else {
+            data.session_id = sid.clone();
+        }
     }
     if let Some(ref cwd) = claude_cwd {
         data.claude_cwd = cwd.clone();
@@ -932,6 +1209,9 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             claude_cwd: original_cwd.clone(),
             created: first_ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
             last_resumed: None,
+            provider: Some(AgentProvider::Claude),
+            codex_session_id: None,
+            codex_cwd: None,
             forked_from: None,
             imported: Some(true),
             imported_from: Some(original_cwd),
@@ -959,6 +1239,7 @@ pub async fn fork_session(
     name: Option<String>,
     config: tauri::State<'_, GuiArgs>,
 ) -> Result<String, String> {
+    let provider = config.provider;
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
     let mut window_name = std::path::Path::new(&work_dir)
@@ -1026,43 +1307,68 @@ pub async fn fork_session(
 
     // Read current session ID from session file
     let old_session_id = read_session_id(config.inner());
-
-    // Always generate a new session ID for the fork
-    let new_id = uuid::Uuid::new_v4().to_string();
-
-    // Build command — always use --fork-session for proper session isolation.
-    // When forking to a new directory, cd to the original cwd first so Claude
-    // can find the session context (stored under ~/.claude/projects/{original-path}/).
     let chrome = config.chrome;
     let chrome_flag = if chrome { " --chrome" } else { "" };
-    let command = match &old_session_id {
-        Some(old_id) => {
-            let cd_prefix = if work_dir != original_cwd {
-                format!("cd '{}' && ", original_cwd.replace('\'', "'\\''"))
-            } else {
-                String::new()
-            };
-            format!(
-                "{}claude --resume {} --fork-session --session-id {}{}",
-                cd_prefix, old_id, new_id, chrome_flag
-            )
-        }
-        None => format!("claude --session-id {}{}", new_id, chrome_flag),
+
+    let capture_started_at = if provider == AgentProvider::Codex {
+        Some(chrono::Utc::now().to_rfc3339())
+    } else {
+        None
     };
 
-    // Write .twapp-session.json in the new work directory.
-    // claude_cwd points to the original directory so future resumes know where
-    // the Claude session context lives.
-    let claude_cwd = if old_session_id.is_some() { &original_cwd } else { &work_dir };
-    let mut session_data = serde_json::json!({
-        "session_id": new_id,
-        "name": window_name,
-        "color": color.to_string(),
-        "ticket_key": ticket_key_for_session,
-        "claude_cwd": claude_cwd,
-        "created": chrono::Utc::now().to_rfc3339(),
-        "forked_from": old_session_id,
-    });
+    let (command, session_id_for_app, mut session_data) = if provider == AgentProvider::Codex {
+        let command = match &old_session_id {
+            Some(old_id) => format!("codex fork {} -C '{}'", old_id, shell_escape_single(&work_dir)),
+            None => format!("codex -C '{}'", shell_escape_single(&work_dir)),
+        };
+        (
+            command,
+            None,
+            serde_json::json!({
+                "session_id": "",
+                "name": window_name,
+                "color": color.to_string(),
+                "ticket_key": ticket_key_for_session,
+                "claude_cwd": work_dir,
+                "codex_cwd": work_dir,
+                "created": chrono::Utc::now().to_rfc3339(),
+                "provider": "codex",
+                "forked_from": old_session_id,
+            }),
+        )
+    } else {
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let command = match &old_session_id {
+            Some(old_id) => {
+                let cd_prefix = if work_dir != original_cwd {
+                    format!("cd '{}' && ", original_cwd.replace('\'', "'\\''"))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{}claude --resume {} --fork-session --session-id {}{}",
+                    cd_prefix, old_id, new_id, chrome_flag
+                )
+            }
+            None => format!("claude --session-id {}{}", new_id, chrome_flag),
+        };
+        let claude_cwd = if old_session_id.is_some() { &original_cwd } else { &work_dir };
+        (
+            command,
+            Some(new_id.clone()),
+            serde_json::json!({
+                "session_id": new_id,
+                "name": window_name,
+                "color": color.to_string(),
+                "ticket_key": ticket_key_for_session,
+                "claude_cwd": claude_cwd,
+                "created": chrono::Utc::now().to_rfc3339(),
+                "provider": "claude",
+                "forked_from": old_session_id,
+            }),
+        )
+    };
+
     if chrome {
         session_data["use_chrome"] = serde_json::json!(true);
     }
@@ -1077,8 +1383,16 @@ pub async fn fork_session(
         "--color".to_string(), color.to_string(),
         "--cwd".to_string(), work_dir,
         "--command".to_string(), command,
-        "--session-id".to_string(), new_id,
+        "--provider".to_string(), provider.to_string(),
     ];
+    if let Some(session_id_for_app) = session_id_for_app {
+        app_args.push("--session-id".to_string());
+        app_args.push(session_id_for_app);
+    }
+    if let Some(capture_started_at) = capture_started_at {
+        app_args.push("--capture-started-at".to_string());
+        app_args.push(capture_started_at);
+    }
     if let Some(ref tf) = ticket_file {
         app_args.push("--ticket".to_string());
         app_args.push(tf.clone());
