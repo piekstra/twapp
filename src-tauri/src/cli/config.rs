@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use super::session::AgentProvider;
+
 #[derive(Debug, Deserialize)]
 struct ConfigYaml {
     defaults: Option<ConfigDefaults>,
@@ -11,6 +13,7 @@ struct ConfigDefaults {
     work_directory: Option<String>,
     jira_project: Option<String>,
     github_repo: Option<String>,
+    agent_provider: Option<AgentProvider>,
 }
 
 #[derive(Debug)]
@@ -18,6 +21,7 @@ pub struct GlobalConfig {
     pub work_directory: PathBuf,
     pub jira_project: Option<String>,
     pub github_repo: Option<String>,
+    pub agent_provider: AgentProvider,
 }
 
 fn home_dir() -> PathBuf {
@@ -116,6 +120,49 @@ pub fn get_session_color_preference() -> String {
         }
     }
     "random".to_string()
+}
+
+pub fn get_agent_provider_preference() -> AgentProvider {
+    let path = config_file();
+    if !path.exists() {
+        return AgentProvider::Claude;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(provider) = yaml.get("agent_provider").and_then(|v| v.as_str()) {
+                return match provider {
+                    "codex" => AgentProvider::Codex,
+                    _ => AgentProvider::Claude,
+                };
+            }
+        }
+    }
+    AgentProvider::Claude
+}
+
+pub fn set_agent_provider_preference(provider: AgentProvider) -> Result<(), String> {
+    let path = config_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut yaml = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml {
+        map.insert(
+            serde_yaml::Value::String("agent_provider".to_string()),
+            serde_yaml::Value::String(provider.to_string()),
+        );
+    }
+
+    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 pub fn set_session_color_preference(mode: &str) -> Result<(), String> {
@@ -307,6 +354,7 @@ pub fn save_global_config(
     work_directory: Option<String>,
     jira_project: Option<String>,
     github_repo: Option<String>,
+    agent_provider: Option<String>,
 ) -> Result<(), String> {
     let path = config_file();
     if let Some(parent) = path.parent() {
@@ -344,6 +392,12 @@ pub fn save_global_config(
                     if gr.is_empty() { serde_yaml::Value::Null } else { serde_yaml::Value::String(gr) },
                 );
             }
+            if let Some(provider) = agent_provider {
+                dmap.insert(
+                    serde_yaml::Value::String("agent_provider".to_string()),
+                    serde_yaml::Value::String(provider),
+                );
+            }
         }
     }
 
@@ -360,6 +414,7 @@ impl GlobalConfig {
                 work_directory: home_dir().join("Dev"),
                 jira_project: None,
                 github_repo: None,
+                agent_provider: AgentProvider::Claude,
             });
         }
 
@@ -372,6 +427,7 @@ impl GlobalConfig {
             work_directory: None,
             jira_project: None,
             github_repo: None,
+            agent_provider: None,
         });
 
         let work_directory = defaults
@@ -383,6 +439,7 @@ impl GlobalConfig {
             work_directory,
             jira_project: defaults.jira_project,
             github_repo: defaults.github_repo,
+            agent_provider: defaults.agent_provider.unwrap_or(AgentProvider::Claude),
         })
     }
 }

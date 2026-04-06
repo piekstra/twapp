@@ -40,6 +40,7 @@ pub fn get_global_config() -> Result<serde_json::Value, String> {
         "jira_project": config.jira_project,
         "github_repo": config.github_repo,
         "session_color": session_color,
+        "agent_provider": config.agent_provider,
     }))
 }
 
@@ -48,8 +49,9 @@ pub fn save_global_config(
     work_directory: Option<String>,
     jira_project: Option<String>,
     github_repo: Option<String>,
+    agent_provider: Option<String>,
 ) -> Result<(), String> {
-    crate::cli::config::save_global_config(work_directory, jira_project, github_repo)
+    crate::cli::config::save_global_config(work_directory, jira_project, github_repo, agent_provider)
 }
 
 #[tauri::command]
@@ -65,6 +67,20 @@ pub fn get_session_color_preference() -> String {
 #[tauri::command]
 pub fn set_session_color_preference(mode: String) -> Result<(), String> {
     crate::cli::config::set_session_color_preference(&mode)
+}
+
+#[tauri::command]
+pub fn get_agent_provider_preference() -> String {
+    crate::cli::config::get_agent_provider_preference().to_string()
+}
+
+#[tauri::command]
+pub fn set_agent_provider_preference(provider: String) -> Result<(), String> {
+    let provider = match provider.as_str() {
+        "codex" => crate::cli::session::AgentProvider::Codex,
+        _ => crate::cli::session::AgentProvider::Claude,
+    };
+    crate::cli::config::set_agent_provider_preference(provider)
 }
 
 #[tauri::command]

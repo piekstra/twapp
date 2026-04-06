@@ -519,6 +519,13 @@ function App() {
         cols: dims?.cols ?? null,
       }).catch(console.error);
 
+      if (config.provider === "codex" && !config.session_id && config.cwd && config.capture_started_at) {
+        invoke("start_codex_session_capture", {
+          directory: config.cwd,
+          startedAt: config.capture_started_at,
+        }).catch(console.error);
+      }
+
       // Load persisted notes and prompts
       reloadNotes();
       reloadPrompts();
@@ -544,6 +551,17 @@ function App() {
       }
     });
 
+    const unlistenProviderPromise = listen<{ provider: "claude" | "codex"; session_id: string }>(
+      "session-provider-updated",
+      (event) => {
+        setAppConfig((prev) => prev ? {
+          ...prev,
+          provider: event.payload.provider,
+          session_id: event.payload.session_id,
+        } : prev);
+      }
+    );
+
     // Send input to PTY
     term.onData((data) => {
       invoke("write_to_pty", { data }).catch(console.error);
@@ -556,6 +574,7 @@ function App() {
       window.removeEventListener("resize", debouncedFit);
       if (fitTimer) clearTimeout(fitTimer);
       unlistenPromise.then((unlisten) => unlisten());
+      unlistenProviderPromise.then((unlisten) => unlisten());
       term.dispose();
       terminalInstance.current = null;
       fitAddon.current = null;
@@ -1082,9 +1101,11 @@ function App() {
     terminalInstance.current?.reset();
     const dims = fitAddon.current?.proposeDimensions();
     const sessionId = appConfig?.session_id;
-    const resumeCmd = sessionId
-      ? `claude --resume ${sessionId}`
-      : "claude -c";
+    const resumeCmd = appConfig?.provider === "codex"
+      ? (sessionId
+        ? `codex resume ${sessionId} -C '${(appConfig?.cwd || ".").replace(/'/g, `'\\''`)}'`
+        : `codex -C '${(appConfig?.cwd || ".").replace(/'/g, `'\\''`)}'`)
+      : (sessionId ? `claude --resume ${sessionId}` : "claude -c");
     await invoke("spawn_shell", {
       cwd: appConfig?.cwd || null,
       command: resumeCmd,
@@ -2561,8 +2582,8 @@ function App() {
                 <div className="config-section">
                   {([
                     ["name", "Name"],
-                    ["session_id", "Session ID"],
-                    ["claude_cwd", "Claude CWD"],
+                    ["session_id", appConfig?.provider === "codex" ? "Codex Session ID" : "Session ID"],
+                    ["claude_cwd", "Resume CWD"],
                     ["ticket_key", "Ticket"],
                   ] as const).map(([key, label]) => (
                     <div className="session-settings-field" key={key}>

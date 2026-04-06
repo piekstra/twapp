@@ -1,7 +1,30 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use super::permissions;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProvider {
+    Claude,
+    Codex,
+}
+
+impl Default for AgentProvider {
+    fn default() -> Self {
+        Self::Claude
+    }
+}
+
+impl std::fmt::Display for AgentProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Claude => write!(f, "claude"),
+            Self::Codex => write!(f, "codex"),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionData {
@@ -16,6 +39,12 @@ pub struct SessionData {
     pub created: String,
     pub last_resumed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AgentProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported: Option<bool>,
@@ -25,6 +54,202 @@ pub struct SessionData {
     pub use_chrome: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_terminal_theme: Option<bool>,
+}
+
+impl SessionData {
+    pub fn last_provider(&self) -> AgentProvider {
+        self.provider.unwrap_or_else(|| {
+            if self.session_id.is_empty() && self.codex_session_id.is_some() {
+                AgentProvider::Codex
+            } else {
+                AgentProvider::Claude
+            }
+        })
+    }
+
+    pub fn native_session_id(&self, provider: AgentProvider) -> Option<&str> {
+        match provider {
+            AgentProvider::Claude => {
+                if self.session_id.is_empty() {
+                    None
+                } else {
+                    Some(&self.session_id)
+                }
+            }
+            AgentProvider::Codex => self.codex_session_id.as_deref(),
+        }
+    }
+
+    pub fn native_cwd(&self, provider: AgentProvider, work_dir: &Path) -> String {
+        match provider {
+            AgentProvider::Claude => {
+                if self.claude_cwd.is_empty() {
+                    work_dir.to_string_lossy().to_string()
+                } else {
+                    self.claude_cwd.clone()
+                }
+            }
+            AgentProvider::Codex => self
+                .codex_cwd
+                .clone()
+                .filter(|cwd| !cwd.is_empty())
+                .unwrap_or_else(|| work_dir.to_string_lossy().to_string()),
+        }
+    }
+
+    pub fn display_session_id(&self, preferred: AgentProvider) -> Option<String> {
+        self.native_session_id(preferred)
+            .or_else(|| self.native_session_id(self.last_provider()))
+            .map(str::to_string)
+    }
+
+    pub fn needs_migration(&self, preferred: AgentProvider) -> bool {
+        self.native_session_id(preferred).is_none()
+            && self.native_session_id(other_provider(preferred)).is_some()
+    }
+
+    pub fn set_provider_session(&mut self, provider: AgentProvider, session_id: String, cwd: String) {
+        match provider {
+            AgentProvider::Claude => {
+                self.session_id = session_id;
+                self.claude_cwd = cwd;
+            }
+            AgentProvider::Codex => {
+                self.codex_session_id = Some(session_id);
+                self.codex_cwd = Some(cwd);
+            }
+        }
+        self.provider = Some(provider);
+    }
+}
+
+pub fn other_provider(provider: AgentProvider) -> AgentProvider {
+    match provider {
+        AgentProvider::Claude => AgentProvider::Codex,
+        AgentProvider::Codex => AgentProvider::Claude,
+    }
+}
+
+pub fn shell_escape_single(text: &str) -> String {
+    text.replace('\'', "'\\''")
+}
+
+pub fn count_codex_conversation_messages(session_id: &str) -> Option<u32> {
+    let history_path = dirs::home_dir()?.join(".codex/history.jsonl");
+    if !history_path.exists() {
+        return None;
+    }
+
+    let file = std::fs::File::open(history_path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    use std::io::BufRead;
+
+    let count = reader
+        .lines()
+        .filter_map(|line| line.ok())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .filter(|value| value.get("session_id").and_then(|v| v.as_str()) == Some(session_id))
+        .count();
+
+    Some(count as u32)
+}
+
+fn scan_codex_session_dirs(dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = scan_codex_session_dirs(&path, session_id) {
+                return Some(found);
+            }
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.ends_with(&format!("-{}.jsonl", session_id)) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+pub fn find_codex_session_file(session_id: &str) -> Option<PathBuf> {
+    let root = dirs::home_dir()?.join(".codex/sessions");
+    if !root.exists() {
+        return None;
+    }
+    scan_codex_session_dirs(&root, session_id)
+}
+
+pub fn find_latest_codex_session_for_cwd(cwd: &str, started_at_rfc3339: &str) -> Option<String> {
+    let root = dirs::home_dir()?.join(".codex/sessions");
+    if !root.exists() {
+        return None;
+    }
+
+    let started_at = chrono::DateTime::parse_from_rfc3339(started_at_rfc3339).ok()?;
+    let mut best: Option<(chrono::DateTime<chrono::FixedOffset>, String)> = None;
+    let mut stack = vec![root];
+
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+
+            let Ok(file) = std::fs::File::open(&path) else {
+                continue;
+            };
+            let mut line = String::new();
+            let mut reader = std::io::BufReader::new(file);
+            use std::io::BufRead;
+            if reader.read_line(&mut line).ok().filter(|n| *n > 0).is_none() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if value.get("type").and_then(|v| v.as_str()) != Some("session_meta") {
+                continue;
+            }
+            let Some(payload) = value.get("payload") else {
+                continue;
+            };
+            if payload.get("cwd").and_then(|v| v.as_str()) != Some(cwd) {
+                continue;
+            }
+
+            let Some(id) = payload.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(ts) = payload.get("timestamp").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(ts) else {
+                continue;
+            };
+            if created_at < started_at {
+                continue;
+            }
+
+            match &best {
+                Some((best_ts, _)) if created_at <= *best_ts => {}
+                _ => best = Some((created_at, id.to_string())),
+            }
+        }
+    }
+
+    best.map(|(_, id)| id)
 }
 
 /// Derive a filesystem-safe name from a session name.
@@ -117,6 +342,13 @@ pub fn run_health_checks(work_dir: &Path, session_data: Option<&SessionData>) {
                         );
                         changed = true;
                     }
+                    if !obj.contains_key("provider") {
+                        obj.insert(
+                            "provider".to_string(),
+                            serde_json::Value::String("claude".to_string()),
+                        );
+                        changed = true;
+                    }
                 }
                 if changed {
                     if let Ok(json) = serde_json::to_string_pretty(&data) {
@@ -151,6 +383,68 @@ pub fn run_health_checks(work_dir: &Path, session_data: Option<&SessionData>) {
 
     if !fixes.is_empty() {
         println!("Health checks: applied {}", fixes.join(", "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_session_id_prefers_requested_provider() {
+        let data = SessionData {
+            session_id: "claude-123".to_string(),
+            name: "demo".to_string(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: "/tmp/demo".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            last_resumed: None,
+            provider: Some(AgentProvider::Claude),
+            codex_session_id: Some("codex-456".to_string()),
+            codex_cwd: Some("/tmp/demo".to_string()),
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+        };
+
+        assert_eq!(
+            data.display_session_id(AgentProvider::Codex).as_deref(),
+            Some("codex-456")
+        );
+        assert_eq!(
+            data.display_session_id(AgentProvider::Claude).as_deref(),
+            Some("claude-123")
+        );
+    }
+
+    #[test]
+    fn migration_needed_only_when_other_provider_exists() {
+        let mut data = SessionData {
+            session_id: "claude-123".to_string(),
+            name: "demo".to_string(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: "/tmp/demo".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            last_resumed: None,
+            provider: Some(AgentProvider::Claude),
+            codex_session_id: None,
+            codex_cwd: None,
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+        };
+
+        assert!(data.needs_migration(AgentProvider::Codex));
+        assert!(!data.needs_migration(AgentProvider::Claude));
+
+        data.codex_session_id = Some("codex-456".to_string());
+        assert!(!data.needs_migration(AgentProvider::Codex));
     }
 }
 

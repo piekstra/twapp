@@ -9,6 +9,8 @@ export interface AppConfig {
   prefill: string | null;
   ticket: string | null;
   session_id: string | null;
+  provider: "claude" | "codex";
+  capture_started_at: string | null;
   override_terminal_theme: boolean;
 }
 
@@ -121,6 +123,9 @@ export const darkTheme = getDarkTheme();
 
 export interface LauncherSession {
   session_id: string;
+  provider: "claude" | "codex";
+  provider_session_id: string | null;
+  needs_migration: boolean;
   name: string;
   color: string;
   ticket_key: string | null;

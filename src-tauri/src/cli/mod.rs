@@ -9,6 +9,7 @@ pub mod theme;
 pub mod ticket;
 
 use clap::Subcommand;
+use session::{AgentProvider, shell_escape_single};
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
@@ -402,6 +403,7 @@ pub fn create_session_core(
     }
 
     let global_config = config::GlobalConfig::load()?;
+    let provider = global_config.agent_provider;
 
     let mut ticket_info: Option<ticket::TicketInfo> = None;
     let mut ticket_file_path: Option<std::path::PathBuf> = None;
@@ -465,7 +467,12 @@ pub fn create_session_core(
 
     session::run_health_checks(&work_dir, None);
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let session_id = if provider == AgentProvider::Claude {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
+    };
 
     // Color: respect user preference
     let color_pref = config::get_session_color_preference();
@@ -491,8 +498,15 @@ pub fn create_session_core(
         color: color.clone(),
         ticket_key: ticket_info.as_ref().map(|t| t.key.clone()),
         claude_cwd: claude_cwd.clone(),
-        created: chrono::Utc::now().to_rfc3339(),
+        created: created_at.clone(),
         last_resumed: None,
+        provider: Some(provider),
+        codex_session_id: None,
+        codex_cwd: if provider == AgentProvider::Codex {
+            Some(work_dir.to_string_lossy().to_string())
+        } else {
+            None
+        },
         forked_from: fork_session_id.clone(),
         imported: None,
         imported_from: None,
@@ -504,6 +518,20 @@ pub fn create_session_core(
     let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = if let Some(ref custom) = run_command {
         custom.clone()
+    } else if provider == AgentProvider::Codex {
+        format!(
+            "codex -C '{}'{}",
+            shell_escape_single(&work_dir.to_string_lossy()),
+            if let Some(ref ti) = ticket_info {
+                if dir_already_existed {
+                    format!(" '{}'", shell_escape_single(&format!("I'm working on {}: {}.", ti.key, ti.title)))
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        )
     } else if let Some(ref old_id) = fork_session_id {
         let cd_prefix = if claude_cwd != work_dir.to_string_lossy() {
             format!("cd '{}' && ", claude_cwd.replace('\'', "'\\''"))
@@ -537,9 +565,17 @@ pub fn create_session_core(
         work_dir.to_string_lossy().to_string(),
         "--command".to_string(),
         command,
-        "--session-id".to_string(),
-        session_id,
+        "--provider".to_string(),
+        provider.to_string(),
     ];
+    if !session_id.is_empty() {
+        app_args.push("--session-id".to_string());
+        app_args.push(session_id);
+    }
+    if provider == AgentProvider::Codex {
+        app_args.push("--capture-started-at".to_string());
+        app_args.push(created_at);
+    }
     if let Some(ref pf) = prefill {
         app_args.push("--prefill".to_string());
         app_args.push(pf.clone());
@@ -623,6 +659,9 @@ fn cmd_resume(fork: bool) -> i32 {
     };
 
     let window_name = session_data.name.clone();
+    let provider = config::GlobalConfig::load()
+        .map(|cfg| cfg.agent_provider)
+        .unwrap_or(AgentProvider::Claude);
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {
@@ -645,7 +684,37 @@ fn cmd_resume(fork: bool) -> i32 {
     let chrome_flag = if chrome { " --chrome" } else { "" };
 
     let session_id;
-    if fork {
+    if provider == AgentProvider::Codex {
+        let command = if fork {
+            if let Some(current_id) = session_data.codex_session_id.clone() {
+                session_data.forked_from = Some(current_id.clone());
+                session_data.codex_session_id = None;
+                format!(
+                    "codex fork {} -C '{}'",
+                    current_id,
+                    shell_escape_single(&work_dir.to_string_lossy())
+                )
+            } else {
+                format!("codex -C '{}'", shell_escape_single(&work_dir.to_string_lossy()))
+            }
+        } else if let Some(current_id) = session_data.codex_session_id.clone() {
+            format!(
+                "codex resume {} -C '{}'",
+                current_id,
+                shell_escape_single(&work_dir.to_string_lossy())
+            )
+        } else {
+            format!("codex -C '{}'", shell_escape_single(&work_dir.to_string_lossy()))
+        };
+        session_data.provider = Some(AgentProvider::Codex);
+        session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
+        session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+        if let Err(e) = session::write_session(&work_dir, &session_data) {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+        build_and_launch(&work_dir, &window_name, &color, session_data.codex_session_id.as_deref(), &command, chrome, provider, Some(chrono::Utc::now().to_rfc3339()))
+    } else if fork {
         let new_id = uuid::Uuid::new_v4().to_string();
         let command = format!(
             "{}claude --resume {} --fork-session --session-id {}{}",
@@ -659,6 +728,9 @@ fn cmd_resume(fork: bool) -> i32 {
             claude_cwd: work_dir.to_string_lossy().to_string(),
             created: chrono::Utc::now().to_rfc3339(),
             last_resumed: None,
+            provider: Some(AgentProvider::Claude),
+            codex_session_id: None,
+            codex_cwd: None,
             forked_from: Some(session_data.session_id),
             imported: None,
             imported_from: None,
@@ -666,12 +738,11 @@ fn cmd_resume(fork: bool) -> i32 {
             override_terminal_theme: None,
         };
         session_id = new_id;
-        // Write the forked session file
         if let Err(e) = session::write_session(&work_dir, &session_data) {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, &session_id, &command, chrome)
+        build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     } else {
         session_id = session_data.session_id.clone();
         let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
@@ -680,7 +751,7 @@ fn cmd_resume(fork: bool) -> i32 {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, &session_id, &command, chrome)
+        build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     }
 }
 
@@ -689,9 +760,11 @@ fn build_and_launch(
     work_dir: &std::path::Path,
     window_name: &str,
     color: &str,
-    session_id: &str,
+    session_id: Option<&str>,
     command: &str,
     chrome: bool,
+    provider: AgentProvider,
+    capture_started_at: Option<String>,
 ) -> i32 {
     let mut app_args = vec![
         "--name".to_string(),
@@ -702,9 +775,17 @@ fn build_and_launch(
         work_dir.to_string_lossy().to_string(),
         "--command".to_string(),
         command.to_string(),
-        "--session-id".to_string(),
-        session_id.to_string(),
+        "--provider".to_string(),
+        provider.to_string(),
     ];
+    if let Some(session_id) = session_id {
+        app_args.push("--session-id".to_string());
+        app_args.push(session_id.to_string());
+    }
+    if let Some(started_at) = capture_started_at {
+        app_args.push("--capture-started-at".to_string());
+        app_args.push(started_at);
+    }
 
     let ticket_file = work_dir.join(".twapp-ticket.json");
     if ticket_file.exists() {
@@ -725,7 +806,7 @@ fn build_and_launch(
 
     println!(
         "Resuming session {}... in {}",
-        &session_id[..session_id.len().min(12)],
+        session_id.unwrap_or("pending"),
         work_dir.display()
     );
 

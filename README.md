@@ -4,7 +4,7 @@
 
 <h1 align="center">twapp</h1>
 
-<p align="center">A structured terminal companion for Claude coding sessions — with notes, tickets, session forking, and two-way Claude integration.</p>
+<p align="center">A structured terminal companion for Claude and Codex coding sessions — with notes, tickets, session forking, provider switching, and in-session workflow tools.</p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/piekstra/twapp)](https://github.com/piekstra/twapp/releases/latest)
@@ -19,21 +19,22 @@
 
 - **Named sessions** — every window gets a name that shows up in Mission Control and OS dialogs. Not "Terminal". *Your* terminal.
 - **Sidebar notes** — capture ideas without leaving your session. Markdown, timestamped, per-session. One click sends a note to the terminal as a prompt.
-- **Session forking** — split off when things get broad. The fork carries full Claude context; the original stays clean.
+- **Session forking** — split off when things get broad. Forks preserve provider-native context when possible.
 - **Ticket context** — link a Jira ticket or GitHub issue. Title, status, description stay visible in the sidebar.
 - **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
-- **Two-way Claude integration** — Claude reads your session and manages twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
+- **Provider switching** — choose Claude or Codex as the default session engine. Existing twapp sessions resume natively when that provider already has a saved handle, or migrate with a one-time preload when they do not.
+- **Two-way agent integration** — your CLI agent can read the session state and manage twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
 - **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click. Create new sessions, manage settings, and configure permissions — all from the launcher.
 - **Terminal tabs** — open extra shell tabs within a session for quick commands without leaving your workspace. Tabs are ephemeral and scoped to the session.
-- **Background monitor** — run a dev server or watcher alongside Claude without leaving twapp. One command at a time, auto-logged to timestamped files, with a collapsible status bar at the bottom of the terminal. Claude can trigger it too.
+- **Background monitor** — run a dev server or watcher alongside your agent without leaving twapp. One command at a time, auto-logged to timestamped files, with a collapsible status bar at the bottom of the terminal.
 - **In-app updates** — checks automatically, shows release notes, one-click update.
-- **Default permissions** — set Claude permissions once, auto-apply to every new session.
+- **Default permissions** — set Claude permissions once, auto-apply to every Claude-backed session.
 
 ---
 
 ## The Idea
 
-You're deep in a Claude session. Things are going well. Then you have an idea — a good one, but not something you should act on right now. You could:
+You're deep in an agent session. Things are going well. Then you have an idea — a good one, but not something you should act on right now. You could:
 
 1. Try to remember it (you won't)
 2. Open a new tab, lose your place, forget what you were doing
@@ -41,9 +42,9 @@ You're deep in a Claude session. Things are going well. Then you have an idea �
 
 Or you could **write it down, right there, without leaving your session.** Then get back to work.
 
-twapp is a terminal wrapper built around Claude work sessions. It gives you structure without friction — named sessions, captured notes, linked tickets, quick prompts, and the ability to fork off when a session gets too broad. All visible. All persistent. All in context.
+twapp is a terminal wrapper built around persistent work sessions. It gives you structure without friction — named sessions, captured notes, linked tickets, quick prompts, provider-aware resumes, and the ability to fork off when a session gets too broad. All visible. All persistent. All in context.
 
-It's also bidirectional. twapp sends prompts and notes to Claude — and Claude manages your twapp right back. Ask it to jot something down, change your ticket, fork into a new session. Claude discovers the CLI, reads your session, and just does it. You don't manage twapp. You and Claude manage it together.
+It's also bidirectional. twapp sends prompts and notes to your agent — and the agent manages twapp right back. Ask it to jot something down, change your ticket, fork into a new session. You don't manage twapp separately from the work. You manage both together.
 
 ## Features
 
@@ -60,15 +61,15 @@ twapp work --name "research"  # or whatever you want
 
 Notes live in the sidebar, right next to the terminal. They support markdown, carry timestamps, and they're stored per session — not in some separate app you'll forget to check.
 
-It works both ways. Write notes yourself, or tell Claude: "add that to our notes" or "we got sidetracked — write that down before we forget." Claude uses the CLI, the note appears in the sidebar, and you're back on track.
+It works both ways. Write notes yourself, or tell your agent: "add that to our notes" or "we got sidetracked — write that down before we forget." The note appears in the sidebar, and you're back on track.
 
 ### Fork When It Gets Broad
 
 Sessions grow. You hit a bug. You spot an opportunity. You could keep cramming it all into one session — or you could fork.
 
-Forking creates a new Claude session that **carries the full context of the original**. The new session knows everything the old one knew, but goes its own direction. The original stays clean.
+Forking creates a new session that **carries the full context of the original when the active provider supports native forking**. The new session goes its own direction. The original stays clean.
 
-**Just ask Claude to do it.** Say "fork this session into a new one called 'fix auth bug'" and Claude launches a new twapp instance — new window, same context.
+Ask your agent to do it. Say "fork this session into a new one called 'fix auth bug'" and twapp launches a new instance — new window, same task context.
 
 ```bash
 # Or from the CLI directly:
@@ -77,7 +78,7 @@ twapp resume --fork
 
 ### Ticket Context
 
-Link a Jira ticket or GitHub issue and it stays visible in the sidebar — title, status, priority, description. Claude sees it too.
+Link a Jira ticket or GitHub issue and it stays visible in the sidebar — title, status, priority, description. Your agent sees it too.
 
 ```bash
 twapp work PROJ-1234                    # auto-links on creation
@@ -103,7 +104,7 @@ Sidebar actions (quick prompts, note injection) always target the active tab.
 Quick keyboard access to session management:
 
 - **Cmd+N** — create and launch a new fresh session
-- **Cmd+Shift+N** — fork the current session (preserves Claude context)
+- **Cmd+Shift+N** — fork the current session
 
 ### Quick Prompts
 
@@ -121,14 +122,37 @@ Open **twapp** from Spotlight (or just run the app with no arguments) to see eve
 - **Rescan** — Cmd+R or the refresh button to re-scan for new sessions
 - **New session** — create and launch sessions from the UI (ticket key or name, same as `twapp work`)
 - **Delete session** — hover any session to reveal a trash icon. Confirmation modal runs safety checks (uncommitted git changes, unpushed commits, incomplete tickets, unsaved notes) and offers two tiers: remove session metadata or delete everything including the working directory
+- **Provider badges** — see whether a session is currently configured to open with Claude or Codex
+- **Migration status** — sessions that need a one-time provider handoff show **Migrate on Open**
 
 The launcher streams results progressively as directories are scanned, refreshes automatically when visible, and pauses when the window is hidden to save resources.
+
+### Switching Between Claude and Codex
+
+twapp stores provider-specific resume handles inside each session directory.
+
+- If the configured provider already has a native handle for that session, twapp resumes it normally.
+- If the session only has the other provider's handle, twapp opens the configured provider with a one-time migration preload built from the existing session context.
+- After the first successful Codex launch, twapp captures the new Codex thread ID automatically and future resumes are native.
+- The launcher marks these handoffs with a **Migrate on Open** badge so the behavior is visible before you click.
+
+To switch providers:
+
+1. Open the launcher.
+2. Go to **Settings**.
+3. Under **Configuration**, set **Agent Provider** to `Claude` or `Codex`.
+4. Launch any session normally.
+
+For an existing Claude-backed session opened with Codex configured, the first Codex launch starts a new Codex thread with a preload that includes the linked ticket, recent notes, and available transcript summary. After that, the same session resumes directly in Codex.
+
+The reverse path also works for twapp-managed sessions: if a session has Codex state but no Claude state, opening it with Claude configured creates a Claude-side session seeded from the twapp session context.
 
 ### Launcher Settings
 
 The launcher doubles as the central settings hub. Click the gear icon to access:
 
 - **General** — theme (light/dark/system), session color preference (random or a specific color from the palette), work directory, Jira project, and GitHub repo
+  Also includes the default `Agent Provider` selector for new launches and resumes.
 - **Prompts** — manage global quick prompts (sections and prompts) directly from the launcher
 - **Permissions** — view, add, and remove default Claude permission patterns
 
@@ -136,7 +160,7 @@ Session colors show split-circle previews with both light and dark mode variants
 
 ### Permissions Management
 
-Default Claude permissions that auto-apply to new sessions. Set them once, forget about them:
+Default Claude permissions that auto-apply to Claude-backed sessions. Set them once, forget about them:
 
 ```bash
 twapp permissions add 'Bash(gh:*)'
@@ -151,7 +175,10 @@ twapp permissions add 'Bash(npm test:*)'
 
 ### Prerequisites
 
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli)
+- One supported agent CLI:
+  - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli)
+  - `codex` CLI
+- For the smoothest switching experience, install both.
 
 ### Step 1: Install the binary
 
@@ -217,7 +244,7 @@ twapp install-gui ~/.config/twapp/twapp.app
 
 ### Step 3: Grant Full Disk Access
 
-Claude runs shell commands (`find`, `ls`, `grep`) as subprocesses of twapp. macOS attributes their filesystem access to the host app, so without Full Disk Access every protected directory triggers a separate permission prompt.
+Agent CLIs run shell commands (`find`, `ls`, `grep`) as subprocesses of twapp. macOS attributes their filesystem access to the host app, so without Full Disk Access every protected directory triggers a separate permission prompt.
 
 1. **System Settings > Privacy & Security > Full Disk Access**
 2. Click **+**, then press **Cmd+Shift+G** to open the path dialog
@@ -233,6 +260,13 @@ twapp work --name "test-session"
 ```
 
 The window title and Mission Control label should show "test-session". If it works, you're all set.
+
+### Step 5: Choose Your Default Provider
+
+Open the launcher, click the gear icon, and set **Agent Provider** to `Claude` or `Codex`.
+
+- `Claude` is the legacy/default provider and remains the best-supported path for importing unmanaged historical sessions.
+- `Codex` enables native Codex resumes for any twapp session that has already been opened in Codex once.
 
 ### Optional: Spotlight visibility
 
@@ -277,9 +311,18 @@ twapp sessions
 open ~/.config/twapp/twapp.app
 ```
 
+Then set your default provider in the launcher:
+
+1. Open **twapp**
+2. Click the gear icon
+3. Set **Agent Provider** to `Claude` or `Codex`
+4. Launch a session
+
+If you switch providers later, open the same session again. If a migration is needed, twapp will show **Migrate on Open** in the launcher and do the preload automatically.
+
 ## Importing Existing Claude Sessions
 
-Already using Claude CLI? You can bring existing sessions into twapp.
+Already using Claude CLI? You can bring existing unmanaged Claude sessions into twapp.
 
 ### From the session launcher (GUI)
 
@@ -302,14 +345,16 @@ twapp work --name "my-session" -s <session-id>
 > twapp --cwd ~/projects/my-repo work --name "my-session" -s <session-id>
 > ```
 
-The forked session gets a new ID but carries full Claude context from the original.
+The forked session gets a new twapp-managed session and carries Claude context from the original.
+
+> Current limitation: unmanaged external import is Claude-only. Codex integration currently targets twapp-managed sessions and provider switching inside twapp.
 
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `twapp work <ticket\|--name>` | Start a new work session |
-| `twapp resume [--fork]` | Resume or fork the current session |
+| `twapp work <ticket\|--name>` | Start a new work session using the configured provider |
+| `twapp resume [--fork]` | Resume or fork the current session using the configured provider |
 | `twapp sessions` | List all sessions with activity timestamps |
 | `twapp set-session <id>` | Update session metadata |
 | `twapp note add <text>` | Add a note to the current session |
@@ -370,6 +415,7 @@ twapp install-gui /tmp/twapp.app
 ```yaml
 theme: system          # light | dark | system
 session_color: random  # random | hex (e.g. "#ffe0e0")
+agent_provider: claude # claude | codex
 defaults:
   work_directory: ~/projects
   jira_project: PROJ
@@ -380,7 +426,7 @@ defaults:
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `.twapp-session.json` | Working dir | Session metadata, fork ancestry |
+| `.twapp-session.json` | Working dir | Session metadata, provider handles, fork ancestry |
 | `.twapp-notes-{name}.json` | Working dir | Session notes |
 | `.twapp-prompts-{name}.json` | Working dir | Project-scoped quick prompts |
 | `.twapp-ticket.json` | Working dir | Linked ticket metadata |
