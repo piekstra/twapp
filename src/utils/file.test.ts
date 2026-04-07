@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, normalizeFilePathCandidate, splitTextWithFilePaths } from "./file";
+import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, splitTextWithFilePaths } from "./file";
 
 describe("isYamlFile", () => {
   it("detects .yaml files", () => {
@@ -138,5 +138,33 @@ describe("splitTextWithFilePaths", () => {
       { text: "/Users/example/project/src/App.tsx:1105", href: "/Users/example/project/src/App.tsx" },
       { text: " next." },
     ]);
+  });
+
+  it("matches file paths at the end of a sentence", () => {
+    expect(splitTextWithFilePaths("See README.md.")).toEqual([
+      { text: "See " },
+      { text: "README.md", href: "README.md" },
+      { text: "." },
+    ]);
+  });
+
+  it("can skip auto-linking absolute paths", () => {
+    expect(splitTextWithFilePaths("See /Users/example/project/README.md.", { allowAbsolutePaths: false })).toEqual([
+      { text: "See " },
+      { text: "/Users/example/project/README.md" },
+      { text: "." },
+    ]);
+  });
+});
+
+describe("isLikelyPreviewableHref", () => {
+  it("accepts extensionless file links", () => {
+    expect(isLikelyPreviewableHref("Dockerfile")).toBe(true);
+    expect(isLikelyPreviewableHref("LICENSE")).toBe(true);
+  });
+
+  it("rejects external links and fragments", () => {
+    expect(isLikelyPreviewableHref("https://example.com")).toBe(false);
+    expect(isLikelyPreviewableHref("#section")).toBe(false);
   });
 });

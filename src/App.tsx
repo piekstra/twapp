@@ -19,7 +19,7 @@ import { applyThemeColor, getDarkModeAccentColor } from "./color";
 import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, normalizeFilePathCandidate } from "./utils/file";
+import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
 import { remarkAutolinkFilePaths } from "./utils/markdown";
 import { buildResumeCommand } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
@@ -310,12 +310,10 @@ function App() {
     });
   };
 
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markdownComponents: any = {
+  const createMarkdownComponents = ({ allowAbsolutePathPreviews }: { allowAbsolutePathPreviews: boolean }) => ({
     code({ children, className, ...rest }: React.HTMLAttributes<HTMLElement>) {
       const text = String(children).replace(/\n$/, "");
-      if (!className && isFilePath(text)) {
+      if (!className && isFilePath(text) && (allowAbsolutePathPreviews || !isAbsolutePath(text))) {
         const previewPath = normalizeFilePathCandidate(text);
         return (
           <code
@@ -323,8 +321,8 @@ function App() {
             className="file-link"
             title="⌘+click to preview"
             onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
               if (e.metaKey) {
-                e.preventDefault();
                 handleFilePreview(previewPath);
               }
             }}
@@ -336,7 +334,7 @@ function App() {
       return <code {...rest} className={className}>{children}</code>;
     },
     a({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-      if (href && isFilePath(href)) {
+      if (href && isLikelyPreviewableHref(href) && (allowAbsolutePathPreviews || !isAbsolutePath(href))) {
         const previewPath = normalizeFilePathCandidate(href);
         return (
           <a
@@ -345,8 +343,8 @@ function App() {
             className="file-link"
             title="⌘+click to preview"
             onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
               if (e.metaKey) {
-                e.preventDefault();
                 handleFilePreview(previewPath);
               }
             }}
@@ -368,7 +366,12 @@ function App() {
         </a>
       );
     },
-  };
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markdownComponents: any = createMarkdownComponents({ allowAbsolutePathPreviews: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const releaseNotesMarkdownComponents: any = createMarkdownComponents({ allowAbsolutePathPreviews: false });
 
   // macOS Option+Arrow word jumping for xterm.js
   // Intercepts Option+Arrow and Option+Backspace to send the correct escape sequences
@@ -2093,7 +2096,12 @@ function App() {
             {updateInfo ? (
               <>
                 <div className="update-notes">
-                  <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={markdownComponents}>{updateInfo.releaseNotes}</Markdown>
+                  <Markdown
+                    remarkPlugins={[remarkGfm, [remarkAutolinkFilePaths, { allowAbsolutePaths: false }]]}
+                    components={releaseNotesMarkdownComponents}
+                  >
+                    {updateInfo.releaseNotes}
+                  </Markdown>
                 </div>
                 <a
                   className="update-release-link"
