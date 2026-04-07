@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath } from "./file";
+import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, normalizeFilePathCandidate, splitTextWithFilePaths } from "./file";
 
 describe("isYamlFile", () => {
   it("detects .yaml files", () => {
@@ -88,6 +88,7 @@ describe("isFilePath", () => {
     expect(isFilePath("README.md")).toBe(true);
     expect(isFilePath("src/utils/format.ts")).toBe(true);
     expect(isFilePath("Cargo.toml")).toBe(true);
+    expect(isFilePath("/Users/example/project/README.md")).toBe(true);
     expect(isFilePath(".gitignore")).toBe(false); // starts with dot
   });
 
@@ -105,5 +106,37 @@ describe("isFilePath", () => {
 
   it("trims whitespace", () => {
     expect(isFilePath("  file.ts  ")).toBe(true);
+  });
+
+  it("accepts line and column suffixes", () => {
+    expect(isFilePath("/Users/example/project/README.md:12")).toBe(true);
+    expect(isFilePath("/Users/example/project/README.md:12:3")).toBe(true);
+    expect(isFilePath("/Users/example/project/README.md#L12C3")).toBe(true);
+  });
+});
+
+describe("normalizeFilePathCandidate", () => {
+  it("strips line and column suffixes", () => {
+    expect(normalizeFilePathCandidate("/Users/example/project/README.md:12")).toBe("/Users/example/project/README.md");
+    expect(normalizeFilePathCandidate("/Users/example/project/README.md:12:3")).toBe("/Users/example/project/README.md");
+    expect(normalizeFilePathCandidate("/Users/example/project/README.md#L12C3")).toBe("/Users/example/project/README.md");
+  });
+});
+
+describe("splitTextWithFilePaths", () => {
+  it("extracts bare absolute file paths from prose", () => {
+    expect(splitTextWithFilePaths("See /Users/example/project/README.md for details.")).toEqual([
+      { text: "See " },
+      { text: "/Users/example/project/README.md", href: "/Users/example/project/README.md" },
+      { text: " for details." },
+    ]);
+  });
+
+  it("preserves displayed line references while linking the underlying file", () => {
+    expect(splitTextWithFilePaths("Open /Users/example/project/src/App.tsx:1105 next.")).toEqual([
+      { text: "Open " },
+      { text: "/Users/example/project/src/App.tsx:1105", href: "/Users/example/project/src/App.tsx" },
+      { text: " next." },
+    ]);
   });
 });
