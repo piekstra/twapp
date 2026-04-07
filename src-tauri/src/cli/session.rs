@@ -108,7 +108,12 @@ impl SessionData {
             && self.native_session_id(other_provider(preferred)).is_some()
     }
 
-    pub fn set_provider_session(&mut self, provider: AgentProvider, session_id: String, cwd: String) {
+    pub fn set_provider_session(
+        &mut self,
+        provider: AgentProvider,
+        session_id: String,
+        cwd: String,
+    ) {
         match provider {
             AgentProvider::Claude => {
                 self.session_id = session_id;
@@ -183,15 +188,18 @@ pub fn find_codex_session_file(session_id: &str) -> Option<PathBuf> {
     scan_codex_session_dirs(&root, session_id)
 }
 
-pub fn find_latest_codex_session_for_cwd(cwd: &str, started_at_rfc3339: &str) -> Option<String> {
-    let root = dirs::home_dir()?.join(".codex/sessions");
+fn find_latest_codex_session_for_cwd_in(
+    root: &Path,
+    cwd: &str,
+    started_at_rfc3339: &str,
+) -> Option<String> {
     if !root.exists() {
         return None;
     }
 
     let started_at = chrono::DateTime::parse_from_rfc3339(started_at_rfc3339).ok()?;
     let mut best: Option<(chrono::DateTime<chrono::FixedOffset>, String)> = None;
-    let mut stack = vec![root];
+    let mut stack = vec![root.to_path_buf()];
 
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -213,7 +221,12 @@ pub fn find_latest_codex_session_for_cwd(cwd: &str, started_at_rfc3339: &str) ->
             let mut line = String::new();
             let mut reader = std::io::BufReader::new(file);
             use std::io::BufRead;
-            if reader.read_line(&mut line).ok().filter(|n| *n > 0).is_none() {
+            if reader
+                .read_line(&mut line)
+                .ok()
+                .filter(|n| *n > 0)
+                .is_none()
+            {
                 continue;
             }
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -250,6 +263,11 @@ pub fn find_latest_codex_session_for_cwd(cwd: &str, started_at_rfc3339: &str) ->
     }
 
     best.map(|(_, id)| id)
+}
+
+pub fn find_latest_codex_session_for_cwd(cwd: &str, started_at_rfc3339: &str) -> Option<String> {
+    let root = dirs::home_dir()?.join(".codex/sessions");
+    find_latest_codex_session_for_cwd_in(&root, cwd, started_at_rfc3339)
 }
 
 /// Derive a filesystem-safe name from a session name.
@@ -292,8 +310,7 @@ pub fn read_session(work_dir: &Path) -> Result<SessionData, String> {
     }
     let content = std::fs::read_to_string(&session_file)
         .map_err(|e| format!("Failed to read session file: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse session file: {}", e))
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))
 }
 
 /// Write session data back to the session file.
@@ -336,10 +353,7 @@ pub fn run_health_checks(work_dir: &Path, session_data: Option<&SessionData>) {
                         changed = true;
                     }
                     if !obj.contains_key("last_resumed") {
-                        obj.insert(
-                            "last_resumed".to_string(),
-                            serde_json::Value::Null,
-                        );
+                        obj.insert("last_resumed".to_string(), serde_json::Value::Null);
                         changed = true;
                     }
                     if !obj.contains_key("provider") {
@@ -368,9 +382,19 @@ pub fn run_health_checks(work_dir: &Path, session_data: Option<&SessionData>) {
             .ok()
             .and_then(|c| serde_json::from_str::<SessionData>(&c).ok())
             .map(|s| s.name)
-            .unwrap_or_else(|| work_dir.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                work_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            })
     } else {
-        work_dir.file_name().unwrap_or_default().to_string_lossy().to_string()
+        work_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
     };
     let safe_name = name.replace(' ', "-");
     let expected_notes = work_dir.join(format!(".twapp-notes-{}.json", safe_name));
@@ -389,6 +413,7 @@ pub fn run_health_checks(work_dir: &Path, session_data: Option<&SessionData>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn display_session_id_prefers_requested_provider() {
@@ -446,6 +471,83 @@ mod tests {
         data.codex_session_id = Some("codex-456".to_string());
         assert!(!data.needs_migration(AgentProvider::Codex));
     }
+
+    #[test]
+    fn find_latest_codex_session_for_cwd_uses_newest_matching_session_after_cutoff() {
+        let root = std::env::temp_dir().join(format!("twapp-codex-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("2026/04/07")).unwrap();
+
+        let write_session_meta = |name: &str, id: &str, timestamp: &str, cwd: &str| {
+            let path = root.join("2026/04/07").join(name);
+            let payload = serde_json::json!({
+                "timestamp": timestamp,
+                "type": "session_meta",
+                "payload": {
+                    "id": id,
+                    "timestamp": timestamp,
+                    "cwd": cwd,
+                }
+            });
+            fs::write(path, format!("{}\n", payload)).unwrap();
+        };
+
+        write_session_meta(
+            "older.jsonl",
+            "codex-older",
+            "2026-04-07T16:15:27.890Z",
+            "/tmp/demo",
+        );
+        write_session_meta(
+            "wrong-cwd.jsonl",
+            "codex-wrong",
+            "2026-04-07T16:15:28.890Z",
+            "/tmp/other",
+        );
+        write_session_meta(
+            "latest.jsonl",
+            "codex-latest",
+            "2026-04-07T16:15:29.890Z",
+            "/tmp/demo",
+        );
+
+        let found = find_latest_codex_session_for_cwd_in(
+            &root,
+            "/tmp/demo",
+            "2026-04-07T16:15:18.440327+00:00",
+        );
+
+        assert_eq!(found.as_deref(), Some("codex-latest"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn find_latest_codex_session_for_cwd_ignores_sessions_before_cutoff() {
+        let root = std::env::temp_dir().join(format!("twapp-codex-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("2026/04/07")).unwrap();
+
+        let path = root.join("2026/04/07/before-cutoff.jsonl");
+        let payload = serde_json::json!({
+            "timestamp": "2026-04-07T16:15:10.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "codex-before",
+                "timestamp": "2026-04-07T16:15:10.000Z",
+                "cwd": "/tmp/demo",
+            }
+        });
+        fs::write(path, format!("{}\n", payload)).unwrap();
+
+        let found = find_latest_codex_session_for_cwd_in(
+            &root,
+            "/tmp/demo",
+            "2026-04-07T16:15:18.440327+00:00",
+        );
+
+        assert_eq!(found, None);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 /// Pre-approve a directory in ~/.claude.json so Claude skips the trust prompt.
@@ -501,10 +603,10 @@ fn ensure_claude_settings(work_dir: &Path) {
             .as_object_mut()
             .unwrap()
             .insert("allowedTools".to_string(), serde_json::Value::Array(sorted));
-        project
-            .as_object_mut()
-            .unwrap()
-            .insert("hasTrustDialogAccepted".to_string(), serde_json::Value::Bool(true));
+        project.as_object_mut().unwrap().insert(
+            "hasTrustDialogAccepted".to_string(),
+            serde_json::Value::Bool(true),
+        );
 
         std::fs::write(&claude_json, serde_json::to_string_pretty(&data)?)?;
         Ok(())

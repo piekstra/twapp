@@ -523,7 +523,23 @@ function App() {
       }).catch(() => setAppVersion(tauriVersion));
     }).catch(console.error);
 
-    invoke<AppConfig>("get_app_config").then((config) => {
+    invoke<AppConfig>("get_app_config").then(async (initialConfig) => {
+      let config = initialConfig;
+
+      if (config.provider === "codex" && !config.session_id && config.cwd) {
+        const recoveredSessionId = await invoke<string | null>("sync_codex_session_id", {
+          directory: config.cwd,
+        }).catch(() => null);
+
+        if (recoveredSessionId) {
+          config = {
+            ...config,
+            session_id: recoveredSessionId,
+            command: buildResumeCommand("codex", recoveredSessionId, config.cwd),
+          };
+        }
+      }
+
       setAppConfig(config);
       // Update main tab name from session name
       if (config.name && config.name !== "twapp") {
@@ -540,9 +556,15 @@ function App() {
       fit.fit();
       const dims = fit.proposeDimensions();
 
+      const launchCommand = config.command || buildResumeCommand(
+        config.provider,
+        config.session_id,
+        config.cwd,
+      );
+
       invoke("spawn_shell", {
         cwd: config.cwd || null,
-        command: config.command || null,
+        command: launchCommand,
         prefill: config.prefill || null,
         rows: dims?.rows ?? null,
         cols: dims?.cols ?? null,
@@ -1072,9 +1094,12 @@ function App() {
   const loadSessionFields = () => {
     setSessionFieldsError(null);
     invoke<Record<string, unknown> | null>("get_session_info").then((data) => {
+      const providerSessionId = appConfig?.provider === "codex"
+        ? (data?.codex_session_id as string) || (data?.session_id as string) || appConfig?.session_id || ""
+        : (data?.session_id as string) || appConfig?.session_id || "";
       const fields: SessionFieldValues = {
         name: (data?.name as string) || appConfig?.name || "",
-        session_id: (data?.session_id as string) || appConfig?.session_id || "",
+        session_id: providerSessionId,
         claude_cwd: (data?.claude_cwd as string) || appConfig?.cwd || "",
         ticket_key: (data?.ticket_key as string) || "",
       };
@@ -1126,12 +1151,23 @@ function App() {
   };
 
   const handleRestartTerminal = async () => {
+    let resolvedSessionId = appConfig?.session_id || null;
+
+    if (appConfig?.provider === "codex" && !resolvedSessionId && appConfig.cwd) {
+      resolvedSessionId = await invoke<string | null>("sync_codex_session_id", {
+        directory: appConfig.cwd,
+      }).catch(() => null);
+      if (resolvedSessionId) {
+        setAppConfig((prev) => prev ? { ...prev, session_id: resolvedSessionId } : prev);
+      }
+    }
+
     await invoke("kill_pty");
     terminalInstance.current?.reset();
     const dims = fitAddon.current?.proposeDimensions();
     const resumeCmd = buildResumeCommand(
       appConfig?.provider || "claude",
-      appConfig?.session_id,
+      resolvedSessionId,
       appConfig?.cwd,
     );
     await invoke("spawn_shell", {
@@ -1141,6 +1177,13 @@ function App() {
       rows: dims?.rows ?? null,
       cols: dims?.cols ?? null,
     });
+
+    if (appConfig?.provider === "codex" && !resolvedSessionId && appConfig?.cwd) {
+      await invoke("start_codex_session_capture", {
+        directory: appConfig.cwd,
+        startedAt: new Date().toISOString(),
+      }).catch(console.error);
+    }
   };
 
   const [rebuildStatus, setRebuildStatus] = useState("");

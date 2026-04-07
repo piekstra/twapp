@@ -1,22 +1,22 @@
-pub mod types;
-pub mod pty;
-pub mod notes;
-pub mod prompts;
-pub mod tickets;
-pub mod sessions;
-pub mod monitor;
 pub mod config;
 pub mod files;
+pub mod monitor;
+pub mod notes;
+pub mod prompts;
+pub mod pty;
+pub mod sessions;
 pub mod shell_env;
+pub mod tickets;
+pub mod types;
 
-pub use types::GuiArgs;
 pub use tickets::{extract_adf_text, truncate_str};
+pub use types::GuiArgs;
 
-use types::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
 use tauri::menu::{CheckMenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::{Emitter, Manager};
+use types::*;
 
 use crate::cli::monitor::MonitorRequest;
 
@@ -78,6 +78,7 @@ pub fn run(args: GuiArgs) {
             sessions::list_all_sessions,
             sessions::launch_session,
             sessions::start_codex_session_capture,
+            sessions::sync_codex_session_id,
             config::get_global_config,
             config::save_global_config,
             config::get_font_family_preference,
@@ -238,8 +239,7 @@ pub fn run(args: GuiArgs) {
                                 }
                             }
                             "stop" => {
-                                let monitor_state =
-                                    app_handle.state::<Arc<Mutex<MonitorState>>>();
+                                let monitor_state = app_handle.state::<Arc<Mutex<MonitorState>>>();
                                 let config = app_handle.state::<GuiArgs>();
                                 let _ = monitor::stop_monitor_internal(
                                     &app_handle,
