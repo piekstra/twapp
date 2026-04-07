@@ -1,4 +1,5 @@
 use super::types::*;
+use crate::cli::session::AgentProvider;
 
 pub fn read_ticket_file(path: &std::path::Path) -> Result<Option<serde_json::Value>, String> {
     if !path.exists() {
@@ -43,14 +44,31 @@ pub fn read_session_id(config: &GuiArgs) -> Option<String> {
         std::fs::read_to_string(&path)
             .ok()
             .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-            .and_then(|v| v["session_id"].as_str().map(String::from))
+            .and_then(|v| {
+                let claude_id = v
+                    .get("session_id")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty());
+                let codex_id = v
+                    .get("codex_session_id")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty());
+
+                match config.provider {
+                    AgentProvider::Codex => codex_id.or(claude_id),
+                    AgentProvider::Claude => claude_id.or(codex_id),
+                }
+                .map(String::from)
+            })
     } else {
         None
     }
 }
 
 #[tauri::command]
-pub fn get_session_info(config: tauri::State<'_, GuiArgs>) -> Result<Option<serde_json::Value>, String> {
+pub fn get_session_info(
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<Option<serde_json::Value>, String> {
     let path = resolve_session_path(config.inner());
     if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -62,7 +80,9 @@ pub fn get_session_info(config: tauri::State<'_, GuiArgs>) -> Result<Option<serd
 }
 
 #[tauri::command]
-pub fn get_ticket_info(config: tauri::State<'_, GuiArgs>) -> Result<Option<serde_json::Value>, String> {
+pub fn get_ticket_info(
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<Option<serde_json::Value>, String> {
     match resolve_ticket_path(config.inner()) {
         Some(path) => read_ticket_file(&path),
         None => Ok(None),
@@ -75,17 +95,29 @@ pub fn extract_adf_text(node: &serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         serde_json::Value::Object(obj) => {
             if obj.get("type").and_then(|t| t.as_str()) == Some("text") {
-                return obj.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                return obj
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
             }
             if let Some(content) = obj.get("content").and_then(|c| c.as_array()) {
-                let parts: Vec<String> = content.iter().map(extract_adf_text).filter(|s| !s.is_empty()).collect();
+                let parts: Vec<String> = content
+                    .iter()
+                    .map(extract_adf_text)
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 parts.join(" ")
             } else {
                 String::new()
             }
         }
         serde_json::Value::Array(arr) => {
-            let parts: Vec<String> = arr.iter().map(extract_adf_text).filter(|s| !s.is_empty()).collect();
+            let parts: Vec<String> = arr
+                .iter()
+                .map(extract_adf_text)
+                .filter(|s| !s.is_empty())
+                .collect();
             parts.join("\n")
         }
         _ => String::new(),
@@ -103,6 +135,49 @@ pub fn truncate_str(text: &str, max: usize) -> String {
         }
     }
     format!("{}...", truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_session_id_prefers_codex_session_for_codex_windows() {
+        let dir = std::env::temp_dir().join(format!("twapp-ticket-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(".twapp-session.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "session_id": "",
+                "name": "demo",
+                "claude_cwd": dir.to_string_lossy(),
+                "created": "2026-01-01T00:00:00Z",
+                "provider": "codex",
+                "codex_session_id": "codex-123",
+                "codex_cwd": dir.to_string_lossy(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let config = GuiArgs {
+            name: "demo".to_string(),
+            color: None,
+            cwd: Some(dir.to_string_lossy().to_string()),
+            command: None,
+            prefill: None,
+            ticket: None,
+            session_id: None,
+            provider: AgentProvider::Codex,
+            capture_started_at: None,
+            chrome: false,
+            override_terminal_theme: false,
+        };
+
+        assert_eq!(read_session_id(&config).as_deref(), Some("codex-123"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 pub fn normalize_jtk_ticket(data: &serde_json::Value, key_hint: &str) -> serde_json::Value {
@@ -138,13 +213,17 @@ pub fn normalize_jtk_ticket(data: &serde_json::Value, key_hint: &str) -> serde_j
 }
 
 #[tauri::command]
-pub async fn link_ticket(key: String, config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
+pub async fn link_ticket(
+    key: String,
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<serde_json::Value, String> {
     let cwd = config.cwd.as_deref().unwrap_or(".");
 
     let output = super::shell_env::run_tool(
         &super::shell_env::TOOL_JTK,
         &["issues", "get", &key, "-o", "json"],
-    ).await?;
+    )
+    .await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -156,7 +235,10 @@ pub async fn link_ticket(key: String, config: tauri::State<'_, GuiArgs>) -> Resu
 
     // jtk may return an array with one element
     let data = if raw.is_array() {
-        raw.as_array().and_then(|a| a.first()).cloned().unwrap_or(serde_json::Value::Null)
+        raw.as_array()
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
     } else {
         raw
     };
@@ -172,7 +254,9 @@ pub async fn link_ticket(key: String, config: tauri::State<'_, GuiArgs>) -> Resu
 }
 
 #[tauri::command]
-pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
+pub async fn refresh_ticket(
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<serde_json::Value, String> {
     let cwd = config.cwd.as_deref().unwrap_or(".");
     let ticket_path = std::path::Path::new(cwd).join(".twapp-ticket.json");
 
@@ -199,21 +283,39 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
 
         let output = super::shell_env::run_tool(
             &super::shell_env::TOOL_GH,
-            &["issue", "view", number, "--repo", repo, "--json", "title,body,state,labels,milestone,assignees,number,url"],
-        ).await?;
+            &[
+                "issue",
+                "view",
+                number,
+                "--repo",
+                repo,
+                "--json",
+                "title,body,state,labels,milestone,assignees,number,url",
+            ],
+        )
+        .await?;
 
         if !output.status.success() {
-            return Err(format!("gh failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(format!(
+                "gh failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let data: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Failed to parse gh output: {}", e))?;
 
-        let labels: Vec<String> = data["labels"].as_array()
-            .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
+        let labels: Vec<String> = data["labels"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|l| l["name"].as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let assignee = data["assignees"].as_array()
+        let assignee = data["assignees"]
+            .as_array()
             .and_then(|arr| arr.first())
             .and_then(|a| a["login"].as_str())
             .map(|s| serde_json::Value::String(s.to_string()))
@@ -240,17 +342,24 @@ pub async fn refresh_ticket(config: tauri::State<'_, GuiArgs>) -> Result<serde_j
         let output = super::shell_env::run_tool(
             &super::shell_env::TOOL_JTK,
             &["issues", "get", key, "-o", "json"],
-        ).await?;
+        )
+        .await?;
 
         if !output.status.success() {
-            return Err(format!("jtk failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(format!(
+                "jtk failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let raw: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Failed to parse jtk output: {}", e))?;
 
         let data = if raw.is_array() {
-            raw.as_array().and_then(|a| a.first()).cloned().unwrap_or(serde_json::Value::Null)
+            raw.as_array()
+                .and_then(|a| a.first())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
         } else {
             raw
         };
