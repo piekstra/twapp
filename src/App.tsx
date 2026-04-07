@@ -19,7 +19,8 @@ import { applyThemeColor, getDarkModeAccentColor } from "./color";
 import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath } from "./utils/file";
+import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
+import { remarkAutolinkFilePaths } from "./utils/markdown";
 import { buildResumeCommand } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
@@ -309,21 +310,31 @@ function App() {
     });
   };
 
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markdownComponents: any = {
+  const createMarkdownComponents = ({
+    allowFilePreviews,
+    allowAbsolutePathPreviews,
+  }: {
+    allowFilePreviews: boolean;
+    allowAbsolutePathPreviews: boolean;
+  }) => ({
     code({ children, className, ...rest }: React.HTMLAttributes<HTMLElement>) {
       const text = String(children).replace(/\n$/, "");
-      if (!className && isFilePath(text)) {
+      if (
+        allowFilePreviews &&
+        !className &&
+        isFilePath(text) &&
+        (allowAbsolutePathPreviews || !isAbsolutePath(text))
+      ) {
+        const previewPath = normalizeFilePathCandidate(text);
         return (
           <code
             {...rest}
             className="file-link"
             title="⌘+click to preview"
             onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
               if (e.metaKey) {
-                e.preventDefault();
-                handleFilePreview(text);
+                handleFilePreview(previewPath);
               }
             }}
           >
@@ -334,7 +345,13 @@ function App() {
       return <code {...rest} className={className}>{children}</code>;
     },
     a({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-      if (href && !href.startsWith("http") && !href.startsWith("mailto:") && !href.startsWith("#")) {
+      if (
+        allowFilePreviews &&
+        href &&
+        isLikelyPreviewableHref(href) &&
+        (allowAbsolutePathPreviews || !isAbsolutePath(href))
+      ) {
+        const previewPath = normalizeFilePathCandidate(href);
         return (
           <a
             {...rest}
@@ -342,9 +359,9 @@ function App() {
             className="file-link"
             title="⌘+click to preview"
             onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
               if (e.metaKey) {
-                e.preventDefault();
-                handleFilePreview(href);
+                handleFilePreview(previewPath);
               }
             }}
           >
@@ -365,7 +382,18 @@ function App() {
         </a>
       );
     },
-  };
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markdownComponents: any = createMarkdownComponents({
+    allowFilePreviews: true,
+    allowAbsolutePathPreviews: true,
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const releaseNotesMarkdownComponents: any = createMarkdownComponents({
+    allowFilePreviews: true,
+    allowAbsolutePathPreviews: true,
+  });
 
   // macOS Option+Arrow word jumping for xterm.js
   // Intercepts Option+Arrow and Option+Backspace to send the correct escape sequences
@@ -401,7 +429,7 @@ function App() {
       cursorStyle: "block",
       macOptionIsMeta: true,
       allowProposedApi: true,
-      // Handle OSC 8 hyperlinks (e.g. from Claude CLI output)
+      // Handle OSC 8 hyperlinks emitted by agent CLIs and other terminal tools.
       linkHandler: {
         activate: (_event, uri) => {
           openUrl(uri).catch(console.error);
@@ -2090,7 +2118,12 @@ function App() {
             {updateInfo ? (
               <>
                 <div className="update-notes">
-                  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{updateInfo.releaseNotes}</Markdown>
+                  <Markdown
+                    remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]}
+                    components={releaseNotesMarkdownComponents}
+                  >
+                    {updateInfo.releaseNotes}
+                  </Markdown>
                 </div>
                 <a
                   className="update-release-link"
@@ -2344,7 +2377,7 @@ function App() {
                   autoFocus
                 />
               ) : (
-                <div className="note-text"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{note.text}</Markdown></div>
+                <div className="note-text"><Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={markdownComponents}>{note.text}</Markdown></div>
               )}
             </div>
           ))}
@@ -2697,7 +2730,7 @@ function App() {
                 <div className="file-preview-error">{previewError}</div>
               ) : previewFile?.path.endsWith(".md") ? (
                 <div className="file-preview-markdown">
-                  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{previewFile.content}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={markdownComponents}>{previewFile.content}</Markdown>
                 </div>
               ) : previewFile?.path.endsWith(".json") && parsedJson !== null ? (
                 <div className="file-preview-json">

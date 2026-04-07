@@ -2,7 +2,7 @@
 
 ## Usage Reference
 
-This section is the authoritative reference for twapp usage across all Claude sessions.
+This section is the authoritative reference for twapp usage across all twapp-managed agent sessions.
 
 **Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `monitor`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
 
@@ -22,6 +22,11 @@ Run `twapp <command> --help` for details.
 - `twapp resume --fork` — Fork in current directory (new ID, keeps context)
 - `twapp work <ticket> -s <id> --claude-cwd <dir>` — Fork to new directory (new ID, keeps context)
 
+**Provider selection**:
+- `agent_provider` in `~/.config/twapp/config.yaml` controls whether sessions launch in Claude or Codex by default.
+- twapp stores provider-specific session handles and can migrate twapp-managed sessions between providers on first open when needed.
+- Default permissions remain Claude-only.
+
 When to use each:
 - **work**: Starting fresh on a new ticket
 - **resume**: Coming back to a session after closing the window
@@ -33,7 +38,7 @@ When to use each:
 **Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
 
 **Launcher Settings**: Gear icon in launcher header switches to settings view with three tabs:
-- **General** — theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo. Auto-saves on blur.
+- **General** — theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo, and default agent provider. Auto-saves on blur.
 - **Prompts** — global quick prompt management (add/edit/remove sections and prompts). Same data as `~/.config/twapp/quick-prompts.json`.
 - **Permissions** — default Claude permission CRUD. Same data as `~/.config/twapp/default-permissions.json`.
 
@@ -43,11 +48,11 @@ When to use each:
 
 **Session Deletion**: Trash icon on session hover opens a confirmation modal. `preflight_delete_session` gathers safety checks (running status, uncommitted git changes, unpushed commits, ticket completion status, note count, conversation size). `delete_session` has two tiers: "Remove Session" (deletes `.twapp-*` metadata, `.claude/` project dir, conversation JSONL, `~/.claude.json` entry) or "Delete Everything" (entire working directory). Running sessions cannot be deleted (server-side block).
 
-**Import Claude Sessions**: Download-arrow icon in launcher header discovers unmanaged Claude CLI sessions from `~/.claude/projects/`. `discover_claude_sessions` scans JSONL files, extracts summaries (from compaction) and metadata (message count, timestamps, git branch, file size), cross-references with known twapp sessions to avoid duplicates, and groups results by original working directory. The import view shows expandable directory groups with searchable sessions, editable names, and metadata. `import_sessions` creates new directories in the work directory with full twapp session metadata (`imported: true`, `imported_from: session_id`). Imported sessions show an "Imported" badge on the meta line, with a filter toggle in the sort bar to show/hide them.
+**Import Claude Sessions**: Download-arrow icon in launcher header discovers unmanaged Claude CLI sessions from `~/.claude/projects/`. `discover_claude_sessions` scans JSONL files, extracts summaries (from compaction) and metadata (message count, timestamps, git branch, file size), cross-references with known twapp sessions to avoid duplicates, and groups results by original working directory. The import view shows expandable directory groups with searchable sessions, editable names, and metadata. `import_sessions` creates new directories in the work directory with full twapp session metadata (`imported: true`, `imported_from: session_id`). Imported sessions show an "Imported" badge on the meta line, with a filter toggle in the sort bar to show/hide them. This import flow is currently Claude-only; Codex support focuses on twapp-managed sessions and provider switching.
 
 ## Architecture
 
-Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude work sessions.
+Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude and Codex work sessions.
 
 - **Frontend**: `src/App.tsx` (main terminal UI), `src/components/SessionLauncher.tsx` (session management), `src/components/FilePreview/` (file preview renderers), `src/components/PromptSections.tsx` (quick prompts UI), `src/types.ts` (shared types), `src/utils/` (format, file, version helpers), `src/App.css`
 - **Backend GUI**: `src-tauri/src/gui/` - Tauri commands split into modules: `pty.rs` (terminal), `sessions.rs` (session management), `tickets.rs` (ticket integration), `monitor.rs` (background process), `config.rs` (settings), `files.rs` (file operations), `notes.rs`, `prompts.rs`, `types.rs`, `mod.rs` (app setup)
@@ -95,7 +100,7 @@ npx tsc --noEmit
 - **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)
 - **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
 - **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
-- **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI (e.g., Claude can save reusable prompts). `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
+- **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI so your active agent can save reusable prompts. `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
 - **Monitor**: Background command runner with live output in a collapsible bar. Opt-in only (disabled by default; enable in Settings > General > Features).
   - **CLI**: `twapp monitor "npm run dev"` starts a command. `--stop` stops it, `--status` shows what's running, `--logs` tails the log. CLI communicates with GUI via `.twapp-monitor-request.json`; GUI polls for it and spawns the process.
   - **GUI bar**: Dockable to top or bottom (position persisted in `config.yaml`). Resizable via drag handle (size persisted). Header shows command, status indicator, duration. Click header to expand/collapse output.

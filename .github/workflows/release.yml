@@ -122,7 +122,7 @@ jobs:
 
           cat > /tmp/twapp.rb <<RUBY
           class Twapp < Formula
-            desc "A structured terminal companion for Claude coding sessions"
+            desc "A structured terminal companion for Claude and Codex coding sessions"
             homepage "https://github.com/piekstra/twapp"
             license "MIT"
             version "${VERSION}"
@@ -155,7 +155,9 @@ jobs:
                   twapp setup-cert
                   twapp install-gui \#{prefix}/twapp.app
 
-                twapp requires the Claude CLI: https://docs.anthropic.com/en/docs/claude-cli
+                twapp requires at least one supported agent CLI:
+                  Claude CLI: https://docs.anthropic.com/en/docs/claude-cli
+                  Codex CLI: https://github.com/openai/codex
               EOS
             end
 

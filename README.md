@@ -177,7 +177,7 @@ twapp permissions add 'Bash(npm test:*)'
 
 - One supported agent CLI:
   - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli)
-  - `codex` CLI
+  - [Codex CLI](https://github.com/openai/codex)
 - For the smoothest switching experience, install both.
 
 ### Step 1: Install the binary
@@ -265,7 +265,7 @@ The window title and Mission Control label should show "test-session". If it wor
 
 Open the launcher, click the gear icon, and set **Agent Provider** to `Claude` or `Codex`.
 
-- `Claude` is the legacy/default provider and remains the best-supported path for importing unmanaged historical sessions.
+- `Claude` remains the best-supported path for importing unmanaged historical sessions.
 - `Codex` enables native Codex resumes for any twapp session that has already been opened in Codex once.
 
 ### Optional: Spotlight visibility
@@ -347,7 +347,7 @@ twapp work --name "my-session" -s <session-id>
 
 The forked session gets a new twapp-managed session and carries Claude context from the original.
 
-> Current limitation: unmanaged external import is Claude-only. Codex integration currently targets twapp-managed sessions and provider switching inside twapp.
+> Current limitation: unmanaged external import is Claude-only. Codex support currently targets twapp-managed sessions and provider switching inside twapp.
 
 ## CLI Reference
 
