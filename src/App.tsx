@@ -310,10 +310,23 @@ function App() {
     });
   };
 
-  const createMarkdownComponents = ({ allowAbsolutePathPreviews }: { allowAbsolutePathPreviews: boolean }) => ({
+  const isSafeExternalHref = (href: string) => /^(https?:|mailto:)/i.test(href.trim());
+
+  const createMarkdownComponents = ({
+    allowFilePreviews,
+    allowAbsolutePathPreviews,
+  }: {
+    allowFilePreviews: boolean;
+    allowAbsolutePathPreviews: boolean;
+  }) => ({
     code({ children, className, ...rest }: React.HTMLAttributes<HTMLElement>) {
       const text = String(children).replace(/\n$/, "");
-      if (!className && isFilePath(text) && (allowAbsolutePathPreviews || !isAbsolutePath(text))) {
+      if (
+        allowFilePreviews &&
+        !className &&
+        isFilePath(text) &&
+        (allowAbsolutePathPreviews || !isAbsolutePath(text))
+      ) {
         const previewPath = normalizeFilePathCandidate(text);
         return (
           <code
@@ -334,7 +347,12 @@ function App() {
       return <code {...rest} className={className}>{children}</code>;
     },
     a({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-      if (href && isLikelyPreviewableHref(href) && (allowAbsolutePathPreviews || !isAbsolutePath(href))) {
+      if (
+        allowFilePreviews &&
+        href &&
+        isLikelyPreviewableHref(href) &&
+        (allowAbsolutePathPreviews || !isAbsolutePath(href))
+      ) {
         const previewPath = normalizeFilePathCandidate(href);
         return (
           <a
@@ -347,6 +365,19 @@ function App() {
               if (e.metaKey) {
                 handleFilePreview(previewPath);
               }
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+      if (!href || !isSafeExternalHref(href)) {
+        return (
+          <a
+            {...rest}
+            href={href}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
             }}
           >
             {children}
@@ -369,9 +400,12 @@ function App() {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markdownComponents: any = createMarkdownComponents({ allowAbsolutePathPreviews: true });
+  const markdownComponents: any = createMarkdownComponents({ allowFilePreviews: true, allowAbsolutePathPreviews: true });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const releaseNotesMarkdownComponents: any = createMarkdownComponents({ allowAbsolutePathPreviews: false });
+  const releaseNotesMarkdownComponents: any = createMarkdownComponents({
+    allowFilePreviews: false,
+    allowAbsolutePathPreviews: false,
+  });
 
   // macOS Option+Arrow word jumping for xterm.js
   // Intercepts Option+Arrow and Option+Backspace to send the correct escape sequences
