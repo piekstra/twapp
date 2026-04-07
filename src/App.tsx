@@ -310,14 +310,16 @@ function App() {
     });
   };
 
-  const isSafeExternalHref = (href: string) => /^(https?:|mailto:)/i.test(href.trim());
+  const isSafeReleaseNotesHref = (href: string) => /^(https?:|mailto:)/i.test(href.trim());
 
   const createMarkdownComponents = ({
     allowFilePreviews,
     allowAbsolutePathPreviews,
+    restrictExternalLinks,
   }: {
     allowFilePreviews: boolean;
     allowAbsolutePathPreviews: boolean;
+    restrictExternalLinks: boolean;
   }) => ({
     code({ children, className, ...rest }: React.HTMLAttributes<HTMLElement>) {
       const text = String(children).replace(/\n$/, "");
@@ -371,7 +373,7 @@ function App() {
           </a>
         );
       }
-      if (!href || !isSafeExternalHref(href)) {
+      if (restrictExternalLinks && (!href || !isSafeReleaseNotesHref(href))) {
         return (
           <a
             {...rest}
@@ -400,11 +402,16 @@ function App() {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markdownComponents: any = createMarkdownComponents({ allowFilePreviews: true, allowAbsolutePathPreviews: true });
+  const markdownComponents: any = createMarkdownComponents({
+    allowFilePreviews: true,
+    allowAbsolutePathPreviews: true,
+    restrictExternalLinks: false,
+  });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const releaseNotesMarkdownComponents: any = createMarkdownComponents({
     allowFilePreviews: false,
     allowAbsolutePathPreviews: false,
+    restrictExternalLinks: true,
   });
 
   // macOS Option+Arrow word jumping for xterm.js
@@ -2131,7 +2138,7 @@ function App() {
               <>
                 <div className="update-notes">
                   <Markdown
-                    remarkPlugins={[remarkGfm, [remarkAutolinkFilePaths, { allowAbsolutePaths: false }]]}
+                    remarkPlugins={[remarkGfm]}
                     components={releaseNotesMarkdownComponents}
                   >
                     {updateInfo.releaseNotes}
