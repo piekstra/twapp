@@ -1,32 +1,18 @@
 use super::types::*;
 use std::process::Command;
-use std::path::{Path, PathBuf};
-
-fn resolve_preview_path(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
-    let workspace_root = std::fs::canonicalize(cwd.unwrap_or("."))
-        .map_err(|e| format!("Failed to resolve workspace root: {}", e))?;
-    let requested = Path::new(path);
-    let candidate = if requested.is_absolute() {
-        requested.to_path_buf()
-    } else {
-        workspace_root.join(requested)
-    };
-
-    if !candidate.exists() {
-        return Err(format!("File not found: {}", candidate.display()));
-    }
-
-    let resolved = std::fs::canonicalize(&candidate).map_err(|e| e.to_string())?;
-    if !resolved.starts_with(&workspace_root) {
-        return Err("File preview is limited to the current workspace".to_string());
-    }
-
-    Ok(resolved)
-}
 
 #[tauri::command]
 pub fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let resolved = resolve_preview_path(&path, config.cwd.as_deref())?;
+    let file_path = std::path::Path::new(&path);
+    let resolved = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        let cwd = config.cwd.as_deref().unwrap_or(".");
+        std::path::Path::new(cwd).join(file_path)
+    };
+    if !resolved.exists() {
+        return Err(format!("File not found: {}", resolved.display()));
+    }
     let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
     if metadata.len() > 2 * 1024 * 1024 {
         return Err("File too large (max 2MB)".to_string());
@@ -36,7 +22,16 @@ pub fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<Stri
 
 #[tauri::command]
 pub fn read_file_base64(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let resolved = resolve_preview_path(&path, config.cwd.as_deref())?;
+    let file_path = std::path::Path::new(&path);
+    let resolved = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        let cwd = config.cwd.as_deref().unwrap_or(".");
+        std::path::Path::new(cwd).join(file_path)
+    };
+    if !resolved.exists() {
+        return Err(format!("File not found: {}", resolved.display()));
+    }
     let metadata = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
     if metadata.len() > 5 * 1024 * 1024 {
         return Err("File too large (max 5MB)".to_string());
