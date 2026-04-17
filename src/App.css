@@ -907,6 +907,104 @@ body,
   padding-bottom: 0;
 }
 
+/* Compaction indicator + history modal */
+.compaction-indicator {
+  margin-top: 6px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.compaction-indicator:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.history-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 0;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item {
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.history-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.history-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.history-badge-compacted {
+  background: #f59e0b;
+}
+
+.history-badge-cleared {
+  background: #ef4444;
+}
+
+.history-badge-manual_edit {
+  background: #3b82f6;
+}
+
+.history-timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.history-ids {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.history-id-label {
+  color: var(--text-muted);
+}
+
+.history-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.history-id:hover {
+  border-color: var(--accent);
+}
+
 .session-settings-label {
   font-size: 11px;
   color: var(--text-muted);

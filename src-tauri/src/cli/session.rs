@@ -648,3 +648,122 @@ fn scan_recursive(dir: &Path, results: &mut Vec<(SessionData, PathBuf)>, depth: 
         }
     }
 }
+
+// ---------- Session History Audit Log ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHistoryEvent {
+    pub timestamp: String,
+    pub event: String, // "compacted" | "cleared" | "manual_edit"
+    pub old_session_id: String,
+    pub new_session_id: String,
+}
+
+pub fn read_history(work_dir: &Path) -> Vec<SessionHistoryEvent> {
+    let history_file = work_dir.join(".twapp-session-history.json");
+    if !history_file.exists() {
+        return Vec::new();
+    }
+    let Ok(content) = std::fs::read_to_string(&history_file) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+pub fn append_history(work_dir: &Path, event: SessionHistoryEvent) -> Result<(), String> {
+    let mut events = read_history(work_dir);
+    events.push(event);
+    let history_file = work_dir.join(".twapp-session-history.json");
+    let content = serde_json::to_string_pretty(&events)
+        .map_err(|e| format!("Failed to serialize history: {}", e))?;
+    std::fs::write(&history_file, content)
+        .map_err(|e| format!("Failed to write history file: {}", e))
+}
+
+fn claude_projects_dir(claude_cwd: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let encoded = claude_cwd.replace('/', "-");
+    Some(home.join(".claude/projects").join(encoded))
+}
+
+/// Scan ~/.claude/projects/<encoded>/*.jsonl and return the session_id of the
+/// file with the newest mtime. Returns None if no JSONL files exist.
+pub fn find_latest_claude_session_id(claude_cwd: &str) -> Option<String> {
+    let dir = claude_projects_dir(claude_cwd)?;
+    if !dir.exists() {
+        return None;
+    }
+    let entries = std::fs::read_dir(&dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(meta) = path.metadata() else { continue };
+        let Ok(mtime) = meta.modified() else { continue };
+        match &best {
+            Some((best_mtime, _)) if mtime <= *best_mtime => {}
+            _ => best = Some((mtime, stem.to_string())),
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// Peek at the head of a JSONL file to decide whether the new session came
+/// from `/compact` (carries a continuity summary near the top) or `/clear`
+/// (fresh session with no summary).
+pub fn classify_session_change(claude_cwd: &str, new_session_id: &str) -> &'static str {
+    let Some(dir) = claude_projects_dir(claude_cwd) else {
+        return "cleared";
+    };
+    let path = dir.join(format!("{}.jsonl", new_session_id));
+    let Ok(file) = std::fs::File::open(&path) else {
+        return "cleared";
+    };
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().take(20).filter_map(|l| l.ok()) {
+        if line.contains("\"type\":\"summary\"") || line.contains("\"isCompactSummary\":true") {
+            return "compacted";
+        }
+    }
+    "cleared"
+}
+
+/// If Claude created a newer session (via /compact or /clear), update the stored
+/// session_id, write the session file, append a history event, and return the
+/// old id + event type for logging. Returns None if no change was made.
+pub fn maybe_sync_session_id(
+    work_dir: &Path,
+    session_data: &mut SessionData,
+) -> Option<(String, &'static str)> {
+    let claude_cwd = if session_data.claude_cwd.is_empty() {
+        work_dir.to_string_lossy().to_string()
+    } else {
+        session_data.claude_cwd.clone()
+    };
+    let latest = find_latest_claude_session_id(&claude_cwd)?;
+    if latest == session_data.session_id || latest.is_empty() {
+        return None;
+    }
+    let old_id = session_data.session_id.clone();
+    let event_type = classify_session_change(&claude_cwd, &latest);
+    session_data.session_id = latest.clone();
+    if write_session(work_dir, session_data).is_err() {
+        return None;
+    }
+    let _ = append_history(
+        work_dir,
+        SessionHistoryEvent {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            event: event_type.to_string(),
+            old_session_id: old_id.clone(),
+            new_session_id: latest,
+        },
+    );
+    Some((old_id, event_type))
+}

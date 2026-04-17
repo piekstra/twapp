@@ -490,6 +490,11 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         return Ok(());
     }
 
+    // Detect Claude session reset (from /compact or /clear) and update stored id
+    if preferred == AgentProvider::Claude {
+        let _ = crate::cli::session::maybe_sync_session_id(&work_dir, &mut session_data);
+    }
+
     // Update last_resumed
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
     session_data.provider = Some(preferred);
@@ -796,6 +801,7 @@ pub async fn update_session_fields(
 ) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut data = crate::cli::session::read_session(&work_dir)?;
+    let old_claude_session_id = data.session_id.clone();
 
     if let Some(ref n) = name {
         data.name = n.clone();
@@ -825,7 +831,28 @@ pub async fn update_session_fields(
     }
 
     crate::cli::session::write_session(&work_dir, &data)?;
+
+    if data.session_id != old_claude_session_id {
+        let _ = crate::cli::session::append_history(
+            &work_dir,
+            crate::cli::session::SessionHistoryEvent {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                event: "manual_edit".to_string(),
+                old_session_id: old_claude_session_id,
+                new_session_id: data.session_id.clone(),
+            },
+        );
+    }
+
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_session_history(
+    directory: String,
+) -> Result<Vec<crate::cli::session::SessionHistoryEvent>, String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    Ok(crate::cli::session::read_history(&work_dir))
 }
 
 #[tauri::command]

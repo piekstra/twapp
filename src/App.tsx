@@ -16,7 +16,7 @@ import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
-import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
+import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
@@ -77,6 +77,10 @@ function App() {
   const [sessionFieldsOriginal, setSessionFieldsOriginal] = useState<SessionFieldValues | null>(null);
   const [sessionFieldsSaving, setSessionFieldsSaving] = useState(false);
   const [sessionFieldsError, setSessionFieldsError] = useState<string | null>(null);
+
+  // Session history state
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryEvent[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Quick Prompts state
   const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
@@ -585,6 +589,13 @@ function App() {
       invoke<TicketInfo | null>("get_ticket_info")
         .then((info) => { if (info) setTicket(info); })
         .catch(console.error);
+
+      // Load session history audit log
+      if (config.cwd) {
+        invoke<SessionHistoryEvent[]>("get_session_history", { directory: config.cwd })
+          .then(setSessionHistory)
+          .catch(() => setSessionHistory([]));
+      }
 
       // Check for updates after a brief delay
       setTimeout(() => checkForUpdate(), 5000);
@@ -1143,11 +1154,20 @@ function App() {
         setAppConfig((prev) => prev ? { ...prev, session_id: args.session_id } : prev);
       }
       setSessionFieldsOriginal({ ...sessionFields });
+      // Refresh history in case we logged a manual_edit event
+      loadSessionHistory();
     } catch (err) {
       setSessionFieldsError(String(err));
     } finally {
       setSessionFieldsSaving(false);
     }
+  };
+
+  const loadSessionHistory = () => {
+    if (!appConfig?.cwd) return;
+    invoke<SessionHistoryEvent[]>("get_session_history", { directory: appConfig.cwd })
+      .then(setSessionHistory)
+      .catch(() => setSessionHistory([]));
   };
 
   const handleRestartTerminal = async () => {
@@ -2269,6 +2289,15 @@ function App() {
               </button>
             </div>
           )}
+          {sessionHistory.length > 0 && (
+            <button
+              className="compaction-indicator"
+              onClick={() => setHistoryOpen(true)}
+              title="View session history"
+            >
+              Compactions ({sessionHistory.filter((e) => e.event === "compacted" || e.event === "cleared").length})
+            </button>
+          )}
         </div>
 
         {/* Fork Dialog */}
@@ -2610,6 +2639,56 @@ function App() {
         </div>
 
       </div>
+
+      {/* Session History Modal */}
+      {historyOpen && (
+        <div className="config-overlay" onClick={() => setHistoryOpen(false)}>
+          <div className="config-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="config-header">
+              <span className="config-title">Session History</span>
+              <button className="config-close" onClick={() => setHistoryOpen(false)}>&times;</button>
+            </div>
+            <div className="config-body">
+              {sessionHistory.length === 0 ? (
+                <div className="history-empty">No history events yet.</div>
+              ) : (
+                <div className="history-list">
+                  {[...sessionHistory].reverse().map((ev, idx) => (
+                    <div className="history-item" key={idx}>
+                      <div className="history-item-header">
+                        <span className={`history-badge history-badge-${ev.event}`}>
+                          {ev.event === "manual_edit" ? "edited" : ev.event}
+                        </span>
+                        <span className="history-timestamp">
+                          {new Date(ev.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="history-ids">
+                        <span className="history-id-label">from</span>
+                        <code
+                          className="history-id"
+                          title={ev.old_session_id ? `${ev.old_session_id}\n(click to copy)` : "(none)"}
+                          onClick={() => ev.old_session_id && navigator.clipboard.writeText(ev.old_session_id)}
+                        >
+                          {ev.old_session_id ? ev.old_session_id.slice(0, 8) : "(none)"}
+                        </code>
+                        <span className="history-id-label">→</span>
+                        <code
+                          className="history-id"
+                          title={ev.new_session_id ? `${ev.new_session_id}\n(click to copy)` : "(none)"}
+                          onClick={() => ev.new_session_id && navigator.clipboard.writeText(ev.new_session_id)}
+                        >
+                          {ev.new_session_id ? ev.new_session_id.slice(0, 8) : "(none)"}
+                        </code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Session Config Modal */}
       {sessionSettingsOpen && (

@@ -744,6 +744,13 @@ fn cmd_resume(fork: bool) -> i32 {
         }
         build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     } else {
+        if let Some((old_id, event)) = session::maybe_sync_session_id(&work_dir, &mut session_data)
+        {
+            eprintln!(
+                "Detected {} — updating stored session id: {} -> {}",
+                event, old_id, session_data.session_id
+            );
+        }
         session_id = session_data.session_id.clone();
         let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());

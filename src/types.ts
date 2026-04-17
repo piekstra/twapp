@@ -172,6 +172,13 @@ export interface ImportResult {
   directories_created: string[];
 }
 
+export interface SessionHistoryEvent {
+  timestamp: string;
+  event: "compacted" | "cleared" | "manual_edit";
+  old_session_id: string;
+  new_session_id: string;
+}
+
 export interface DeletePreflight {
   session_name: string;
   session_color: string;
