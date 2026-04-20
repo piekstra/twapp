@@ -133,6 +133,7 @@ Include this in every briefing:
   `/tmp/agent-mailbox/inbox/<ISO-timestamp>-my-agent-hello.md`
   describing what you picked up and your planned first step.
 - Poll the inbox every 90s for follow-up messages addressed to your handle.
+- Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
 ```
 
 Caller-side poll after spawn:
@@ -157,6 +158,19 @@ ps -eo pid,command | grep "twapp --name my-agent"       # the host process shoul
 ```
 
 If both look healthy but no hello lands within 2 min, assume the agent is blocked on a permission prompt or failed to cd. Stop it and re-spawn with corrected paths / settings.
+
+## Headless operation
+
+**Headless operation.** Every worker invokes `/loop` after its hello and operates autonomously. Never end a turn waiting for user input. If stuck, mailbox the coordinator. The coordinator decides when to escalate to the user.
+
+The failure mode this rule prevents: a worker finishes a turn with a trailing "do you want me to ...?" question and blocks silently until a human happens to look. The coordinator cannot supervise questions nobody sees. Post the question to the mailbox instead and let the next `/loop` tick wake the worker to handle the reply.
+
+Defaults for common wait states:
+
+- **Waiting for a review** → `/loop` every 90-120s until the review arrives or the user says stop.
+- **Reviewer posts a concern** rather than "Ship it" → address the concern or mailbox the coordinator; do not freeze the turn waiting for the user.
+- **CLI / `gh` / `git push` rejects the operation** → diagnose once; on the second failure, mailbox the coordinator. Do not retry indefinitely and do not prompt the user.
+- **Work complete** → post an offboard message and stop `/loop`. A quiet next poll is the signal the run ended cleanly.
 
 ## Shutdown
 
