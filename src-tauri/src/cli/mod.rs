@@ -3,6 +3,7 @@ pub mod config;
 pub mod models;
 pub mod monitor;
 pub mod msg;
+pub mod msg_claim;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
@@ -446,6 +447,22 @@ pub fn run(cmd: Commands) -> i32 {
             } => msg::cmd_fetch(
                 for_handle, since, priority, thread, channel, mark_read, limit, format, all,
             ),
+            MsgCommands::Claim {
+                lane_id,
+                from,
+                note,
+                stale_seconds,
+                list,
+                lane_prefix,
+                format,
+            } => msg_claim::cmd_claim(
+                lane_id, from, note, stale_seconds, list, lane_prefix, format,
+            ),
+            MsgCommands::Release {
+                lane_id,
+                from,
+                note,
+            } => msg_claim::cmd_release(lane_id, from, note),
         },
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
