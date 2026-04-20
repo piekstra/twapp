@@ -612,12 +612,9 @@ what's out of scope).
 
 ### Roles and provenance
 
-> **Coming in [#43](https://github.com/piekstra/twapp/pull/43).** That PR
-> adds `role` and `provenance` fields to `.twapp-session.json`, plus
-> `--role <ROLE>`, `--spawned`, and `--provenance <VAL>` flags on
-> `twapp work`.
-
-Once #43 merges, every session carries two extra pieces of metadata:
+Every session carries two extra pieces of metadata on
+`.twapp-session.json`, both optional and both backwards-compatible with
+pre-role session files:
 
 - **`role`** — a free-form string tag. Conventionally one of the
   archetypes from
@@ -645,44 +642,12 @@ unchanged.
 
 ### Model selection per agent
 
-> **Planned.** A forthcoming PR (tracked as `twapp-model-selection` in
-> the coordination notes) will let you pick which Claude model backs a
-> spawned session — e.g. a coordinator on a stronger model, worker
-> implementers on a cheaper or faster one — without hand-editing the
-> spawned `claude` invocation.
-
-Until that lands, per-agent model choice is governed by whatever default
-your Claude CLI is configured with; spawning a cheaper worker means
-adjusting the Claude config that the worker's cwd resolves to.
-
-### Related skills
-
-- [`skills/spawn-agent/SKILL.md`](skills/spawn-agent/SKILL.md) — how a
-  Claude instance spawns another (file-reference prompt pattern,
-  worktree permission seeding, hello-within-2-min verification,
-  shutdown).
-- [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md)
-  — how to act as a coordinator across many workers (briefing shape,
-  mailbox protocol, self-merge gating, offboard cleanup, role
-  archetypes, question routing).
-
-### Design docs
-
-- [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) —
-  the mailbox shape and addressing model behind `twapp msg`, plus the
-  migration path from the current flat `inbox/` layout to threads,
-  cursors, priority lanes, presence, and channels.
-- [`docs/designs/agent-aware-ui.md`](docs/designs/agent-aware-ui.md) —
-  proposed UI / dashboard surface once the messaging substrate is
-  load-bearing, with the constraint that single-session users see no
-  change.
-
-## Model selection
-
 `twapp work --model <name>` pass-through sets the model on the spawned
 provider CLI. When unset, twapp does **not** pass `--model` and the
 provider's own default applies (e.g. the Claude CLI's global
-`ANTHROPIC_MODEL` or user config).
+`ANTHROPIC_MODEL` or user config). This lets a coordinator put its
+workers on a cheaper or faster model than itself without hand-editing
+the spawned `claude` invocation.
 
 ```bash
 # Pin a spawned worker to a specific Claude model.
@@ -701,7 +666,7 @@ is forwarded as `--model <name>`; for codex, as `-c model='<name>'`
 not accept `--model` — a resumed session keeps whatever model the
 original spawn picked.
 
-### Discovering available models
+#### Discovering available models
 
 ```bash
 # Three-column table: NAME / TIER / DESCRIPTION.
@@ -733,7 +698,7 @@ bundled default list shipped with the binary.
 hand; a refresh verb will land when the upstream CLI exposes a listing
 endpoint.
 
-### Picking a tier when spawning workers
+#### Picking a tier when spawning workers
 
 - **haiku** — plumbing, doc edits, simple refactors, CLI scaffolding.
 - **sonnet** — default for most implementation work; good balance of
@@ -744,6 +709,28 @@ endpoint.
 Match the model to the scope cost. Sending a one-line dependency bump
 to opus burns budget; sending a complex architecture audit to haiku
 burns iteration.
+
+### Related skills
+
+- [`skills/spawn-agent/SKILL.md`](skills/spawn-agent/SKILL.md) — how a
+  Claude instance spawns another (file-reference prompt pattern,
+  worktree permission seeding, hello-within-2-min verification,
+  shutdown).
+- [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md)
+  — how to act as a coordinator across many workers (briefing shape,
+  mailbox protocol, self-merge gating, offboard cleanup, role
+  archetypes, question routing).
+
+### Design docs
+
+- [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) —
+  the mailbox shape and addressing model behind `twapp msg`, plus the
+  migration path from the current flat `inbox/` layout to threads,
+  cursors, priority lanes, presence, and channels.
+- [`docs/designs/agent-aware-ui.md`](docs/designs/agent-aware-ui.md) —
+  proposed UI / dashboard surface once the messaging substrate is
+  load-bearing, with the constraint that single-session users see no
+  change.
 
 ## CLI Reference
 
