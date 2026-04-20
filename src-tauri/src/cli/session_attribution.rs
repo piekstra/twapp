@@ -481,6 +481,8 @@ mod tests {
             imported_from: None,
             use_chrome: None,
             override_terminal_theme: None,
+            role: None,
+            provenance: None,
         }
     }
 

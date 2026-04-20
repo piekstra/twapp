@@ -10,7 +10,7 @@ The long-running orchestration loop that wraps around many agent launches.
 
 This skill teaches a Claude instance how to act as a **coordinator** — managing the lifecycle of two or more twapp-hosted worker agents, reviewing their work, merging their PRs, and keeping a shared mailbox tidy.
 
-For launching a single agent, use the [`spawn-agent`](../spawn-agent/SKILL.md) skill (coming in a related PR if not yet present). This skill assumes you already know how to spawn one agent; it covers what to do when you have many.
+For launching a single agent, use the [`spawn-agent`](../spawn-agent/SKILL.md) skill. This skill assumes you already know how to spawn one agent; it covers what to do when you have many.
 
 ## 1. When to use
 
@@ -57,7 +57,11 @@ offboard shape, hard rules.>
 sync via mailbox before touching shared files.>
 
 ## Worktree
-<Copy-paste `git worktree add` block + `.claude/settings.local.json` seed.>
+<Copy-paste `git worktree add` block + `.claude/settings.local.json` seed +
+the `twapp work --name <handle> --role <role> --from-file <briefing>` command
+the coordinator will run to spawn this worker. `--role` is the §13 archetype
+for this worker; `--from-file` auto-tags the session as agent-spawned so UI
+and `twapp sessions` can distinguish it from human-driven sessions.>
 
 ## Domain facts (if units / money / safety are involved)
 <Explicit statements of the domain model the worker must internalize before
@@ -278,8 +282,8 @@ The worker reads it on the next poll, archives, and stops. If the worker's `/loo
 ### Coordinator cleanup post-offboard
 
 ```
-twapp stop --name <handle>                 # graceful host shutdown (coming in a related PR)
-kill -TERM $(pgrep -f "twapp --name <handle>")   # fallback today
+twapp stop --name <handle>                 # graceful host shutdown
+twapp stop --name <handle> --force         # SIGKILL fallback if SIGTERM doesn't land
 git worktree remove <path>                 # optional, keeps repo lean
 ```
 
@@ -397,10 +401,17 @@ Each briefing follows §2. Worker A owns `src/parser.ts`; worker B owns `src/ren
 
 ### 2. Coordinator spawns both workers
 
-Using the `spawn-agent` skill's file-reference pattern (see that skill for the full command), one call per worker. Then:
+Using the `spawn-agent` skill's file-reference pattern, one call per worker. Tag each with its §13 role so `twapp sessions` and later UI can distinguish implementer workers from the coordinator / reviewer:
 
 ```
-twapp sessions                                   # both instances appear
+twapp work --name worker-a --role implementer --from-file /tmp/collab/briefings/worker-a.md
+twapp work --name worker-b --role implementer --from-file /tmp/collab/briefings/worker-b.md
+```
+
+`--from-file` auto-sets `provenance=spawned` — no need to pass `--spawned` alongside it. Then:
+
+```
+twapp sessions                                   # both instances appear, role column shows [impl] spawned
 ls /tmp/collab/mailbox/inbox/ | grep -E "worker-a|worker-b"
 ```
 
@@ -438,13 +449,13 @@ gh pr merge <N> --merge --delete-branch
 Each worker posts its offboard message (§7a) and archives its read mail. The coordinator acknowledges in the mailbox, then:
 
 ```
-kill -TERM $(pgrep -f "twapp --name worker-a")
-kill -TERM $(pgrep -f "twapp --name worker-b")
+twapp stop --name worker-a
+twapp stop --name worker-b
 git worktree remove /path/to/worker-a-worktree
 git worktree remove /path/to/worker-b-worktree
 ```
 
-(When `twapp stop --name <handle>` lands in a related PR, prefer it over `kill -TERM`.)
+`twapp stop` SIGTERMs the host and the child Claude; add `--force` to escalate to SIGKILL if the host didn't exit within ~3s.
 
 ### 7. Coordinator stays alive
 
