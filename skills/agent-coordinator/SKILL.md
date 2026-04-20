@@ -73,6 +73,18 @@ Why each section earns its place:
 - **Worktree** — copy-paste beats improvisation; workers that improvise their worktree path get lost.
 - **Domain facts** — how you avoid the class of bug where an agent silently misinterprets units, multipliers, field semantics, or ownership boundaries.
 
+### Model selection when spawning workers
+
+Every briefing implicitly picks a model — either explicitly, via `twapp work --model <name>` on the spawn command, or implicitly, by falling through to the provider's default. Coordinators should match the model tier to the scope cost:
+
+- **haiku** for plumbing, docs, small mechanical PRs.
+- **sonnet** (default) for most implementation work.
+- **opus** for design audits, cross-cutting synthesis, and high-stakes correctness work.
+
+Pass `--model` at spawn time; the flag is pass-through to the provider CLI and twapp does not validate the name. See the [`spawn-agent`](../spawn-agent/SKILL.md#model-selection) skill's "Model selection" subsection for per-tier guidance, the `twapp models list` output shape, and how to refresh the known-models cache. Don't duplicate that content here — if the guidance drifts, update it in spawn-agent and link.
+
+Budget note: un-pinned spawns inherit the user's global default. For a batch of workers of mixed scope, pin each one explicitly so a default swap (e.g. user switching to opus while debugging) doesn't silently re-cost the whole batch.
+
 ## 3. Mailbox protocol
 
 A plain-directory mailbox is the coordination bus. No database, no service — just files you can `ls`, `grep`, and `mv`.

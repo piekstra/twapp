@@ -139,6 +139,138 @@ pub fn shell_escape_single(text: &str) -> String {
     text.replace('\'', "'\\''")
 }
 
+/// Build the shell command that `twapp work` will execute to launch a claude
+/// session. `model`, when set, is pass-through inserted as `--model <name>`.
+/// `fork_session_id` indicates a resume-with-fork spawn; when set and
+/// `claude_cwd != work_dir_str`, the command is prefixed with `cd '<dir>' && `.
+pub fn build_claude_run_command(
+    session_id: &str,
+    fork_session_id: Option<&str>,
+    model: Option<&str>,
+    claude_cwd: &str,
+    work_dir_str: &str,
+    chrome: bool,
+) -> String {
+    let chrome_flag = if chrome { " --chrome" } else { "" };
+    let model_flag = match model {
+        Some(m) if !m.is_empty() => format!(" --model '{}'", shell_escape_single(m)),
+        _ => String::new(),
+    };
+
+    match fork_session_id {
+        Some(old_id) => {
+            let cd_prefix = if claude_cwd != work_dir_str {
+                format!("cd '{}' && ", shell_escape_single(claude_cwd))
+            } else {
+                String::new()
+            };
+            format!(
+                "{}claude{} --resume {} --fork-session --session-id {}{}",
+                cd_prefix, model_flag, old_id, session_id, chrome_flag
+            )
+        }
+        None => format!(
+            "claude{} --session-id {}{}",
+            model_flag, session_id, chrome_flag
+        ),
+    }
+}
+
+/// Build the shell command that `twapp work` will execute to launch a codex
+/// session. Codex takes a model via `-c model='<name>'` config override.
+pub fn build_codex_run_command(
+    work_dir_str: &str,
+    model: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> String {
+    let model_flag = match model {
+        Some(m) if !m.is_empty() => format!(" -c model='{}'", shell_escape_single(m)),
+        _ => String::new(),
+    };
+    let prompt_arg = match initial_prompt {
+        Some(p) if !p.is_empty() => format!(" '{}'", shell_escape_single(p)),
+        _ => String::new(),
+    };
+    format!(
+        "codex{} -C '{}'{}",
+        model_flag,
+        shell_escape_single(work_dir_str),
+        prompt_arg
+    )
+}
+
+#[cfg(test)]
+mod command_build_tests {
+    use super::*;
+
+    #[test]
+    fn model_flag_threads_through_to_claude_invocation() {
+        let cmd = build_claude_run_command(
+            "abc-123",
+            None,
+            Some("claude-sonnet-4-6"),
+            "/tmp/wd",
+            "/tmp/wd",
+            false,
+        );
+        assert!(
+            cmd.contains("--model 'claude-sonnet-4-6'"),
+            "claude invocation should contain --model flag, got: {}",
+            cmd
+        );
+        assert!(cmd.contains("--session-id abc-123"));
+    }
+
+    #[test]
+    fn claude_invocation_omits_model_when_unset() {
+        let cmd = build_claude_run_command(
+            "abc-123",
+            None,
+            None,
+            "/tmp/wd",
+            "/tmp/wd",
+            false,
+        );
+        assert!(
+            !cmd.contains("--model"),
+            "unset model should leave --model out, got: {}",
+            cmd
+        );
+    }
+
+    #[test]
+    fn model_flag_threads_through_fork_resume() {
+        let cmd = build_claude_run_command(
+            "new-id",
+            Some("old-id"),
+            Some("opus"),
+            "/tmp/other",
+            "/tmp/wd",
+            true,
+        );
+        assert!(cmd.contains("cd '/tmp/other' &&"));
+        assert!(cmd.contains("claude --model 'opus' --resume old-id --fork-session --session-id new-id --chrome"),
+            "unexpected fork-resume shape: {}", cmd);
+    }
+
+    #[test]
+    fn model_flag_threads_through_to_codex_invocation() {
+        let cmd = build_codex_run_command("/tmp/wd", Some("o3"), None);
+        assert!(
+            cmd.contains("-c model='o3'"),
+            "codex invocation should contain -c model='...', got: {}",
+            cmd
+        );
+        assert!(cmd.contains("-C '/tmp/wd'"));
+    }
+
+    #[test]
+    fn codex_invocation_omits_model_when_unset() {
+        let cmd = build_codex_run_command("/tmp/wd", None, None);
+        assert!(!cmd.contains("-c model="));
+    }
+}
+
 pub fn count_codex_conversation_messages(session_id: &str) -> Option<u32> {
     let history_path = dirs::home_dir()?.join(".codex/history.jsonl");
     if !history_path.exists() {

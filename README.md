@@ -479,12 +479,83 @@ Without these checks, the spawned terminal would appear to launch fine and
 then silently fail inside the new window — a painful debug loop when
 automating spawns.
 
+## Model selection
+
+`twapp work --model <name>` pass-through sets the model on the spawned
+provider CLI. When unset, twapp does **not** pass `--model` and the
+provider's own default applies (e.g. the Claude CLI's global
+`ANTHROPIC_MODEL` or user config).
+
+```bash
+# Pin a spawned worker to a specific Claude model.
+twapp work --name plumbing-worker \
+  --from-file /path/to/briefing.md \
+  --model claude-haiku-4-5-20251001
+
+# Use the tier alias for the latest model of that tier.
+twapp work --name design-worker --from-file /path/to/briefing.md --model opus
+```
+
+twapp does **not** validate the model name — pass-through means the
+provider CLI rejects unknown names at spawn time. For claude, the value
+is forwarded as `--model <name>`; for codex, as `-c model='<name>'`
+(a TOML config override). The `twapp resume` command intentionally does
+not accept `--model` — a resumed session keeps whatever model the
+original spawn picked.
+
+### Discovering available models
+
+```bash
+# Three-column table: NAME / TIER / DESCRIPTION.
+twapp models list
+
+# Different provider (defaults to claude).
+twapp models list --provider claude
+
+# Machine-readable output for scripts.
+twapp models list --format json
+
+# Refresh the cache from the provider's models endpoint.
+# For claude, requires ANTHROPIC_API_KEY in the environment.
+ANTHROPIC_API_KEY=sk-ant-... twapp models refresh
+```
+
+`twapp models list` reads a cache at
+`~/.config/twapp/models.<provider>.json` if present, or falls back to a
+bundled default list shipped with the binary.
+
+> **Caveat:** the bundled default is a snapshot of the Claude model
+> family at build time. `twapp models refresh` is the authoritative
+> source — run it whenever you want a current view of available models.
+> The cache always takes precedence over the bundled default.
+
+`twapp models refresh` currently supports `--provider claude` (calls
+`https://api.anthropic.com/v1/models` with `x-api-key` and
+`anthropic-version: 2023-06-01`). For codex, edit the cache file by
+hand; a refresh verb will land when the upstream CLI exposes a listing
+endpoint.
+
+### Picking a tier when spawning workers
+
+- **haiku** — plumbing, doc edits, simple refactors, CLI scaffolding.
+- **sonnet** — default for most implementation work; good balance of
+  capability and cost.
+- **opus** — design audits, cross-cutting synthesis, high-stakes
+  correctness work where the model's reasoning is load-bearing.
+
+Match the model to the scope cost. Sending a one-line dependency bump
+to opus burns budget; sending a complex architecture audit to haiku
+burns iteration.
+
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
 | `twapp work <ticket\|--name>` | Start a new work session using the configured provider |
 | `twapp work --from-file <path>` | Spawn a session whose prompt is `Read <path> and execute.` (safer than `--run` for long prompts) |
+| `twapp work --model <name>` | Pass-through model selection; forwarded to the provider CLI (claude: `--model`, codex: `-c model='…'`) |
+| `twapp models list [--provider <p>] [--format json]` | Show known models for the provider (cache if present, else bundled default) |
+| `twapp models refresh [--provider <p>]` | Re-populate the provider cache from the models endpoint (claude: `ANTHROPIC_API_KEY` required) |
 | `twapp stop --name <name> [--force]` | Gracefully stop a running session (SIGTERM, optional SIGKILL escalation) |
 | `twapp resume [--fork]` | Resume or fork the current session using the configured provider |
 | `twapp sessions` | List all sessions with activity timestamps |

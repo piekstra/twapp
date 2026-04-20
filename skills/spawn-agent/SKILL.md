@@ -45,6 +45,49 @@ Notes:
 - The `Read <path> and execute.` wrapper is deliberately short — every character is literal text the shell must carry intact to Claude. Keep what's in the markdown file.
 - Treat the briefing file as the contract. Put acceptance criteria, protocol, and a handle name in it. Don't try to squeeze those into `--run`.
 
+## Model selection
+
+Pair `--from-file` with `--model <name>` to pin the spawned agent to a specific model. Match the tier to the scope cost so cheap plumbing PRs don't burn opus-level inference and complex design audits don't hit capability ceilings on haiku.
+
+```bash
+twapp work --name plumbing-worker --from-file /abs/path/brief.md --model claude-haiku-4-5-20251001
+twapp work --name impl-worker     --from-file /abs/path/brief.md --model claude-sonnet-4-6
+twapp work --name design-worker   --from-file /abs/path/brief.md --model opus
+```
+
+twapp does not validate the model name — the provider CLI rejects unknown names at spawn time. When `--model` is omitted, the provider's own default wins (e.g. the Claude CLI's `ANTHROPIC_MODEL` env var or user config).
+
+### When to pick which tier
+
+- **haiku** — plumbing, doc touch-ups, one-line dependency bumps, CLI scaffolding, mechanical refactors with tests already in place. Anything where correctness is obvious on inspection.
+- **sonnet** — default for implementation work. Non-trivial feature code, most bug fixes, test writing, reviewer roles. Good capability/cost balance.
+- **opus** — design audits, cross-cutting synthesis, high-stakes correctness work (money, safety, concurrency), architect and innovator roles producing RFCs. Reserve for scope that actually benefits from the extra reasoning.
+
+### Discovering available models
+
+Before pinning a specific name, run:
+
+```bash
+twapp models list
+```
+
+Sample output (bundled default on a fresh install):
+
+```
+NAME                       TIER    DESCRIPTION
+claude-opus-4-7            opus    Most capable Claude model; use for design audits and complex synthesis.
+claude-sonnet-4-6          sonnet  Strong general-purpose Claude model; default for most implementation work.
+claude-haiku-4-5-20251001  haiku   Fast and inexpensive Claude model; use for plumbing and simple edits.
+opus                       opus    Alias: latest opus-tier Claude model.
+sonnet                     sonnet  Alias: latest sonnet-tier Claude model.
+haiku                      haiku   Alias: latest haiku-tier Claude model.
+(source: bundled)
+```
+
+The `opus`/`sonnet`/`haiku` aliases resolve to the latest model in that tier — handy for briefings that shouldn't pin to a specific snapshot. Use explicit dated names (e.g. `claude-haiku-4-5-20251001`) when you need reproducibility.
+
+The bundled list is a snapshot — run `ANTHROPIC_API_KEY=… twapp models refresh` to pull the current list into `~/.config/twapp/models.claude.json`. The cache takes precedence over the bundled default.
+
 ## Worktree permission pre-approval
 
 A freshly spawned Claude instance reads `.claude/settings.local.json` from its working directory at startup. If that file isn't there, the first tool call blocks on an interactive permission prompt — which is a disaster for a background worker because nobody is there to answer.

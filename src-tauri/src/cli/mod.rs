@@ -1,5 +1,6 @@
 pub mod app_bundle;
 pub mod config;
+pub mod models;
 pub mod monitor;
 pub mod msg;
 pub mod notes;
@@ -12,12 +13,12 @@ pub mod ticket;
 
 use clap::Subcommand;
 use msg::MsgCommands;
-use session::{AgentProvider, shell_escape_single};
+use session::{AgentProvider, build_claude_run_command, build_codex_run_command, shell_escape_single};
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
-    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
+    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work --name worker --model sonnet                Pin the spawned agent to a specific model\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
     Work {
         /// Ticket ID (e.g. MON-1234, 1234, owner/repo#123)
         ticket: Option<String>,
@@ -31,6 +32,11 @@ pub enum Commands {
         /// long prompts with special characters. Path must exist at spawn time.
         #[arg(long)]
         from_file: Option<String>,
+        /// Model name passed through to the provider CLI (claude: `--model`,
+        /// codex: `-c model='<name>'`). twapp does not validate the name —
+        /// the provider CLI rejects unknown models. See `twapp models list`.
+        #[arg(long)]
+        model: Option<String>,
         /// Force GitHub issue lookup
         #[arg(long, short = 'g')]
         github: bool,
@@ -145,6 +151,18 @@ pub enum Commands {
     Msg {
         #[command(subcommand)]
         command: MsgCommands,
+    },
+    /// Inspect or refresh the provider model cache used by --model.
+    ///
+    /// `twapp models list` reads a cached list of known models for the
+    /// provider (falls back to a bundled default on fresh installs).
+    /// `twapp models refresh` re-populates the cache from the provider's
+    /// models endpoint. twapp does not maintain an authoritative list —
+    /// refresh is the source of truth.
+    #[command(after_help = "Examples:\n  twapp models list                         Show known claude models (cache or bundled fallback)\n  twapp models list --provider codex        Show the codex list (empty until you seed the cache)\n  twapp models list --format json           Machine-readable output\n  twapp models refresh                      Pull current list from the Anthropic models endpoint")]
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommands,
     },
     /// Generate shell completions
     #[command(name = "completions")]
@@ -269,6 +287,25 @@ pub enum PromptCommands {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum ModelsCommands {
+    /// List known models for the provider (cache if present, else bundled default).
+    List {
+        /// Provider to inspect (default: claude)
+        #[arg(long, default_value = "claude")]
+        provider: String,
+        /// Output format: defaults to a three-column table; `json` prints the raw cache shape.
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Re-populate the provider model cache from the provider's models endpoint.
+    Refresh {
+        /// Provider to refresh (default: claude). Requires ANTHROPIC_API_KEY for claude.
+        #[arg(long, default_value = "claude")]
+        provider: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum PermissionCommands {
     /// Show default permissions
     List,
@@ -297,11 +334,12 @@ pub fn run(cmd: Commands) -> i32 {
             name,
             run,
             from_file,
+            model,
             github,
             session_id: fork_session_id,
             claude_cwd,
             chrome,
-        } => cmd_work(ticket, name, run, from_file, github, fork_session_id, claude_cwd, chrome),
+        } => cmd_work(ticket, name, run, from_file, model, github, fork_session_id, claude_cwd, chrome),
         Commands::Stop { name, force } => stop::cmd_stop(&name, force),
         Commands::Resume { fork } => cmd_resume(fork),
         Commands::Sessions { path } => cmd_sessions(path),
@@ -409,6 +447,10 @@ pub fn run(cmd: Commands) -> i32 {
                 for_handle, since, priority, thread, channel, mark_read, limit, format, all,
             ),
         },
+        Commands::Models { command } => match command {
+            ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
+            ModelsCommands::Refresh { provider } => models::cmd_refresh(provider),
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(
                 shell,
@@ -457,11 +499,16 @@ pub fn format_session_name(key: &str, title: &str) -> String {
     result
 }
 
-/// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session)
+/// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session).
+///
+/// `model`, when set, is pass-through inserted into the spawned provider
+/// invocation (claude: `--model <name>`, codex: `-c model='<name>'`).
+/// twapp does not validate the name.
 pub fn create_session_core(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
+    model: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -584,35 +631,30 @@ pub fn create_session_core(
     };
     session::write_session(&work_dir, &session_data)?;
 
-    let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = if let Some(ref custom) = run_command {
         custom.clone()
     } else if provider == AgentProvider::Codex {
-        format!(
-            "codex -C '{}'{}",
-            shell_escape_single(&work_dir.to_string_lossy()),
-            if let Some(ref ti) = ticket_info {
-                if dir_already_existed {
-                    format!(" '{}'", shell_escape_single(&format!("I'm working on {}: {}.", ti.key, ti.title)))
-                } else {
-                    String::new()
-                }
+        let initial_prompt = ticket_info.as_ref().and_then(|ti| {
+            if dir_already_existed {
+                Some(format!("I'm working on {}: {}.", ti.key, ti.title))
             } else {
-                String::new()
+                None
             }
-        )
-    } else if let Some(ref old_id) = fork_session_id {
-        let cd_prefix = if claude_cwd != work_dir.to_string_lossy() {
-            format!("cd '{}' && ", claude_cwd.replace('\'', "'\\''"))
-        } else {
-            String::new()
-        };
-        format!(
-            "{}claude --resume {} --fork-session --session-id {}{}",
-            cd_prefix, old_id, session_id, chrome_flag
+        });
+        build_codex_run_command(
+            &work_dir.to_string_lossy(),
+            model.as_deref(),
+            initial_prompt.as_deref(),
         )
     } else {
-        format!("claude --session-id {}{}", session_id, chrome_flag)
+        build_claude_run_command(
+            &session_id,
+            fork_session_id.as_deref(),
+            model.as_deref(),
+            &claude_cwd,
+            &work_dir.to_string_lossy(),
+            chrome,
+        )
     };
 
     let prefill = if let Some(ref ti) = ticket_info {
@@ -669,6 +711,7 @@ fn cmd_work(
     session_name: Option<String>,
     run_command: Option<String>,
     from_file: Option<String>,
+    model: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -727,7 +770,7 @@ fn cmd_work(
         return 1;
     }
 
-    let result = match create_session_core(ticket_id, session_name, effective_run, github, fork_session_id, claude_cwd_arg, chrome) {
+    let result = match create_session_core(ticket_id, session_name, effective_run, model, github, fork_session_id, claude_cwd_arg, chrome) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
