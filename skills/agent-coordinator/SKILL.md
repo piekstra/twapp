@@ -299,6 +299,79 @@ A PR with an explicit "Ship it" review that has not merged after ~20 minutes is 
 
 Always diagnose before spawning a replacement — duplicate work across two agents on the same branch is worse than a brief delay.
 
+## 8.5. N-worker coordination via lane claims
+
+When 2+ workers pull from the same shared queue — reviewers on a PR
+list, auditors on a backlog, implementers on a prioritized task list —
+nothing in the mailbox alone stops two of them from picking the same
+item. `twapp msg claim` / `release` adds that coordination primitive.
+
+### Mechanics
+
+- `twapp msg claim <lane-id> --note "<what I'm doing>"` — atomic-mkdir
+  race resolver. Exits 0 on a fresh claim or a stale-reclaim; exits 1
+  if the lane is already claimed by a live worker.
+- `twapp msg release <lane-id> --note "<done>"` — writes
+  `released.json` into the claim directory. The directory stays in
+  place as an audit trail; the next claim re-archives it.
+- `twapp msg claim --list [--lane-prefix PR-] [--format json]` — print
+  all active (unreleased, unstale) claims.
+
+Every claim / reclaim / release emits a `to: [all]` broadcast into the
+mailbox inbox so the event shows up in the normal message flow — the
+"I got this, do you ack?" handshake is visible to humans and other
+agents at the same time as the on-disk lock.
+
+### Reviewer-race example
+
+Before reviewing PR #N:
+
+```bash
+# Before starting work on PR #N
+if twapp msg claim PR-$N --note "reviewing"; then
+  # Exit 0 → we got the lane. Proceed with review.
+  gh pr view $N
+  # ...post review comments...
+  twapp msg release PR-$N --note "review posted"
+else
+  # Exit 1 → another reviewer has it. Skip and poll the next PR.
+  continue
+fi
+```
+
+Same shape for any N-worker queue: *claim, work, release.* Losing the
+claim race is a normal outcome — not an error; skip and move on.
+
+### Stale-claim recovery
+
+If `owner.json` is older than `--stale-seconds` (default 600) and no
+`released.json` has appeared, the claim is considered stale — the owner
+likely crashed, was force-killed, or wedged. Any worker may force a
+re-claim; the new `owner.json` records `reclaimed_from: <previous-
+owner>` and a reclaim broadcast posts to the mailbox so the
+coordinator and humans see it happened.
+
+Set `--stale-seconds` a bit larger than the worker's own idle poll
+interval (90-120s per this skill's mailbox protocol) — otherwise a busy
+worker can be reclaimed mid-task by a peer who thinks it's dormant.
+
+### Briefing instructions for consumers
+
+When briefing a worker whose job is to pull from a shared queue, add a
+concrete claim/release loop under `## Protocol`:
+
+```
+- Before each item, run `twapp msg claim <lane-id> --note "<short>"`.
+  On exit 0 proceed; on exit 1 skip the item and poll the next.
+- After posting results, run `twapp msg release <lane-id> --note "<short>"`.
+- If your /loop polls infrequently, pass `--stale-seconds <N>` where N
+  is ≥ your poll interval so peers don't reclaim mid-task.
+```
+
+See [`docs/designs/worker-coordination.md`](../../docs/designs/worker-coordination.md)
+for the full design (atomic mkdir rationale, stale-reclaim semantics,
+audit-trail layout, out-of-scope list).
+
 ## 9. Merge order and cross-worker coordination
 
 When two PRs touch overlapping files:
