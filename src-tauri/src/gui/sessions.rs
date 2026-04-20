@@ -585,7 +585,7 @@ pub async fn create_and_launch_session(
     github: bool,
     chrome: bool,
 ) -> Result<(), String> {
-    let result = crate::cli::create_session_core(ticket, name, None, github, None, None, chrome)?;
+    let result = crate::cli::create_session_core(ticket, name, None, None, github, None, None, chrome)?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
