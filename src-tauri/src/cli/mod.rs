@@ -1,6 +1,7 @@
 pub mod app_bundle;
 pub mod config;
 pub mod monitor;
+pub mod msg;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
@@ -10,6 +11,7 @@ pub mod theme;
 pub mod ticket;
 
 use clap::Subcommand;
+use msg::MsgCommands;
 use session::{AgentProvider, shell_escape_single};
 
 #[derive(Subcommand, Debug)]
@@ -132,6 +134,17 @@ pub enum Commands {
     Rename {
         /// New session name
         name: String,
+    },
+    /// Send / fetch / broadcast messages in a shared filesystem mailbox.
+    ///
+    /// Writes fenced-frontmatter markdown into `<mailbox>/inbox/` and tolerates
+    /// both the new shape and bare legacy files on read. The mailbox directory
+    /// is taken from `TWAPP_MAILBOX_DIR` (preferred), or `TWAPP_SHARED_DIR/mailbox/`
+    /// as a fallback. See `docs/designs/agent-messaging.md`.
+    #[command(after_help = "Examples:\n  twapp msg send reviewer \"PR-1 is up\"\n  twapp msg broadcast --priority urgent \"merge freeze\"\n  twapp msg fetch --for reviewer --since 20260420T120000Z --limit 20")]
+    Msg {
+        #[command(subcommand)]
+        command: MsgCommands,
     },
     /// Generate shell completions
     #[command(name = "completions")]
@@ -361,6 +374,41 @@ pub fn run(cmd: Commands) -> i32 {
             }
         }
         Commands::Rename { name } => cmd_rename(&name),
+        Commands::Msg { command } => match command {
+            MsgCommands::Send {
+                to,
+                from,
+                priority,
+                subject,
+                thread,
+                reply_to,
+                cc,
+                channel,
+                body,
+            } => msg::cmd_send(
+                to, from, priority, subject, thread, reply_to, cc, channel, body,
+            ),
+            MsgCommands::Broadcast {
+                from,
+                priority,
+                subject,
+                channel,
+                body,
+            } => msg::cmd_broadcast(from, priority, subject, channel, body),
+            MsgCommands::Fetch {
+                for_handle,
+                since,
+                priority,
+                thread,
+                channel,
+                mark_read,
+                limit,
+                format,
+                all,
+            } => msg::cmd_fetch(
+                for_handle, since, priority, thread, channel, mark_read, limit, format, all,
+            ),
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(
                 shell,

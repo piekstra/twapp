@@ -349,6 +349,74 @@ The forked session gets a new twapp-managed session and carries Claude context f
 
 > Current limitation: unmanaged external import is Claude-only. Codex support currently targets twapp-managed sessions and provider switching inside twapp.
 
+## Messaging between sessions
+
+When you have more than one agent session working together — a spawned
+worker and its coordinator, a pair of implementers sharing a review queue,
+or a human driver coordinating several workers — a shared filesystem
+mailbox is a simple way to let them leave each other messages without
+leaving twapp.
+
+`twapp msg` is a thin wrapper over that convention: it drops
+fenced-frontmatter markdown files into a shared `inbox/` directory and
+reads them back. See [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md)
+for the full model. This release covers **PR-1** of that design — the
+CLI scaffolding for `send`, `broadcast`, and `fetch` against the current
+flat `inbox/` layout. Threading, directory split, cursors, priority
+lanes, presence, channels, and archive rotation all land in later PRs.
+
+### Configure the mailbox
+
+Set one of these (the first wins):
+
+```bash
+# Preferred: point directly at the mailbox root.
+export TWAPP_MAILBOX_DIR="$HOME/my-team-mailbox"
+
+# Alternative: point at a shared dir; the mailbox is <shared>/mailbox/.
+export TWAPP_SHARED_DIR="$HOME/my-team-shared"
+```
+
+Messages land in `<mailbox>/inbox/<YYYYMMDDTHHMMSSZ>-<id6>.md`.
+
+### Send, broadcast, fetch
+
+```bash
+# Direct message — `<to>` is required and can be comma-separated.
+twapp msg send reviewer "PR-1 is up, ready to review"
+twapp msg send a,b --priority urgent --subject "build broke" "see CI 1234"
+twapp msg send reviewer --cc coordinator,qa "heads up on scope change"
+
+# Replies inherit the parent's thread id and set in_reply_to.
+twapp msg send reviewer --reply-to 01JS4M7Q8W "ack, rebasing now"
+
+# Broadcast — writes to: [all], or to: [channel:<name>] with --channel.
+twapp msg broadcast "standup in 5"
+twapp msg broadcast --priority urgent --subject "merge freeze" "hold all PRs"
+twapp msg broadcast --channel reviewers-standby "anyone free for a pass?"
+
+# Fetch — by default, filters to the current session's handle if there is
+# a .twapp-session.json in the cwd. Pass --all to see everything.
+twapp msg fetch                              # for the current session
+twapp msg fetch --for reviewer
+twapp msg fetch --priority urgent
+twapp msg fetch --since 20260420T120000Z --limit 20
+twapp msg fetch --for reviewer --format json | jq
+```
+
+If `--from` is not passed, the sender handle is taken from the current
+directory's `.twapp-session.json` `name`. Bodies may be passed as a
+positional argument or piped in on stdin.
+
+### Reading legacy (bare) files
+
+`fetch` accepts both the new fenced-frontmatter shape and the older bare
+`from:` / `to:` / `re:` layout so inboxes don't need to be migrated
+wholesale — messages missing a frontmatter `id`, `thread`, or `priority`
+get synthetic defaults (routine priority, no thread, id derived from the
+filename). This keeps day-one upgrades unbreaking; directory split and
+layout migration live in later PRs.
+
 ## Spawning agent instances
 
 twapp works well as a terminal wrapper for *interactive* sessions, but it's
@@ -435,6 +503,9 @@ automating spawns.
 | `twapp monitor --status` | Show what's running |
 | `twapp monitor --logs` | Show log file and recent output |
 | `twapp permissions list\|add\|remove\|sync` | Manage default Claude permissions |
+| `twapp msg send <to> [body]` | Send a message (writes to the shared mailbox inbox) |
+| `twapp msg broadcast [body]` | Broadcast to every handle (`to: [all]`) |
+| `twapp msg fetch [--for <h>] [--since <ts>]` | List inbox messages, filtered |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |
 | `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |
