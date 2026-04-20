@@ -126,6 +126,52 @@ pub enum MsgCommands {
         /// Message body. Read from stdin if omitted.
         body: Option<String>,
     },
+    /// Claim a shared lane (PR, audit, backlog item) — atomic mkdir race resolver.
+    ///
+    /// Exits 0 on a fresh claim or a stale-reclaim. Exits 1 if the lane is
+    /// already claimed by a live worker. Emits a `to: [all]` broadcast into
+    /// the mailbox inbox so the event shows up in the normal message flow.
+    ///
+    /// See `docs/designs/worker-coordination.md` for the full design.
+    #[command(after_help = "Examples:\n  twapp msg claim PR-91 --note \"starting review\"\n  twapp msg claim audit-fees --stale-seconds 300\n  twapp msg claim --list\n  twapp msg claim --list --lane-prefix PR- --format json")]
+    Claim {
+        /// Lane id (e.g. PR-91, audit-fees, backlog-item-7). Required unless --list.
+        lane_id: Option<String>,
+        /// Sender handle. Defaults to the current .twapp-session.json name.
+        #[arg(long)]
+        from: Option<String>,
+        /// Note stored on the claim (and echoed in the broadcast).
+        #[arg(long)]
+        note: Option<String>,
+        /// Seconds before an unreleased claim is considered stale (default 600).
+        #[arg(long = "stale-seconds")]
+        stale_seconds: Option<u64>,
+        /// Print all active (unreleased, unstale) claims instead of claiming.
+        #[arg(long)]
+        list: bool,
+        /// When listing, restrict to lanes starting with this prefix.
+        #[arg(long = "lane-prefix")]
+        lane_prefix: Option<String>,
+        /// Output format for --list.
+        #[arg(long, value_enum, default_value_t = FetchFormat::Pretty)]
+        format: FetchFormat,
+    },
+    /// Release a previously-claimed lane.
+    ///
+    /// Writes `released.json` into the claim directory and broadcasts the
+    /// release. The directory is left in place as an audit trail; the next
+    /// claim attempt archives it under `<lane-id>.released-<ts>/`.
+    #[command(after_help = "Examples:\n  twapp msg release PR-91 --note \"review posted\"\n  twapp msg release audit-fees")]
+    Release {
+        /// Lane id to release (must match a live claim owned by --from).
+        lane_id: String,
+        /// Sender handle. Defaults to the current .twapp-session.json name.
+        #[arg(long)]
+        from: Option<String>,
+        /// Note stored on the release (and echoed in the broadcast).
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// List messages from the mailbox inbox
     #[command(after_help = "Examples:\n  twapp msg fetch --for reviewer\n  twapp msg fetch --priority urgent\n  twapp msg fetch --since 20260420T180000Z --limit 10\n  twapp msg fetch --for reviewer --format json")]
     Fetch {

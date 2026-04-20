@@ -217,6 +217,32 @@ sleep 3 && kill -KILL $(pgrep -f 'twapp --name my-agent') 2>/dev/null
 
 Have the agent post an "offboard" message to the mailbox right before it exits, so callers can confirm the shutdown was clean and not a crash.
 
+## Coordinating N workers on a shared queue
+
+When you spawn two or more workers that pull from the same list —
+reviewers against a PR queue, auditors against a backlog, implementers
+against a prioritized task file — use `twapp msg claim` / `release`
+before each item so simultaneous workers don't grab the same one. The
+primitive is atomic (POSIX `mkdir`), emits a `to: [all]` broadcast for
+auditability, and recovers stale claims automatically.
+
+```bash
+# In each worker's briefing, before picking up an item:
+if twapp msg claim <lane-id> --note "starting"; then
+  # Exit 0 → proceed. Do the work.
+  twapp msg release <lane-id> --note "done"
+else
+  # Exit 1 → another worker has this lane. Skip and poll the next.
+  continue
+fi
+```
+
+Full pattern — reviewer-race example, stale-reclaim semantics, `--list`
+output, and briefing-template language — lives in the
+[`agent-coordinator`](../agent-coordinator/SKILL.md#85-n-worker-coordination-via-lane-claims)
+skill. See also [`docs/designs/worker-coordination.md`](../../docs/designs/worker-coordination.md)
+for the full design.
+
 ## Common pitfalls
 
 - **Missing `--cwd` when `--run` assumes a different directory.** Either pass `--cwd` to twapp or prefix `--run` with `cd /path && ...`. Don't assume the caller's shell cwd.

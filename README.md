@@ -417,6 +417,42 @@ get synthetic defaults (routine priority, no thread, id derived from the
 filename). This keeps day-one upgrades unbreaking; directory split and
 layout migration live in later PRs.
 
+### Lane claims — coordinating N workers on a shared queue
+
+When two or more sessions pull from the same list — reviewers against a
+PR queue, auditors against a backlog, implementers pulling from a
+prioritized task file — `twapp msg claim` / `release` adds an atomic
+"I got this" step before the work, so simultaneous workers don't
+double-up on the same item. The primitive is a POSIX-atomic `mkdir`
+into `<mailbox>/claims/<lane-id>/`, an `owner.json` written
+(tmp+rename) inside, and a `to: [all]` broadcast into the inbox so the
+event shows up in the normal message flow.
+
+```bash
+# Before each item: atomic claim. Exit 0 → proceed; exit 1 → skip.
+if twapp msg claim PR-91 --note "reviewing"; then
+  gh pr view 91
+  # ...post review...
+  twapp msg release PR-91 --note "review posted"
+fi
+
+# Who's working on what?
+twapp msg claim --list
+twapp msg claim --list --lane-prefix PR- --format json | jq
+
+# Stale-reclaim threshold (default 10 min). Match to your poll interval
+# so a busy peer isn't reclaimed mid-task.
+twapp msg claim audit-fees --stale-seconds 300
+```
+
+Only the current owner may release a lane. A claim whose `owner.json`
+is older than `--stale-seconds` and has no `released.json` is
+considered stale — any worker may force a re-claim, and the new owner
+records `reclaimed_from: <previous>` for the audit trail. See
+[`docs/designs/worker-coordination.md`](docs/designs/worker-coordination.md)
+for the full design (atomic-mkdir rationale, stale semantics, and
+what's out of scope).
+
 ## Spawning agent instances
 
 twapp works well as a terminal wrapper for *interactive* sessions, but it's
@@ -577,6 +613,9 @@ burns iteration.
 | `twapp msg send <to> [body]` | Send a message (writes to the shared mailbox inbox) |
 | `twapp msg broadcast [body]` | Broadcast to every handle (`to: [all]`) |
 | `twapp msg fetch [--for <h>] [--since <ts>]` | List inbox messages, filtered |
+| `twapp msg claim <lane-id> [--note <s>]` | Atomically claim a shared lane (PR, audit, backlog item); exit 1 if already claimed |
+| `twapp msg release <lane-id> [--note <s>]` | Release a lane you own; writes `released.json` and broadcasts the release |
+| `twapp msg claim --list [--lane-prefix <p>]` | List all active (unreleased, unstale) claims; `--format json` for machine-readable |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |
 | `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |
