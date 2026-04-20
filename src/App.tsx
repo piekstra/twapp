@@ -16,7 +16,7 @@ import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
-import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode } from "./types";
+import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
@@ -47,6 +47,9 @@ function App() {
   const fitAddon = useRef<FitAddon | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
+  // Session history audit log (.twapp-session-history.json) — compact / clear / manual_edit events.
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryEvent[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
@@ -186,6 +189,14 @@ function App() {
         notesLoaded.current = true;
       })
       .catch(console.error);
+  };
+
+  const loadSessionHistory = (cwd?: string | null) => {
+    const directory = cwd ?? appConfig?.cwd;
+    if (!directory) return;
+    invoke<SessionHistoryEvent[]>("get_session_history", { directory })
+      .then((events) => setSessionHistory(events ?? []))
+      .catch(() => setSessionHistory([]));
   };
 
   const reloadPrompts = () => {
@@ -580,6 +591,7 @@ function App() {
       // Load persisted notes and prompts
       reloadNotes();
       reloadPrompts();
+      loadSessionHistory(config.cwd);
 
       // Fetch ticket info if available
       invoke<TicketInfo | null>("get_ticket_info")
@@ -1143,6 +1155,8 @@ function App() {
         setAppConfig((prev) => prev ? { ...prev, session_id: args.session_id } : prev);
       }
       setSessionFieldsOriginal({ ...sessionFields });
+      // A session_id change writes a `manual_edit` audit entry — refresh.
+      loadSessionHistory();
     } catch (err) {
       setSessionFieldsError(String(err));
     } finally {
@@ -2269,6 +2283,15 @@ function App() {
               </button>
             </div>
           )}
+          {sessionHistory.length > 0 && (
+            <button
+              className="compaction-indicator"
+              onClick={() => setHistoryOpen(true)}
+              title="View session history"
+            >
+              Compactions ({sessionHistory.filter((e) => e.event === "compacted" || e.event === "cleared").length})
+            </button>
+          )}
         </div>
 
         {/* Fork Dialog */}
@@ -2846,6 +2869,64 @@ function App() {
                 </div>
               ) : (
                 <pre className="file-preview-code">{previewFile?.content}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session History Modal */}
+      {historyOpen && (
+        <div className="config-overlay" onClick={() => setHistoryOpen(false)}>
+          <div className="config-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="config-header">
+              <span className="config-title">Session History</span>
+              <button className="config-close" onClick={() => setHistoryOpen(false)}>&times;</button>
+            </div>
+            <div className="config-body">
+              {sessionHistory.length === 0 ? (
+                <div className="history-empty">No history events yet.</div>
+              ) : (
+                <div className="history-list">
+                  {[...sessionHistory].reverse().map((ev, idx) => (
+                    <div className="history-item" key={idx}>
+                      <div className="history-item-header">
+                        <span className={`history-badge history-badge-${ev.event}`}>
+                          {ev.event === "manual_edit" ? "edited" : ev.event}
+                        </span>
+                        {ev.ambiguous && (
+                          <span
+                            className="history-badge history-badge-ambiguous"
+                            title="Adopted without a chain-of-descent signal — user-confirmed."
+                          >
+                            ambiguous
+                          </span>
+                        )}
+                        <span className="history-timestamp">
+                          {new Date(ev.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="history-ids">
+                        <span className="history-id-label">from</span>
+                        <code
+                          className="history-id"
+                          title={ev.old_session_id ? `${ev.old_session_id}\n(click to copy)` : "(none)"}
+                          onClick={() => ev.old_session_id && navigator.clipboard.writeText(ev.old_session_id)}
+                        >
+                          {ev.old_session_id ? ev.old_session_id.slice(0, 8) : "(none)"}
+                        </code>
+                        <span className="history-id-label">&rarr;</span>
+                        <code
+                          className="history-id"
+                          title={ev.new_session_id ? `${ev.new_session_id}\n(click to copy)` : "(none)"}
+                          onClick={() => ev.new_session_id && navigator.clipboard.writeText(ev.new_session_id)}
+                        >
+                          {ev.new_session_id ? ev.new_session_id.slice(0, 8) : "(none)"}
+                        </code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
