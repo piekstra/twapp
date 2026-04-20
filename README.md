@@ -349,42 +349,197 @@ The forked session gets a new twapp-managed session and carries Claude context f
 
 > Current limitation: unmanaged external import is Claude-only. Codex support currently targets twapp-managed sessions and provider switching inside twapp.
 
-## Messaging between sessions
+## co-lab: multi-agent coordination on twapp
+
+If you only ever run one terminal at a time, `twapp work` is all you need
+— the rest of this section is optional. Once you start spawning a second
+Claude (or Codex) instance to help the first — implementer + reviewer,
+coordinator + workers, audit + research — twapp grows a small set of
+conventions that keep the pieces straight. Collectively, those
+conventions are **co-lab**.
+
+co-lab is not a separate product and it is not a new CLI namespace. There
+is no `twapp colab <verb>`. It's the same `twapp work`, `twapp stop`, and
+`twapp msg` verbs used with a handful of shared patterns: a filesystem
+mailbox for messaging, briefings for prepared worker prompts, role tags
+on sessions, and a coordinator session that supervises the fleet.
+
+If you're reading top-to-bottom for the first time and single-session use
+is all you need, skip ahead to the [CLI Reference](#cli-reference) and
+come back if you ever want to coordinate multiple agents. Otherwise, the
+subsections below walk through each piece.
+
+### How co-lab works
+
+A typical co-lab flow:
+
+1. A **coordinator** session writes a briefing file for each worker — a
+   markdown file that spells out the goal, the protocol, and the
+   out-of-scope carve-outs.
+2. The coordinator spawns each worker with `twapp work --from-file
+   <briefing>`. Every worker runs in its own twapp session (own window,
+   own working directory or git worktree).
+3. Workers and the coordinator talk through a shared **mailbox** — a
+   plain directory on disk that every participant can `ls`, `grep`, and
+   `mv`. `twapp msg send`, `twapp msg broadcast`, and `twapp msg fetch`
+   are the CLI entry points.
+4. Each session carries a **role tag** (`coordinator`, `implementer`,
+   `reviewer`, etc.) so `twapp sessions` and the launcher can tell a
+   worker from a supervisor at a glance.
+5. When a worker finishes, it posts an offboard message and the
+   coordinator cleans up the twapp host and worktree.
+
+```
+┌──────────────┐        mailbox/inbox/          ┌────────────┐
+│ coordinator  │── briefings/worker-a.md ────▶│  worker-a  │
+│              │◀── 20260420T1501Z-hello ─────│            │
+│              │── 20260420T1530Z-rebase ────▶│            │
+│              │                                 └────────────┘
+│              │── briefings/worker-b.md ────▶┌────────────┐
+│              │                                 │  worker-b  │
+└──────────────┘                                 └────────────┘
+```
+
+The rest of this section covers each piece of that flow.
+
+### Spawning a worker agent
+
+twapp works well as a terminal wrapper for *interactive* sessions, but
+it's also handy for spawning long-running agent or worker instances —
+kicking off a Claude instance that reads a briefing file and runs to
+completion on its own.
+
+```bash
+# 1. Spawn a worker that reads a briefing file and executes it.
+twapp work --name "worker-a" \
+  --from-file /path/to/briefings/worker-a.md
+
+# 2. Later, gracefully shut it down when the work is done.
+twapp stop --name "worker-a"
+
+# 3. If the graceful shutdown doesn't land, escalate to SIGKILL.
+twapp stop --name "worker-a" --force
+```
+
+See the [`spawn-agent`](skills/spawn-agent/SKILL.md) skill for the full
+playbook — briefing shape, worktree permission seeding,
+hello-within-2-min verification, and shutdown.
+
+#### `--from-file` vs `--run`
+
+`--run` works for short, simple commands, but shell quoting becomes
+fragile when the embedded prompt is long or contains
+Unicode/backticks/quotes. Prefer `--from-file` whenever the prompt is
+longer than ~100 characters or contains special characters: twapp
+resolves the path to an absolute path, verifies it exists *before*
+spawning the terminal, and wraps the prompt as
+`claude --dangerously-skip-permissions 'Read <abs-path> and execute.'`.
+
+This keeps the caller side simple — just write the prompt into a
+markdown file and point twapp at it. Nothing to escape.
+
+#### Pre-approving bypass permissions
+
+Agents spawned via `--from-file` typically want to run without permission
+prompts. Seed a per-worktree
+[`.claude/settings.local.json`](https://docs.anthropic.com/en/docs/claude-cli/settings)
+in the directory your worker will run in:
+
+```json
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": ["Bash(*)", "Write(**)", "Edit(**)", "Read(**)"]
+  }
+}
+```
+
+Adjust the allow list to fit your threat model. twapp itself doesn't
+touch this file — it's read by Claude on startup.
+
+#### Pre-flight checks
+
+`twapp work` fails fast (before spawning the terminal) when:
+
+- `--from-file <path>` points at a file that doesn't exist (exit **2**).
+- `--claude-cwd <dir>` points at a directory that doesn't exist (exit **3**).
+- `--run` starts with `cd <dir> && ...` and `<dir>` doesn't exist (exit **3**).
+
+Without these checks, the spawned terminal would appear to launch fine
+and then silently fail inside the new window — a painful debug loop when
+automating spawns.
+
+### Bootstrapping a coordinator
+
+> **Coming in [#44](https://github.com/piekstra/twapp/pull/44).** That
+> PR adds `twapp coordinator launch` and `twapp coordinator claim`,
+> which wrap the moves below into a one-liner and ship a bundled
+> bootstrap briefing pointing new coordinators at
+> [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md).
+
+A coordinator today is just a regular `twapp work` session opened in
+whatever directory holds your mailbox, with the
+[`agent-coordinator`](skills/agent-coordinator/SKILL.md) skill in scope.
+
+```bash
+# Start a coordinator session (pre-#44).
+export TWAPP_MAILBOX_DIR=$HOME/collab/mailbox
+mkdir -p "$TWAPP_MAILBOX_DIR/inbox" "$TWAPP_MAILBOX_DIR/archive"
+twapp work --name coordinator --cwd "$HOME/collab"
+```
+
+Once #44 lands:
+
+```bash
+twapp coordinator launch                       # uses a bundled bootstrap briefing
+twapp coordinator launch --briefing /path/to/bootstrap.md
+twapp coordinator launch --shared-dir ~/collab/mailbox
+twapp coordinator claim                        # flip an existing session's role in place
+```
+
+The bundled bootstrap briefing points the new coordinator at the
+`agent-coordinator` skill, the messaging design doc, and the mailbox
+protocol, so you don't have to hand-roll a prompt when you stand up a
+fleet. Override it with `--briefing <path>` when you want a
+project-specific bootstrap.
+
+### Messaging between sessions
 
 When you have more than one agent session working together — a spawned
-worker and its coordinator, a pair of implementers sharing a review queue,
-or a human driver coordinating several workers — a shared filesystem
-mailbox is a simple way to let them leave each other messages without
-leaving twapp.
+worker and its coordinator, a pair of implementers sharing a review
+queue, or a human driver coordinating several workers — a shared
+filesystem mailbox is a simple way to let them leave each other messages
+without leaving twapp.
 
 `twapp msg` is a thin wrapper over that convention: it drops
 fenced-frontmatter markdown files into a shared `inbox/` directory and
-reads them back. See [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md)
-for the full model. This release covers **PR-1** of that design — the
-CLI scaffolding for `send`, `broadcast`, and `fetch` against the current
-flat `inbox/` layout. Threading, directory split, cursors, priority
-lanes, presence, channels, and archive rotation all land in later PRs.
+reads them back. See
+[`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) for
+the full model. Today's CLI covers **PR-1** of that design — `send`,
+`broadcast`, and `fetch` against the current flat `inbox/` layout.
+Threading, directory split, cursors, priority lanes, presence, channels,
+and archive rotation all land in later PRs.
 
-### Configure the mailbox
+#### Configure the mailbox
 
 Set one of these (the first wins):
 
 ```bash
 # Preferred: point directly at the mailbox root.
-export TWAPP_MAILBOX_DIR="$HOME/my-team-mailbox"
+export TWAPP_MAILBOX_DIR="$HOME/collab/mailbox"
 
 # Alternative: point at a shared dir; the mailbox is <shared>/mailbox/.
-export TWAPP_SHARED_DIR="$HOME/my-team-shared"
+export TWAPP_SHARED_DIR="$HOME/collab"
 ```
 
 Messages land in `<mailbox>/inbox/<YYYYMMDDTHHMMSSZ>-<id6>.md`.
 
-### Send, broadcast, fetch
+#### Send, broadcast, fetch
 
 ```bash
 # Direct message — `<to>` is required and can be comma-separated.
 twapp msg send reviewer "PR-1 is up, ready to review"
-twapp msg send a,b --priority urgent --subject "build broke" "see CI 1234"
+twapp msg send worker-a,worker-b --priority urgent --subject "build broke" "see CI 1234"
 twapp msg send reviewer --cc coordinator,qa "heads up on scope change"
 
 # Replies inherit the parent's thread id and set in_reply_to.
@@ -408,7 +563,7 @@ If `--from` is not passed, the sender handle is taken from the current
 directory's `.twapp-session.json` `name`. Bodies may be passed as a
 positional argument or piped in on stdin.
 
-### Reading legacy (bare) files
+#### Reading legacy (bare) files
 
 `fetch` accepts both the new fenced-frontmatter shape and the older bare
 `from:` / `to:` / `re:` layout so inboxes don't need to be migrated
@@ -453,67 +608,71 @@ records `reclaimed_from: <previous>` for the audit trail. See
 for the full design (atomic-mkdir rationale, stale semantics, and
 what's out of scope).
 
-## Spawning agent instances
+### Roles and provenance
 
-twapp works well as a terminal wrapper for *interactive* sessions, but it's
-also handy for spawning long-running agent or worker instances — for example,
-kicking off a Claude instance that reads a briefing file and runs to
-completion on its own.
+> **Coming in [#43](https://github.com/piekstra/twapp/pull/43).** That PR
+> adds `role` and `provenance` fields to `.twapp-session.json`, plus
+> `--role <ROLE>`, `--spawned`, and `--provenance <VAL>` flags on
+> `twapp work`.
+
+Once #43 merges, every session carries two extra pieces of metadata:
+
+- **`role`** — a free-form string tag. Conventionally one of the
+  archetypes from
+  [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md):
+  `coordinator`, `implementer`, `reviewer`, `auditor`, `log-watcher`,
+  `architect`, `qa`, `area-owner`, `designer`.
+- **`provenance`** — where the session came from: `user` (you launched
+  it), `spawned` (another agent launched it), or a free-form override
+  for edge cases. `--from-file` implies `provenance=spawned` unless you
+  pass `--provenance user`.
 
 ```bash
-# 1. Spawn a worker that reads a briefing file and executes it.
-twapp work --name "my-worker" \
-  --from-file /path/to/my-briefing.md
+twapp work --name worker-a --role implementer \
+  --from-file /path/to/briefings/worker-a.md
+# --from-file implies provenance=spawned.
 
-# 2. Later, gracefully shut it down when the work is done.
-twapp stop --name "my-worker"
-
-# 3. If the graceful shutdown doesn't land, escalate to SIGKILL.
-twapp stop --name "my-worker" --force
+twapp work --name reviewer-standby --role reviewer --spawned
 ```
 
-### `--from-file` vs `--run`
+`twapp sessions` output gains a Role column (`[impl] spawned`) so
+workers and supervisors are visually distinct. Legacy
+`.twapp-session.json` files without these fields continue to load
+unchanged.
 
-`--run` works for short, simple commands, but shell quoting becomes fragile
-when the embedded prompt is long or contains Unicode/backticks/quotes. Prefer
-`--from-file` whenever the prompt is longer than ~100 characters or contains
-special characters: twapp resolves the path to an absolute path, verifies
-it exists *before* spawning the terminal, and wraps the prompt as
-`claude --dangerously-skip-permissions 'Read <abs-path> and execute.'`.
+### Model selection per agent
 
-This keeps the caller side simple — just write the prompt into a markdown
-file and point twapp at it. Nothing to escape.
+> **Planned.** A forthcoming PR (tracked as `twapp-model-selection` in
+> the coordination notes) will let you pick which Claude model backs a
+> spawned session — e.g. a coordinator on a stronger model, worker
+> implementers on a cheaper or faster one — without hand-editing the
+> spawned `claude` invocation.
 
-### Pre-approving bypass permissions
+Until that lands, per-agent model choice is governed by whatever default
+your Claude CLI is configured with; spawning a cheaper worker means
+adjusting the Claude config that the worker's cwd resolves to.
 
-Agents spawned via `--from-file` typically want to run without
-permission prompts. Seed a per-worktree
-[`.claude/settings.local.json`](https://docs.anthropic.com/en/docs/claude-cli/settings)
-in the directory your worker will run in:
+### Related skills
 
-```json
-{
-  "permissions": {
-    "defaultMode": "bypassPermissions",
-    "allow": ["Bash(*)", "Write(**)", "Edit(**)", "Read(**)"]
-  }
-}
-```
+- [`skills/spawn-agent/SKILL.md`](skills/spawn-agent/SKILL.md) — how a
+  Claude instance spawns another (file-reference prompt pattern,
+  worktree permission seeding, hello-within-2-min verification,
+  shutdown).
+- [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md)
+  — how to act as a coordinator across many workers (briefing shape,
+  mailbox protocol, self-merge gating, offboard cleanup, role
+  archetypes, question routing).
 
-Adjust the allow list to fit your threat model. twapp itself doesn't touch
-this file — it's read by Claude on startup.
+### Design docs
 
-### Pre-flight checks
-
-`twapp work` fails fast (before spawning the terminal) when:
-
-- `--from-file <path>` points at a file that doesn't exist (exit **2**).
-- `--claude-cwd <dir>` points at a directory that doesn't exist (exit **3**).
-- `--run` starts with `cd <dir> && ...` and `<dir>` doesn't exist (exit **3**).
-
-Without these checks, the spawned terminal would appear to launch fine and
-then silently fail inside the new window — a painful debug loop when
-automating spawns.
+- [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) —
+  the mailbox shape and addressing model behind `twapp msg`, plus the
+  migration path from the current flat `inbox/` layout to threads,
+  cursors, priority lanes, presence, and channels.
+- [`docs/designs/agent-aware-ui.md`](docs/designs/agent-aware-ui.md) —
+  proposed UI / dashboard surface once the messaging substrate is
+  load-bearing, with the constraint that single-session users see no
+  change.
 
 ## Model selection
 
