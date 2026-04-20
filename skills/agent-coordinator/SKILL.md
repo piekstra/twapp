@@ -155,7 +155,7 @@ Workers may self-merge their own PR when **all** of the following are true:
 1. A reviewer has posted a COMMENTED review containing "Ship it" (case-insensitive) or an equivalent explicit approval phrase agreed in advance.
 2. `gh pr view <N> --json mergeStateStatus` returns `"CLEAN"`.
 3. No open request-changes reviews and no unresolved blocker comments.
-4. The most recent `git push` is reflected on the remote branch — verify with `git log origin/<branch>` (do not trust the local claim that push succeeded; see §7).
+4. The most recent `git push` is reflected on the remote branch — verify with `git log origin/<branch>` (do not trust the local claim that push succeeded; see §8).
 
 Self-merge command:
 
@@ -169,7 +169,42 @@ The coordinator retains merge authority as a fallback: both paths race benignly 
 
 Phrases like "LGTM but…", "Ship it pending X", or "concerns" are **not** approvals — the worker must wait and confirm with the coordinator.
 
-## 6. Stop signals and offboard protocol
+## 6. Coordinator pre-merge governance spot-check
+
+When a PR has reviewer approval and looks mergeable, the coordinator runs a 30-60 second governance pass before the merge commit lands. This is **not** a second technical review — code correctness is the reviewer's job. This check answers a different question: *is the repo in a state where this PR is allowed to merge right now?*
+
+### Checklist
+
+- **Scope compliance.** The diff's file-set matches the briefing's "What to ship" + "Out of scope" + "Coordinate with". A PR that was meant to touch `src/foo.rs` and now also rewrites `src/bar.rs` warrants a pause, even if the rewrite is correct.
+- **Policy scan.** `gh pr diff <N>` and grep for forbidden terms relevant to the repo's policy — private-project names, credential patterns, PII markers:
+  ```bash
+  gh pr diff <N> | grep -iE "<private-term-1>|<private-term-2>|<secret-key-pattern>"
+  ```
+- **Push verification.** Confirm the remote actually reflects what the agent claims to have pushed (see §8 for why this fails silently):
+  ```bash
+  gh pr view <N> --json commits --jq '.commits[-1].oid'
+  # Compare to the sha the agent reported in its PR-open mailbox message.
+  ```
+- **Hard-rule compliance.** The agent stayed in its lane — no writes outside the assigned worktree, no edits to paths reserved for another worker, no external-API calls sneaking into tests.
+- **Cross-PR conflicts.** If another PR touching the same files is about to merge, order them: smaller / tighter-scoped first, ping the other to rebase (see §9).
+- **Stale-merge judgment.** If a stale-merge alarm (§8) fired but the PR is intentionally on hold pending an amendment, document the hold rather than acting on the alarm.
+
+### Fail modes and fixes
+
+- **Policy scan catches a forbidden term** → block merge, post a blocker comment on the PR, ping the agent to scrub, re-check on re-push.
+- **Push verification fails** → either push the agent's local commit yourself from its worktree once you confirm it is safe, or ping the agent to re-push.
+- **Scope drift** → post a "restrict to briefing scope" comment, wait for rework.
+- **Cross-PR conflict** → explicitly order the merges in the mailbox, ping the later PR to rebase.
+
+This pass is cheap in the common case. Skip it only for trivial docs / typo / formatter-only changes from a trusted reviewer.
+
+### Why this is separate from reviewer
+
+The reviewer answers "is this code correct and safe to run?" The coordinator answers "is this repo in a state where this PR can merge now without creating downstream work?" Reviewers specialize in code; they cannot reliably track cross-PR state, stale-merge timers, agent push reliability, or repo-specific policy — that context lives with the coordinator. Conflating the two either bottlenecks the reviewer or lets governance silently get skipped.
+
+Workers have self-merge authority (§5); this governance pass is the coordinator's counterweight. If the spot-check fails, post a block-message to the worker's mailbox before they merge — they will see it on their next poll.
+
+## 7. Stop signals and offboard protocol
 
 Two shapes for ending a worker's `/loop`.
 
@@ -209,7 +244,7 @@ Coordinator posts a directed stop message:
 from: coordinator / to: <handle> / re: stop — <reason>
 ```
 
-The worker reads it on the next poll, archives, and stops. If the worker's `/loop` has gone dormant and does not poll within a reasonable window, the coordinator falls back to process termination (see §7 + below).
+The worker reads it on the next poll, archives, and stops. If the worker's `/loop` has gone dormant and does not poll within a reasonable window, the coordinator falls back to process termination (see §8 + below).
 
 ### Coordinator cleanup post-offboard
 
@@ -221,7 +256,7 @@ git worktree remove <path>                 # optional, keeps repo lean
 
 Acknowledge the offboard in the mailbox and archive the offboard message yourself.
 
-## 7. Stale-merge detection
+## 8. Stale-merge detection
 
 A PR with an explicit "Ship it" review that has not merged after ~20 minutes is a symptom, not a waiting game. Common causes and fixes:
 
@@ -231,7 +266,7 @@ A PR with an explicit "Ship it" review that has not merged after ~20 minutes is 
 
 Always diagnose before spawning a replacement — duplicate work across two agents on the same branch is worse than a brief delay.
 
-## 8. Merge order and cross-worker coordination
+## 9. Merge order and cross-worker coordination
 
 When two PRs touch overlapping files:
 
@@ -241,7 +276,7 @@ When two PRs touch overlapping files:
 
 If both workers are active and fast, tell them explicitly *in the briefing's "Coordinate with" section* which worker owns which file. The mailbox is for runtime deconfliction; the briefing prevents it.
 
-## 9. Domain-correctness mandates
+## 10. Domain-correctness mandates
 
 When work touches money, units, or any safety-critical invariant:
 
@@ -252,7 +287,7 @@ When work touches money, units, or any safety-critical invariant:
 
 The goal is to make the class of "agent silently misinterpreted units" bugs unreachable, not just unlikely.
 
-## 10. Common anti-patterns
+## 11. Common anti-patterns
 
 Warn against these in briefings and reviews:
 
@@ -263,7 +298,7 @@ Warn against these in briefings and reviews:
 - **Ambiguous briefings.** "Out of scope" and "Acceptance criteria" are load-bearing. If you cannot list them, the briefing is not ready to spawn.
 - **Archiving on someone else's behalf.** Leave messages addressed to other agents alone. Sweeping other agents' unread mail hides what they missed.
 
-## 11. Handle naming conventions
+## 12. Handle naming conventions
 
 Handles are the addressing unit for mailbox, PR review, and process management. Consistent shapes make a busy session searchable.
 
@@ -274,7 +309,7 @@ Handles are the addressing unit for mailbox, PR review, and process management. 
 - **Briefing file**: `<shared-dir>/briefings/<handle>.md`. One handle ↔ one briefing.
 - **One live handle at a time per worker role**: mark a worker as stopped in whatever session ledger you keep (e.g. a `handle.txt` or equivalent) with `stopped=<ts> status=offboarded (<brief>)`. Reusing a still-active handle for a new scope is a rename-in-place, which confuses the archive.
 
-## 12. Role archetypes
+## 13. Role archetypes
 
 A handful of role patterns recur. Pick the closest archetype and adapt the briefing to it; inventing new roles per session makes the coordination vocabulary harder to maintain.
 
@@ -302,7 +337,7 @@ When to reach for each:
 - **area-owner** — when a module has enough churn that a single persistent worker reduces merge conflicts.
 - **designer** — for design docs preceding implementation (RFC, spec, visual mockups).
 
-## 13. Question routing — who asks whom
+## 14. Question routing — who asks whom
 
 When a worker has a question, route it to the closest specialist rather than broadcasting. Broadcasts are for status; directed questions get faster, better answers.
 
@@ -361,9 +396,9 @@ from: worker-a / to: worker-b / re: src/util/format.ts ownership
 
 Worker B replies claiming the file. Coordinator observes, no action needed.
 
-### 5. Reviewer ships
+### 5. Reviewer ships, coordinator spot-checks
 
-A reviewer agent (or the coordinator) leaves "Ship it" COMMENTED reviews on both PRs once CI is green. Each worker confirms the four self-merge conditions (§5) and runs:
+A reviewer agent (or the coordinator) leaves "Ship it" COMMENTED reviews on both PRs once CI is green. The coordinator runs its pre-merge governance pass (§6) on each — scope compliance, policy scan, push verification. Both pass. Each worker then confirms the four self-merge conditions (§5) and runs:
 
 ```
 gh pr merge <N> --merge --delete-branch
@@ -371,7 +406,7 @@ gh pr merge <N> --merge --delete-branch
 
 ### 6. Offboard
 
-Each worker posts its offboard message (§6a) and archives its read mail. The coordinator acknowledges in the mailbox, then:
+Each worker posts its offboard message (§7a) and archives its read mail. The coordinator acknowledges in the mailbox, then:
 
 ```
 kill -TERM $(pgrep -f "twapp --name worker-a")
