@@ -272,7 +272,18 @@ pub fn resolve_mailbox(
     }
     if let Ok(v) = std::env::var("TWAPP_MAILBOX_DIR") {
         if !v.trim().is_empty() {
-            return Ok(PathBuf::from(v));
+            let inherited = PathBuf::from(&v);
+            // Don't refuse — other tools may set TWAPP_MAILBOX_DIR ahead of
+            // creating the directory — but warn loudly so a typo surfaces
+            // before the coordinator's first message lands in the void.
+            if !inherited.is_dir() {
+                eprintln!(
+                    "Warning: inherited TWAPP_MAILBOX_DIR={} is not an existing directory; \
+                     the spawned coordinator will get write errors on its first message.",
+                    inherited.display()
+                );
+            }
+            return Ok(inherited);
         }
     }
     let local = work_dir.join("mailbox");
@@ -423,6 +434,19 @@ pub fn find_session_dir(name: Option<&str>) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    // Serialize every test that mutates TWAPP_MAILBOX_DIR. `cargo test` runs
+    // tests in parallel within a binary, and process-wide env is shared
+    // state — without this lock, `mailbox_creates_fallback_when_nothing_configured`
+    // and `mailbox_inherits_env_var` race and intermittently see each other's
+    // env mutation.
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
 
     fn unique_tmp(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()))
@@ -608,6 +632,7 @@ mod tests {
 
     #[test]
     fn mailbox_creates_fallback_when_nothing_configured() {
+        let _guard = env_lock();
         let work_dir = unique_tmp("twapp-coord-mbx-fallback");
         fs::create_dir_all(&work_dir).unwrap();
         let prev = std::env::var("TWAPP_MAILBOX_DIR").ok();
@@ -625,4 +650,70 @@ mod tests {
         let _ = fs::remove_dir_all(&work_dir);
     }
 
+    #[test]
+    fn mailbox_inherits_env_var_when_set() {
+        let _guard = env_lock();
+        let work_dir = unique_tmp("twapp-coord-mbx-inherit");
+        fs::create_dir_all(&work_dir).unwrap();
+        let inherited = unique_tmp("twapp-coord-mbx-inherit-env");
+        fs::create_dir_all(&inherited).unwrap();
+        let prev = std::env::var("TWAPP_MAILBOX_DIR").ok();
+        std::env::set_var("TWAPP_MAILBOX_DIR", &inherited);
+
+        let resolved = resolve_mailbox(None, &work_dir).unwrap();
+
+        match prev {
+            Some(v) => std::env::set_var("TWAPP_MAILBOX_DIR", v),
+            None => std::env::remove_var("TWAPP_MAILBOX_DIR"),
+        }
+
+        assert_eq!(resolved, inherited);
+        // Precedence rung 2 must not create the fallback directory.
+        assert!(!work_dir.join("collab").exists());
+
+        let _ = fs::remove_dir_all(&work_dir);
+        let _ = fs::remove_dir_all(&inherited);
+    }
+
+    #[test]
+    fn mailbox_reuses_existing_local_mailbox() {
+        let _guard = env_lock();
+        let work_dir = unique_tmp("twapp-coord-mbx-reuse");
+        fs::create_dir_all(work_dir.join("mailbox").join("inbox")).unwrap();
+        let prev = std::env::var("TWAPP_MAILBOX_DIR").ok();
+        std::env::remove_var("TWAPP_MAILBOX_DIR");
+
+        let resolved = resolve_mailbox(None, &work_dir).unwrap();
+
+        if let Some(v) = prev {
+            std::env::set_var("TWAPP_MAILBOX_DIR", v);
+        }
+
+        assert_eq!(resolved, work_dir.join("mailbox"));
+        // Precedence rung 3 must not create the rung-4 fallback.
+        assert!(!work_dir.join("collab").exists());
+
+        let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    #[test]
+    fn find_session_dir_errors_on_empty_cwd() {
+        // Easy branch: no name + empty cwd must produce a clear error.
+        // Covers the no-.twapp-session.json path in find_session_dir.
+        let empty = unique_tmp("twapp-coord-find-empty");
+        fs::create_dir_all(&empty).unwrap();
+        let prev_cwd = std::env::current_dir().ok();
+        std::env::set_current_dir(&empty).unwrap();
+        let res = find_session_dir(None);
+        if let Some(c) = prev_cwd {
+            let _ = std::env::set_current_dir(c);
+        }
+        let err = res.err().expect("should error when cwd has no session");
+        assert!(
+            err.contains("no .twapp-session.json"),
+            "unexpected error: {}",
+            err
+        );
+        let _ = fs::remove_dir_all(&empty);
+    }
 }
