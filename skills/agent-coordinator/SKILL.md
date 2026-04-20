@@ -46,8 +46,11 @@ and a link to any relevant upstream data, audit, or prior PR.>
 
 ## Protocol
 <Handle, smoke-test command, branch name, base branch,
-hello-within-2-min requirement, self-merge criteria,
+hello-within-2-min requirement, /loop mandate (see "Headless
+operation — worker contract" below), self-merge criteria,
 offboard shape, hard rules.>
+
+- Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
 
 ## Coordinate with
 <Names of other in-flight workers whose work overlaps —
@@ -76,6 +79,32 @@ Why each section earns its place:
 - **Coordinate with** — prevents collisions on shared files. Cheap to write, expensive to omit.
 - **Worktree** — copy-paste beats improvisation; workers that improvise their worktree path get lost.
 - **Domain facts** — how you avoid the class of bug where an agent silently misinterprets units, multipliers, field semantics, or ownership boundaries.
+
+### Headless operation — worker contract
+
+**Headless operation.** Every worker invokes `/loop` after its hello and operates autonomously. Never end a turn waiting for user input. If stuck, mailbox the coordinator. The coordinator decides when to escalate to the user.
+
+Coordinators MUST include this mandate in every worker briefing's `## Protocol` block. The canonical one-liner is already inlined in the template above:
+
+```
+- Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
+```
+
+Workers may occasionally address the user directly when the coordinator explicitly routes a question there, but the default interaction channel is async mailbox with the coordinator — **not** a trailing "do you want me to ...?" question that freezes the turn and blocks silently until someone happens to look.
+
+A worker that completes a turn with an open question to the user is a coordination failure, not a worker failure: the briefing was missing or too weak. Correct in two places — send a directed mailbox message unsticking the worker now, and tighten the briefing template (or this subsection) so future spawns inherit the rule automatically. See [`spawn-agent`'s "Headless operation" section](../spawn-agent/SKILL.md#headless-operation) for the per-state defaults (waiting-for-review, concern-not-Ship-it, CLI-rejected, work-complete).
+
+### Model selection when spawning workers
+
+Every briefing implicitly picks a model — either explicitly, via `twapp work --model <name>` on the spawn command, or implicitly, by falling through to the provider's default. Coordinators should match the model tier to the scope cost:
+
+- **haiku** for plumbing, docs, small mechanical PRs.
+- **sonnet** (default) for most implementation work.
+- **opus** for design audits, cross-cutting synthesis, and high-stakes correctness work.
+
+Pass `--model` at spawn time; the flag is pass-through to the provider CLI and twapp does not validate the name. See the [`spawn-agent`](../spawn-agent/SKILL.md#model-selection) skill's "Model selection" subsection for per-tier guidance, the `twapp models list` output shape, and how to refresh the known-models cache. Don't duplicate that content here — if the guidance drifts, update it in spawn-agent and link.
+
+Budget note: un-pinned spawns inherit the user's global default. For a batch of workers of mixed scope, pin each one explicitly so a default swap (e.g. user switching to opus while debugging) doesn't silently re-cost the whole batch.
 
 ## 3. Mailbox protocol
 

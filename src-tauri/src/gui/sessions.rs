@@ -8,6 +8,7 @@ use crate::cli::session::{
     count_codex_conversation_messages, find_latest_codex_session_for_cwd, other_provider,
     shell_escape_single, AgentProvider, SessionData,
 };
+use crate::cli::session_attribution;
 
 /// Read `(role, provenance)` from the parent session file so a GUI fork can
 /// inherit them. Returns `(None, None)` if the file is missing or unreadable —
@@ -500,12 +501,30 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         return Ok(());
     }
 
-    // Update last_resumed
-    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
-    session_data.provider = Some(preferred);
-
     // Run health checks
     crate::cli::session::run_health_checks(&work_dir, Some(&session_data));
+
+    // Attribution: adopt a compacted session id when chain-of-descent is
+    // unambiguous. Ambiguous cases are deliberately NOT auto-adopted from
+    // the GUI — the user can confirm via the session config modal, which
+    // flows through `update_session_fields` and logs a manual_edit event.
+    if preferred == AgentProvider::Claude {
+        if let session_attribution::SessionSyncOutcome::Adopted { old_id, new_id, event, .. } =
+            session_attribution::maybe_sync_session_id(&work_dir, &mut session_data)
+        {
+            log::info!(
+                "attribution: adopted {} → {} via {} (descent_chain)",
+                old_id,
+                new_id,
+                event,
+            );
+        }
+    }
+
+    // Update last_resumed (after attribution, so the attribution window uses
+    // the *previous* resume's timestamp).
+    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    session_data.provider = Some(preferred);
 
     let migration_prompt = if session_data.needs_migration(preferred) {
         Some(build_migration_prompt(
@@ -596,7 +615,16 @@ pub async fn create_and_launch_session(
     chrome: bool,
 ) -> Result<(), String> {
     let result = crate::cli::create_session_core(
-        ticket, name, None, github, None, None, chrome, None, Some("user".to_string()),
+        ticket,
+        name,
+        None,
+        None,
+        github,
+        None,
+        None,
+        chrome,
+        None,
+        Some("user".to_string()),
     )?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
@@ -808,6 +836,8 @@ pub async fn update_session_fields(
 ) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut data = crate::cli::session::read_session(&work_dir)?;
+    let prior_claude_id = data.session_id.clone();
+    let prior_codex_id = data.codex_session_id.clone().unwrap_or_default();
 
     if let Some(ref n) = name {
         data.name = n.clone();
@@ -837,7 +867,40 @@ pub async fn update_session_fields(
     }
 
     crate::cli::session::write_session(&work_dir, &data)?;
+
+    // Audit-log any manual change to a session id. Distinct from automatic
+    // /compact or /clear adoption, so users can tell "I changed this" from
+    // "twapp adopted this".
+    let new_claude_id = data.session_id.clone();
+    let new_codex_id = data.codex_session_id.clone().unwrap_or_default();
+    if new_claude_id != prior_claude_id || new_codex_id != prior_codex_id {
+        let (old_id, new_id) = if new_claude_id != prior_claude_id {
+            (prior_claude_id, new_claude_id)
+        } else {
+            (prior_codex_id, new_codex_id)
+        };
+        let _ = session_attribution::append_history(
+            &work_dir,
+            session_attribution::SessionHistoryEvent {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                event: "manual_edit".to_string(),
+                old_session_id: old_id,
+                new_session_id: new_id,
+                ambiguous: None,
+                reason: Some("manual_edit".to_string()),
+            },
+        );
+    }
+
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_session_history(
+    directory: String,
+) -> Result<Vec<session_attribution::SessionHistoryEvent>, String> {
+    let work_dir = std::path::PathBuf::from(&directory);
+    Ok(session_attribution::read_history(&work_dir))
 }
 
 #[tauri::command]

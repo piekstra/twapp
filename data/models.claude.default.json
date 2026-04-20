@@ -1,0 +1,32 @@
+[
+  {
+    "name": "claude-opus-4-7",
+    "tier": "opus",
+    "description": "Most capable Claude model; use for design audits and complex synthesis."
+  },
+  {
+    "name": "claude-sonnet-4-6",
+    "tier": "sonnet",
+    "description": "Strong general-purpose Claude model; default for most implementation work."
+  },
+  {
+    "name": "claude-haiku-4-5-20251001",
+    "tier": "haiku",
+    "description": "Fast and inexpensive Claude model; use for plumbing and simple edits."
+  },
+  {
+    "name": "opus",
+    "tier": "opus",
+    "description": "Alias: latest opus-tier Claude model."
+  },
+  {
+    "name": "sonnet",
+    "tier": "sonnet",
+    "description": "Alias: latest sonnet-tier Claude model."
+  },
+  {
+    "name": "haiku",
+    "tier": "haiku",
+    "description": "Alias: latest haiku-tier Claude model."
+  }
+]

@@ -1,23 +1,25 @@
 pub mod app_bundle;
 pub mod config;
+pub mod models;
 pub mod monitor;
 pub mod msg;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
 pub mod session;
+pub mod session_attribution;
 pub mod stop;
 pub mod theme;
 pub mod ticket;
 
 use clap::Subcommand;
 use msg::MsgCommands;
-use session::{AgentProvider, shell_escape_single};
+use session::{AgentProvider, build_claude_run_command, build_codex_run_command, shell_escape_single};
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
-    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
+    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work --name worker --model sonnet                Pin the spawned agent to a specific model\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
     Work {
         /// Ticket ID (e.g. MON-1234, 1234, owner/repo#123)
         ticket: Option<String>,
@@ -31,6 +33,11 @@ pub enum Commands {
         /// long prompts with special characters. Path must exist at spawn time.
         #[arg(long)]
         from_file: Option<String>,
+        /// Model name passed through to the provider CLI (claude: `--model`,
+        /// codex: `-c model='<name>'`). twapp does not validate the name —
+        /// the provider CLI rejects unknown models. See `twapp models list`.
+        #[arg(long)]
+        model: Option<String>,
         /// Force GitHub issue lookup
         #[arg(long, short = 'g')]
         github: bool,
@@ -159,6 +166,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: MsgCommands,
     },
+    /// Inspect or refresh the provider model cache used by --model.
+    ///
+    /// `twapp models list` reads a cached list of known models for the
+    /// provider (falls back to a bundled default on fresh installs).
+    /// `twapp models refresh` re-populates the cache from the provider's
+    /// models endpoint. twapp does not maintain an authoritative list —
+    /// refresh is the source of truth.
+    #[command(after_help = "Examples:\n  twapp models list                         Show known claude models (cache or bundled fallback)\n  twapp models list --provider codex        Show the codex list (empty until you seed the cache)\n  twapp models list --format json           Machine-readable output\n  twapp models refresh                      Pull current list from the Anthropic models endpoint")]
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommands,
+    },
     /// Generate shell completions
     #[command(name = "completions")]
     Completions {
@@ -282,6 +301,25 @@ pub enum PromptCommands {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum ModelsCommands {
+    /// List known models for the provider (cache if present, else bundled default).
+    List {
+        /// Provider to inspect (default: claude)
+        #[arg(long, default_value = "claude")]
+        provider: String,
+        /// Output format: defaults to a three-column table; `json` prints the raw cache shape.
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Re-populate the provider model cache from the provider's models endpoint.
+    Refresh {
+        /// Provider to refresh (default: claude). Requires ANTHROPIC_API_KEY for claude.
+        #[arg(long, default_value = "claude")]
+        provider: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum PermissionCommands {
     /// Show default permissions
     List,
@@ -310,6 +348,7 @@ pub fn run(cmd: Commands) -> i32 {
             name,
             run,
             from_file,
+            model,
             github,
             session_id: fork_session_id,
             claude_cwd,
@@ -322,6 +361,7 @@ pub fn run(cmd: Commands) -> i32 {
             name,
             run,
             from_file,
+            model,
             github,
             fork_session_id,
             claude_cwd,
@@ -437,6 +477,10 @@ pub fn run(cmd: Commands) -> i32 {
                 for_handle, since, priority, thread, channel, mark_read, limit, format, all,
             ),
         },
+        Commands::Models { command } => match command {
+            ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
+            ModelsCommands::Refresh { provider } => models::cmd_refresh(provider),
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(
                 shell,
@@ -485,11 +529,16 @@ pub fn format_session_name(key: &str, title: &str) -> String {
     result
 }
 
-/// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session)
+/// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session).
+///
+/// `model`, when set, is pass-through inserted into the spawned provider
+/// invocation (claude: `--model <name>`, codex: `-c model='<name>'`).
+/// twapp does not validate the name.
 pub fn create_session_core(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
+    model: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -616,35 +665,30 @@ pub fn create_session_core(
     };
     session::write_session(&work_dir, &session_data)?;
 
-    let chrome_flag = if chrome { " --chrome" } else { "" };
     let command = if let Some(ref custom) = run_command {
         custom.clone()
     } else if provider == AgentProvider::Codex {
-        format!(
-            "codex -C '{}'{}",
-            shell_escape_single(&work_dir.to_string_lossy()),
-            if let Some(ref ti) = ticket_info {
-                if dir_already_existed {
-                    format!(" '{}'", shell_escape_single(&format!("I'm working on {}: {}.", ti.key, ti.title)))
-                } else {
-                    String::new()
-                }
+        let initial_prompt = ticket_info.as_ref().and_then(|ti| {
+            if dir_already_existed {
+                Some(format!("I'm working on {}: {}.", ti.key, ti.title))
             } else {
-                String::new()
+                None
             }
-        )
-    } else if let Some(ref old_id) = fork_session_id {
-        let cd_prefix = if claude_cwd != work_dir.to_string_lossy() {
-            format!("cd '{}' && ", claude_cwd.replace('\'', "'\\''"))
-        } else {
-            String::new()
-        };
-        format!(
-            "{}claude --resume {} --fork-session --session-id {}{}",
-            cd_prefix, old_id, session_id, chrome_flag
+        });
+        build_codex_run_command(
+            &work_dir.to_string_lossy(),
+            model.as_deref(),
+            initial_prompt.as_deref(),
         )
     } else {
-        format!("claude --session-id {}{}", session_id, chrome_flag)
+        build_claude_run_command(
+            &session_id,
+            fork_session_id.as_deref(),
+            model.as_deref(),
+            &claude_cwd,
+            &work_dir.to_string_lossy(),
+            chrome,
+        )
     };
 
     let prefill = if let Some(ref ti) = ticket_info {
@@ -701,6 +745,7 @@ fn cmd_work(
     session_name: Option<String>,
     run_command: Option<String>,
     from_file: Option<String>,
+    model: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -782,6 +827,7 @@ fn cmd_work(
         ticket_id,
         session_name,
         effective_run,
+        model,
         github,
         fork_session_id,
         claude_cwd_arg,
@@ -918,6 +964,50 @@ fn cmd_resume(fork: bool) -> i32 {
         }
         build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     } else {
+        // Attribution: did /compact or /clear swap in a new jsonl since the
+        // last resume? Adopt only when the chain-of-descent signal is
+        // unambiguous; otherwise prompt the user rather than silently
+        // overwriting. Runs before bumping last_resumed so the "since"
+        // filter uses the prior resume's timestamp.
+        match session_attribution::maybe_sync_session_id(&work_dir, &mut session_data) {
+            session_attribution::SessionSyncOutcome::NoChange => {}
+            session_attribution::SessionSyncOutcome::Adopted {
+                old_id,
+                new_id,
+                event,
+                ..
+            } => {
+                println!(
+                    "Detected /{event} — adopted session id {} → {} (chain-of-descent confirmed)",
+                    short_id(&old_id),
+                    short_id(&new_id),
+                );
+            }
+            session_attribution::SessionSyncOutcome::NeedsConfirmation {
+                old_id,
+                candidates,
+            } => {
+                if let Some(chosen) = prompt_session_adoption(&old_id, &candidates) {
+                    match session_attribution::adopt_candidate_confirmed(
+                        &work_dir,
+                        &mut session_data,
+                        &chosen,
+                    ) {
+                        Ok(_) => println!(
+                            "Adopted session id {} → {} (user-confirmed)",
+                            short_id(&old_id),
+                            short_id(&chosen.session_id),
+                        ),
+                        Err(e) => eprintln!("Warning: could not record adoption: {}", e),
+                    }
+                } else {
+                    println!(
+                        "Keeping stored session id {}. (Edit via the session config modal or `twapp set-session` if Claude fails to resume.)",
+                        short_id(&old_id),
+                    );
+                }
+            }
+        }
         session_id = session_data.session_id.clone();
         let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
@@ -927,6 +1017,72 @@ fn cmd_resume(fork: bool) -> i32 {
         }
         build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     }
+}
+
+fn short_id(id: &str) -> String {
+    if id.len() <= 8 {
+        id.to_string()
+    } else {
+        format!("{}…", &id[..8])
+    }
+}
+
+/// Interactive fallback for `cmd_resume` when attribution can't auto-resolve.
+/// Returns the candidate the user selected, or `None` to keep the stored id.
+fn prompt_session_adoption(
+    old_id: &str,
+    candidates: &[session_attribution::SessionCandidate],
+) -> Option<session_attribution::SessionCandidate> {
+    use std::io::{BufRead, Write};
+
+    // Skip the prompt when stdin isn't a tty (CI, scripted resumes) — safer
+    // to leave the stored id untouched and let the user fix it manually.
+    if !atty_stdin() {
+        return None;
+    }
+
+    eprintln!();
+    eprintln!(
+        "Claude wrote {} jsonl file(s) since the last resume of {} that don't clearly descend from it:",
+        candidates.len(),
+        short_id(old_id),
+    );
+    // Newest first.
+    let mut sorted = candidates.to_vec();
+    sorted.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    for (idx, c) in sorted.iter().enumerate() {
+        eprintln!(
+            "  [{}] {} ({})",
+            idx + 1,
+            short_id(&c.session_id),
+            c.event
+        );
+    }
+    eprint!(
+        "Pick a number to adopt that id, or press Enter to keep {}: ",
+        short_id(old_id),
+    );
+    let _ = std::io::stderr().flush();
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    if stdin.lock().read_line(&mut line).is_err() {
+        return None;
+    }
+    let choice = line.trim();
+    if choice.is_empty() {
+        return None;
+    }
+    let pick: usize = choice.parse().ok()?;
+    if pick == 0 || pick > sorted.len() {
+        return None;
+    }
+    Some(sorted.into_iter().nth(pick - 1).unwrap())
+}
+
+fn atty_stdin() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
 
 /// Build app args, prepare instance app, and launch GUI.
