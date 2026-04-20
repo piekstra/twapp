@@ -392,13 +392,15 @@ A typical co-lab flow:
 ```
 ┌──────────────┐        mailbox/inbox/          ┌────────────┐
 │ coordinator  │── briefings/worker-a.md ────▶│  worker-a  │
-│              │◀── 20260420T1501Z-hello ─────│            │
-│              │── 20260420T1530Z-rebase ────▶│            │
+│              │◀── <ts>-<id>-hello.md ───────│            │
+│              │── <ts>-<id>-rebase.md ──────▶│            │
 │              │                                 └────────────┘
 │              │── briefings/worker-b.md ────▶┌────────────┐
 │              │                                 │  worker-b  │
 └──────────────┘                                 └────────────┘
 ```
+
+> The `<ts>-<id>` placeholders stand in for the real `YYYYMMDDTHHMMSSZ-<id6>` filename shape described in the [Configure the mailbox](#configure-the-mailbox) subsection — the diagram elides timestamps to keep the boxes aligned.
 
 The rest of this section covers each piece of that flow.
 
@@ -619,9 +621,10 @@ Once #43 merges, every session carries two extra pieces of metadata:
 
 - **`role`** — a free-form string tag. Conventionally one of the
   archetypes from
-  [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md):
-  `coordinator`, `implementer`, `reviewer`, `auditor`, `log-watcher`,
-  `architect`, `qa`, `area-owner`, `designer`.
+  [`skills/agent-coordinator/SKILL.md` §13](skills/agent-coordinator/SKILL.md#13-role-archetypes)
+  (that file is the canonical list; the names here are a snapshot for
+  convenience): `coordinator`, `implementer`, `reviewer`, `auditor`,
+  `log-watcher`, `architect`, `qa`, `area-owner`, `designer`.
 - **`provenance`** — where the session came from: `user` (you launched
   it), `spawned` (another agent launched it), or a free-form override
   for edge cases. `--from-file` implies `provenance=spawned` unless you
