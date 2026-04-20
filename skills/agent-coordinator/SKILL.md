@@ -263,6 +263,61 @@ Warn against these in briefings and reviews:
 - **Ambiguous briefings.** "Out of scope" and "Acceptance criteria" are load-bearing. If you cannot list them, the briefing is not ready to spawn.
 - **Archiving on someone else's behalf.** Leave messages addressed to other agents alone. Sweeping other agents' unread mail hides what they missed.
 
+## 11. Handle naming conventions
+
+Handles are the addressing unit for mailbox, PR review, and process management. Consistent shapes make a busy session searchable.
+
+- **Scope-descriptive kebab-case**: `<scope>-<action>` or `<area>-<fix>`. The handle *is* the scope — `worker-1` is an anti-pattern because it tells the reader nothing.
+- **Respawn suffixes**: `-v2`, `-morning`, `-afternoon` when re-launching with a changed scope or replacing a prior agent whose stop condition fired prematurely. The suffix signals "new agent, related scope" to everyone watching the mailbox.
+- **Branches mirror the handle**: `<handle>/<short-slug>` (e.g. `<area>-fix/<one-line-slug>`). Keeps `gh pr list` immediately readable.
+- **Worktree path**: `<repo-root>_<handle>` or a compressed variant when the handle is long. Co-located worktrees next to the main repo make `cd` and tab-completion fast.
+- **Briefing file**: `<shared-dir>/briefings/<handle>.md`. One handle ↔ one briefing.
+- **One live handle at a time per worker role**: mark a worker as stopped in whatever session ledger you keep (e.g. a `handle.txt` or equivalent) with `stopped=<ts> status=offboarded (<brief>)`. Reusing a still-active handle for a new scope is a rename-in-place, which confuses the archive.
+
+## 12. Role archetypes
+
+A handful of role patterns recur. Pick the closest archetype and adapt the briefing to it; inventing new roles per session makes the coordination vocabulary harder to maintain.
+
+| Role | Lifespan | Reads | Writes | Typical handle examples |
+|---|---|---|---|---|
+| `coordinator` | session-long | mailbox, PRs, processes | briefings, mailbox, merges | singleton |
+| `implementer` | until its PR merges | briefing, code | one PR in one scope | scope-named |
+| `reviewer` | until user-stop | open PRs + diffs | PR comments only | `reviewer-standby` |
+| `auditor` | until report posted | codebase + logs | mailbox report (no code) | `audit-<area>`, `<topic>-autopsy` |
+| `log-watcher` | live session | log stream | mailbox PING/STOP/NOTE | `log-watcher` |
+| `architect` | topic-bounded | codebase | RFC / design doc in `docs/` | `architect`, `innovator` |
+| `qa` | on-demand | codebase | tests only, no prod code | `qa` |
+| `area-owner` | session-long | area files | area edits (scoped lane) | `fe`, `tui`, `<module>` |
+| `designer` | until doc posted | relevant corpus | design doc PR | `<topic>-design` |
+
+When to reach for each:
+
+- **coordinator** — always, once you have ≥2 workers.
+- **implementer** — the default for any shippable-scope task; keeps PRs small.
+- **reviewer** — whenever implementer volume exceeds the coordinator's review capacity.
+- **auditor** — for fact-finding where writing code would bias the reader (post-mortems, correctness audits).
+- **log-watcher** — when a live system emits signals the team needs surfaced promptly.
+- **architect** — to front-load design decisions before implementers start; produces docs, not code.
+- **qa** — when tests and prod code benefit from separate ownership (e.g. dedicated regression hardening).
+- **area-owner** — when a module has enough churn that a single persistent worker reduces merge conflicts.
+- **designer** — for design docs preceding implementation (RFC, spec, visual mockups).
+
+## 13. Question routing — who asks whom
+
+When a worker has a question, route it to the closest specialist rather than broadcasting. Broadcasts are for status; directed questions get faster, better answers.
+
+- "Is this gate / boundary / contract shape right?" → feature-owner (the implementer or area-owner who owns the surface).
+- "Will this conflict with X?" → owner-of-X.
+- "Is my test coverage sufficient?" → `qa` (if present).
+- "Is the external API / upstream service behaving correctly?" → `log-watcher` or `auditor` (if present).
+- "Does this boundary fit the architecture?" → `architect` (if present).
+- "How should this render?" → `fe` / `tui` / UI area-owner (if present).
+- "Is my PR correct / safe to merge?" → `reviewer` (once the PR is open).
+- "Process / coordination / can I push?" → `coordinator`.
+- **"Permission wall hit"** → `coordinator`, immediately. Do not retry; the fix is a settings change the coordinator can apply.
+
+If unclear or no specialist exists: broadcast `to: all` with an `@<handle>:` prefix in the body naming who you hope answers. That preserves the directed-question pattern (answerer known to themselves) while leaving a broadcast trail so others can jump in if the named handle is offline.
+
 ## Example — coordinator spawns two workers, both self-merge, coordinator cleans up
 
 End-to-end flow using generic names. Assume `<shared-dir>` = `/tmp/collab` and target repo = `example-repo` with a `main` base branch.
