@@ -5,6 +5,7 @@ pub mod notes;
 pub mod permissions;
 pub mod prompts;
 pub mod session;
+pub mod stop;
 pub mod theme;
 pub mod ticket;
 
@@ -14,7 +15,7 @@ use session::{AgentProvider, shell_escape_single};
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
-    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket")]
+    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
     Work {
         /// Ticket ID (e.g. MON-1234, 1234, owner/repo#123)
         ticket: Option<String>,
@@ -24,6 +25,10 @@ pub enum Commands {
         /// Override startup command (default: claude)
         #[arg(long)]
         run: Option<String>,
+        /// Spawn claude with 'Read <path> and execute.' — safer than --run for
+        /// long prompts with special characters. Path must exist at spawn time.
+        #[arg(long)]
+        from_file: Option<String>,
         /// Force GitHub issue lookup
         #[arg(long, short = 'g')]
         github: bool,
@@ -36,6 +41,20 @@ pub enum Commands {
         /// Use Chrome instead of Claude desktop
         #[arg(long)]
         chrome: bool,
+    },
+    /// Stop a running session by name (SIGTERM claude child + twapp host).
+    ///
+    /// Used to cleanly shut down sessions started by `twapp work`, especially
+    /// long-running agent spawns. Pair with `twapp work --from-file` for a
+    /// scriptable spawn/stop lifecycle.
+    #[command(after_help = "Examples:\n  twapp stop --name my-worker           Graceful shutdown (SIGTERM, 3s grace)\n  twapp stop --name my-worker --force   Escalate to SIGKILL if SIGTERM doesn't land")]
+    Stop {
+        /// Session name (matches `--name` used at `twapp work` time)
+        #[arg(long, short = 'n')]
+        name: String,
+        /// Escalate to SIGKILL if SIGTERM doesn't land in ~3s
+        #[arg(long)]
+        force: bool,
     },
     /// Resume session in current directory
     #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
@@ -264,11 +283,13 @@ pub fn run(cmd: Commands) -> i32 {
             ticket,
             name,
             run,
+            from_file,
             github,
             session_id: fork_session_id,
             claude_cwd,
             chrome,
-        } => cmd_work(ticket, name, run, github, fork_session_id, claude_cwd, chrome),
+        } => cmd_work(ticket, name, run, from_file, github, fork_session_id, claude_cwd, chrome),
+        Commands::Stop { name, force } => stop::cmd_stop(&name, force),
         Commands::Resume { fork } => cmd_resume(fork),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
@@ -599,6 +620,7 @@ fn cmd_work(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
+    from_file: Option<String>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -611,12 +633,53 @@ fn cmd_work(
         return 1;
     }
 
+    if run_command.is_some() && from_file.is_some() {
+        eprintln!("Error: --run and --from-file are mutually exclusive.");
+        return 1;
+    }
+
+    // Feature: --from-file. Resolve to an absolute path and verify the file
+    // exists BEFORE launching any terminal, then wrap as a claude prompt.
+    let effective_run = match from_file {
+        Some(path) => match resolve_from_file(&path) {
+            Ok(cmd) => Some(cmd),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 2;
+            }
+        },
+        None => run_command,
+    };
+
+    // Pre-flight: --claude-cwd must exist if supplied.
+    if let Some(ref cwd) = claude_cwd_arg {
+        if !std::path::Path::new(cwd).is_dir() {
+            eprintln!("Error: --claude-cwd does not exist or is not a directory: {}", cwd);
+            return 3;
+        }
+    }
+
+    // Pre-flight: if --run starts with `cd <dir> && ...`, verify <dir> exists.
+    // Keep the check surface-small — if the command is complex and doesn't
+    // start with `cd`, skip rather than parsing bash.
+    if let Some(ref cmd) = effective_run {
+        if let Some(cd_dir) = parse_cd_prefix(cmd) {
+            if !std::path::Path::new(&cd_dir).is_dir() {
+                eprintln!(
+                    "Error: --run starts with `cd {}` but that directory does not exist.",
+                    cd_dir
+                );
+                return 3;
+            }
+        }
+    }
+
     if let Err(e) = app_bundle::check_gui_installed() {
         eprintln!("{}", e);
         return 1;
     }
 
-    let result = match create_session_core(ticket_id, session_name, run_command, github, fork_session_id, claude_cwd_arg, chrome) {
+    let result = match create_session_core(ticket_id, session_name, effective_run, github, fork_session_id, claude_cwd_arg, chrome) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -1572,5 +1635,173 @@ fn cmd_dev_reload(pid: Option<u32>, cwd: &str, gui_src: Option<&str>) -> i32 {
             eprintln!("Error resuming: {}", e);
             1
         }
+    }
+}
+
+/// Translate `--from-file <path>` into the equivalent `--run` command.
+/// Resolves `<path>` to an absolute path so later `cd`s don't break it,
+/// and returns an error if the file does not exist.
+fn resolve_from_file(path: &str) -> Result<String, String> {
+    let raw = std::path::PathBuf::from(path);
+    let abs = if raw.is_absolute() {
+        raw
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|e| format!("cannot resolve current directory: {}", e))?;
+        cwd.join(&raw)
+    };
+    let resolved = abs.canonicalize().unwrap_or(abs.clone());
+    if !resolved.is_file() {
+        return Err(format!(
+            "--from-file does not exist or is not a regular file: {}",
+            resolved.display()
+        ));
+    }
+    let abs_str = resolved.to_string_lossy();
+    // Single-quoted prompt; escape embedded single quotes the standard way.
+    let prompt = format!("Read {} and execute.", abs_str);
+    let escaped = session::shell_escape_single(&prompt);
+    Ok(format!(
+        "claude --dangerously-skip-permissions '{}'",
+        escaped
+    ))
+}
+
+/// If `cmd` begins with a `cd <dir> && ...` pattern, return the `<dir>`.
+/// Keeps parsing intentionally small: matches a leading `cd `, supports a
+/// single-quoted or unquoted bare-word directory, and requires ` && ` right
+/// after. Anything more complex is skipped rather than mis-parsed.
+pub fn parse_cd_prefix(cmd: &str) -> Option<String> {
+    let trimmed = cmd.trim_start();
+    let rest = trimmed.strip_prefix("cd ")?;
+    let rest = rest.trim_start();
+    let (dir, tail) = if let Some(after_quote) = rest.strip_prefix('\'') {
+        // Single-quoted path: take everything up to the next unescaped single quote.
+        // Bash literal single quotes can't be escaped, but callers sometimes
+        // use the `'\''` trick — treat that as part of the path.
+        let mut out = String::new();
+        let mut chars = after_quote.char_indices();
+        let mut end = None;
+        while let Some((i, c)) = chars.next() {
+            if c == '\'' {
+                // peek for the escape pattern '\''
+                let next = after_quote.get(i + 1..i + 4);
+                if next == Some("\\''") {
+                    out.push('\'');
+                    chars.next();
+                    chars.next();
+                    chars.next();
+                    continue;
+                }
+                end = Some(i);
+                break;
+            }
+            out.push(c);
+        }
+        let end = end?;
+        let tail = &after_quote[end + 1..];
+        (out, tail)
+    } else {
+        // Unquoted bare word: up to first whitespace.
+        let end = rest.find(char::is_whitespace)?;
+        (rest[..end].to_string(), &rest[end..])
+    };
+    let tail = tail.trim_start();
+    if tail.starts_with("&&") {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod cd_prefix_tests {
+    use super::parse_cd_prefix;
+
+    #[test]
+    fn bare_word() {
+        assert_eq!(
+            parse_cd_prefix("cd /tmp/foo && claude").as_deref(),
+            Some("/tmp/foo")
+        );
+    }
+
+    #[test]
+    fn single_quoted() {
+        assert_eq!(
+            parse_cd_prefix("cd '/tmp/some dir' && claude").as_deref(),
+            Some("/tmp/some dir")
+        );
+    }
+
+    #[test]
+    fn no_cd() {
+        assert_eq!(parse_cd_prefix("claude --help"), None);
+    }
+
+    #[test]
+    fn cd_but_no_chain() {
+        assert_eq!(parse_cd_prefix("cd /tmp/foo"), None);
+    }
+
+    #[test]
+    fn leading_whitespace() {
+        assert_eq!(
+            parse_cd_prefix("   cd /tmp/bar && true").as_deref(),
+            Some("/tmp/bar")
+        );
+    }
+}
+
+#[cfg(test)]
+mod from_file_tests {
+    use super::resolve_from_file;
+
+    #[test]
+    fn missing_file_errors() {
+        let err = resolve_from_file("/tmp/definitely-not-a-real-twapp-test-file-xyz.md")
+            .err()
+            .expect("expected an error");
+        assert!(err.contains("does not exist"), "got: {}", err);
+    }
+
+    #[test]
+    fn existing_file_produces_claude_command_with_absolute_path() {
+        let tmp = std::env::temp_dir().join(format!(
+            "twapp-from-file-test-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&tmp, "briefing body").unwrap();
+        let canonical = tmp.canonicalize().unwrap();
+        let cmd = resolve_from_file(tmp.to_str().unwrap()).unwrap();
+        assert!(cmd.starts_with("claude --dangerously-skip-permissions '"));
+        assert!(
+            cmd.contains(&format!("Read {}", canonical.display())),
+            "got: {}",
+            cmd
+        );
+        assert!(cmd.trim_end().ends_with("and execute.'"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn relative_path_is_resolved_to_absolute() {
+        let dir = std::env::temp_dir().join(format!(
+            "twapp-from-file-reldir-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("brief.md");
+        std::fs::write(&file, "x").unwrap();
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        let cmd = resolve_from_file("brief.md").unwrap();
+        std::env::set_current_dir(prev_cwd).unwrap();
+        assert!(
+            cmd.contains("/brief.md"),
+            "expected absolute path in command, got: {}",
+            cmd
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

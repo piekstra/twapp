@@ -349,11 +349,75 @@ The forked session gets a new twapp-managed session and carries Claude context f
 
 > Current limitation: unmanaged external import is Claude-only. Codex support currently targets twapp-managed sessions and provider switching inside twapp.
 
+## Spawning agent instances
+
+twapp works well as a terminal wrapper for *interactive* sessions, but it's
+also handy for spawning long-running agent or worker instances — for example,
+kicking off a Claude instance that reads a briefing file and runs to
+completion on its own.
+
+```bash
+# 1. Spawn a worker that reads a briefing file and executes it.
+twapp work --name "my-worker" \
+  --from-file /path/to/my-briefing.md
+
+# 2. Later, gracefully shut it down when the work is done.
+twapp stop --name "my-worker"
+
+# 3. If the graceful shutdown doesn't land, escalate to SIGKILL.
+twapp stop --name "my-worker" --force
+```
+
+### `--from-file` vs `--run`
+
+`--run` works for short, simple commands, but shell quoting becomes fragile
+when the embedded prompt is long or contains Unicode/backticks/quotes. Prefer
+`--from-file` whenever the prompt is longer than ~100 characters or contains
+special characters: twapp resolves the path to an absolute path, verifies
+it exists *before* spawning the terminal, and wraps the prompt as
+`claude --dangerously-skip-permissions 'Read <abs-path> and execute.'`.
+
+This keeps the caller side simple — just write the prompt into a markdown
+file and point twapp at it. Nothing to escape.
+
+### Pre-approving bypass permissions
+
+Agents spawned via `--from-file` typically want to run without
+permission prompts. Seed a per-worktree
+[`.claude/settings.local.json`](https://docs.anthropic.com/en/docs/claude-cli/settings)
+in the directory your worker will run in:
+
+```json
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": ["Bash(*)", "Write(**)", "Edit(**)", "Read(**)"]
+  }
+}
+```
+
+Adjust the allow list to fit your threat model. twapp itself doesn't touch
+this file — it's read by Claude on startup.
+
+### Pre-flight checks
+
+`twapp work` fails fast (before spawning the terminal) when:
+
+- `--from-file <path>` points at a file that doesn't exist (exit **2**).
+- `--claude-cwd <dir>` points at a directory that doesn't exist (exit **3**).
+- `--run` starts with `cd <dir> && ...` and `<dir>` doesn't exist (exit **3**).
+
+Without these checks, the spawned terminal would appear to launch fine and
+then silently fail inside the new window — a painful debug loop when
+automating spawns.
+
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
 | `twapp work <ticket\|--name>` | Start a new work session using the configured provider |
+| `twapp work --from-file <path>` | Spawn a session whose prompt is `Read <path> and execute.` (safer than `--run` for long prompts) |
+| `twapp stop --name <name> [--force]` | Gracefully stop a running session (SIGTERM, optional SIGKILL escalation) |
 | `twapp resume [--fork]` | Resume or fork the current session using the configured provider |
 | `twapp sessions` | List all sessions with activity timestamps |
 | `twapp set-session <id>` | Update session metadata |
