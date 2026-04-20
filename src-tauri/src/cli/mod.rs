@@ -5,6 +5,7 @@ pub mod notes;
 pub mod permissions;
 pub mod prompts;
 pub mod session;
+pub mod session_attribution;
 pub mod stop;
 pub mod theme;
 pub mod ticket;
@@ -807,6 +808,50 @@ fn cmd_resume(fork: bool) -> i32 {
         }
         build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     } else {
+        // Attribution: did /compact or /clear swap in a new jsonl since the
+        // last resume? Adopt only when the chain-of-descent signal is
+        // unambiguous; otherwise prompt the user rather than silently
+        // overwriting. Runs before bumping last_resumed so the "since"
+        // filter uses the prior resume's timestamp.
+        match session_attribution::maybe_sync_session_id(&work_dir, &mut session_data) {
+            session_attribution::SessionSyncOutcome::NoChange => {}
+            session_attribution::SessionSyncOutcome::Adopted {
+                old_id,
+                new_id,
+                event,
+                ..
+            } => {
+                println!(
+                    "Detected /{event} — adopted session id {} → {} (chain-of-descent confirmed)",
+                    short_id(&old_id),
+                    short_id(&new_id),
+                );
+            }
+            session_attribution::SessionSyncOutcome::NeedsConfirmation {
+                old_id,
+                candidates,
+            } => {
+                if let Some(chosen) = prompt_session_adoption(&old_id, &candidates) {
+                    match session_attribution::adopt_candidate_confirmed(
+                        &work_dir,
+                        &mut session_data,
+                        &chosen,
+                    ) {
+                        Ok(_) => println!(
+                            "Adopted session id {} → {} (user-confirmed)",
+                            short_id(&old_id),
+                            short_id(&chosen.session_id),
+                        ),
+                        Err(e) => eprintln!("Warning: could not record adoption: {}", e),
+                    }
+                } else {
+                    println!(
+                        "Keeping stored session id {}. (Edit via the session config modal or `twapp set-session` if Claude fails to resume.)",
+                        short_id(&old_id),
+                    );
+                }
+            }
+        }
         session_id = session_data.session_id.clone();
         let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
@@ -816,6 +861,72 @@ fn cmd_resume(fork: bool) -> i32 {
         }
         build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
     }
+}
+
+fn short_id(id: &str) -> String {
+    if id.len() <= 8 {
+        id.to_string()
+    } else {
+        format!("{}…", &id[..8])
+    }
+}
+
+/// Interactive fallback for `cmd_resume` when attribution can't auto-resolve.
+/// Returns the candidate the user selected, or `None` to keep the stored id.
+fn prompt_session_adoption(
+    old_id: &str,
+    candidates: &[session_attribution::SessionCandidate],
+) -> Option<session_attribution::SessionCandidate> {
+    use std::io::{BufRead, Write};
+
+    // Skip the prompt when stdin isn't a tty (CI, scripted resumes) — safer
+    // to leave the stored id untouched and let the user fix it manually.
+    if !atty_stdin() {
+        return None;
+    }
+
+    eprintln!();
+    eprintln!(
+        "Claude wrote {} jsonl file(s) since the last resume of {} that don't clearly descend from it:",
+        candidates.len(),
+        short_id(old_id),
+    );
+    // Newest first.
+    let mut sorted = candidates.to_vec();
+    sorted.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    for (idx, c) in sorted.iter().enumerate() {
+        eprintln!(
+            "  [{}] {} ({})",
+            idx + 1,
+            short_id(&c.session_id),
+            c.event
+        );
+    }
+    eprint!(
+        "Pick a number to adopt that id, or press Enter to keep {}: ",
+        short_id(old_id),
+    );
+    let _ = std::io::stderr().flush();
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    if stdin.lock().read_line(&mut line).is_err() {
+        return None;
+    }
+    let choice = line.trim();
+    if choice.is_empty() {
+        return None;
+    }
+    let pick: usize = choice.parse().ok()?;
+    if pick == 0 || pick > sorted.len() {
+        return None;
+    }
+    Some(sorted.into_iter().nth(pick - 1).unwrap())
+}
+
+fn atty_stdin() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
 
 /// Build app args, prepare instance app, and launch GUI.
