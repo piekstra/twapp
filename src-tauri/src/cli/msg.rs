@@ -631,7 +631,7 @@ fn list_contains_handle(list: &[String], handle: &str) -> bool {
         if entry == handle {
             return true;
         }
-        // Legacy multi-recipient hack: "reviewer-and-auto-sell".
+        // Legacy multi-recipient hack: "reviewer-and-worker-a".
         if entry.contains("-and-") && entry.split("-and-").any(|h| h == handle) {
             return true;
         }
@@ -1219,24 +1219,24 @@ ts: 20260420T202957Z\n\
     fn bare_legacy_file_parses_without_crashing() {
         let g = MailboxGuard::new();
         let bare = "from: reviewer\n\
-to: pair-seq\n\
-cc: coordinator, auto-sell\n\
-re: #51 BP-formula audit + #55 + #57 reviews\n\
+to: worker-a\n\
+cc: coordinator, qa\n\
+re: #12 feature review — approved\n\
 \n\
-### #51 formula audit — you're correct\n\
+### #12 formula review — looks good\n\
 \n\
 Body continues here.\n";
-        let path = g.inbox().join("20260420T051745Z-reviewer-to-pair-seq.md");
+        let path = g.inbox().join("20260420T051745Z-reviewer-to-worker-a.md");
         write_raw(&path, bare);
         let parsed = parse_message_file(&path).unwrap();
         assert!(parsed.legacy);
         assert_eq!(parsed.fm.from, "reviewer");
-        assert_eq!(parsed.fm.to, vec!["pair-seq"]);
-        assert_eq!(parsed.fm.cc, vec!["coordinator", "auto-sell"]);
+        assert_eq!(parsed.fm.to, vec!["worker-a"]);
+        assert_eq!(parsed.fm.cc, vec!["coordinator", "qa"]);
         assert_eq!(parsed.fm.priority, MsgPriority::Routine);
         assert_eq!(parsed.fm.ts, "20260420T051745Z");
-        assert!(parsed.fm.subject.as_deref().unwrap().contains("#51 BP-formula"));
-        assert!(parsed.body.contains("### #51 formula audit"));
+        assert!(parsed.fm.subject.as_deref().unwrap().contains("#12 feature review"));
+        assert!(parsed.body.contains("### #12 formula review"));
         assert!(parsed.fm.id.starts_with("LGCY"));
         assert!(parsed.fm.id.len() >= 8 && parsed.fm.id.len() <= 26);
     }
@@ -1245,14 +1245,14 @@ Body continues here.\n";
     fn bare_legacy_re_line_with_continuation_is_folded() {
         let g = MailboxGuard::new();
         let bare = "from: qa\n\
-to: pair-seq\n\
+to: worker-a\n\
 \n\
-re: PR #64 conflict — #63 already shipped the fix\n\
+re: PR #34 conflict — #33 already shipped the fix\n\
     drop the 1-line from your rebase\n\
 \n\
 Body.\n";
         // Note: legacy files sometimes have a blank line before `re:`, sometimes not.
-        let path = g.inbox().join("20260420T053227Z-qa-to-pair-seq.md");
+        let path = g.inbox().join("20260420T053227Z-qa-to-worker-a.md");
         write_raw(&path, bare);
         let parsed = parse_message_file(&path).unwrap();
         assert!(parsed.legacy);
@@ -1260,7 +1260,7 @@ Body.\n";
         // The first blank line between `to:` and `re:` terminates headers,
         // so `re:` falls into body. That matches how real legacy files work
         // — subject extraction is best-effort for bare files.
-        assert!(parsed.body.contains("re: PR #64"), "body: {}", parsed.body);
+        assert!(parsed.body.contains("re: PR #34"), "body: {}", parsed.body);
     }
 
     // ---- Matching / filtering -------------------------------------------
@@ -1311,7 +1311,7 @@ Body.\n";
         let fm = Frontmatter {
             id: "1".repeat(26),
             from: "coordinator".to_string(),
-            to: vec!["reviewer-and-auto-sell".to_string()],
+            to: vec!["reviewer-and-worker-a".to_string()],
             cc: Vec::new(),
             priority: MsgPriority::Routine,
             subject: None,
@@ -1320,7 +1320,7 @@ Body.\n";
             ts: "20260420T100000Z".to_string(),
         };
         assert!(matches_for_handle(&fm, "reviewer"));
-        assert!(matches_for_handle(&fm, "auto-sell"));
+        assert!(matches_for_handle(&fm, "worker-a"));
         assert!(!matches_for_handle(&fm, "qa"));
     }
 
