@@ -1788,6 +1788,13 @@ pub fn validate_role(role: Option<String>) -> Result<Option<String>, String> {
 /// Precedence: explicit `--provenance` wins; then `--spawned` → `"spawned"`;
 /// then `--from-file` implies `"spawned"`; otherwise `"user"`.
 /// Errors if `--provenance` and `--spawned` are both set with disagreeing values.
+///
+/// Accepts any non-empty string for `--provenance` (not allow-listed). The
+/// current consumers (`format_role_cell`, UI) treat the two known values
+/// `"user"` and `"spawned"` specially and render anything else as
+/// not-spawned. Keeping this free-form leaves room for later provenance
+/// kinds (e.g. `"imported"`) without a schema bump; typos like
+/// `--provenance spawnd` will ship verbatim and render as not-spawned.
 pub fn resolve_provenance(
     provenance_arg: Option<String>,
     spawned_flag: bool,

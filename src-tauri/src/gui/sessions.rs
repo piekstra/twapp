@@ -9,6 +9,16 @@ use crate::cli::session::{
     shell_escape_single, AgentProvider, SessionData,
 };
 
+/// Read `(role, provenance)` from the parent session file so a GUI fork can
+/// inherit them. Returns `(None, None)` if the file is missing or unreadable —
+/// a fork off an unknown session is treated as a plain session.
+pub fn read_fork_inherited_metadata(parent_cwd: &str) -> (Option<String>, Option<String>) {
+    crate::cli::session::read_session(std::path::Path::new(parent_cwd))
+        .ok()
+        .map(|s| (s.role, s.provenance))
+        .unwrap_or((None, None))
+}
+
 pub fn sanitize_instance_name(name: &str) -> String {
     let safe: String = name
         .chars()
@@ -1384,6 +1394,10 @@ pub async fn fork_session(
     let provider = config.provider;
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
+    // Fork inherits role + provenance from the parent session so CLI `twapp resume --fork`
+    // and the GUI fork button agree. A fork is a derivative of the parent's context, not
+    // a fresh launch — resetting these would drop the agent tag on every fork.
+    let (parent_role, parent_provenance) = read_fork_inherited_metadata(&original_cwd);
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
         .and_then(|n| n.to_str())
@@ -1492,8 +1506,8 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
-                role: None,
-                provenance: None,
+                role: parent_role.clone(),
+                provenance: parent_provenance.clone(),
             },
         )
     } else {
@@ -1536,8 +1550,8 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
-                role: None,
-                provenance: None,
+                role: parent_role,
+                provenance: parent_provenance,
             },
         )
     };
@@ -1579,4 +1593,72 @@ pub async fn fork_session(
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
     Ok(window_name)
+}
+
+#[cfg(test)]
+mod fork_inheritance_tests {
+    use super::read_fork_inherited_metadata;
+    use std::fs;
+
+    #[test]
+    fn inherits_role_and_provenance_from_parent_session_file() {
+        let dir = std::env::temp_dir().join(format!("twapp-fork-inherit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(".twapp-session.json"),
+            serde_json::json!({
+                "session_id": "abc",
+                "name": "parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": dir.to_string_lossy(),
+                "created": "2026-01-01T00:00:00Z",
+                "last_resumed": null,
+                "role": "implementer",
+                "provenance": "spawned",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        assert_eq!(role.as_deref(), Some("implementer"));
+        assert_eq!(prov.as_deref(), Some("spawned"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_parent_returns_none_pair() {
+        let dir = std::env::temp_dir().join(format!("twapp-fork-missing-{}", uuid::Uuid::new_v4()));
+        // Intentionally do not create the directory; fork against a path with no session file.
+        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        assert_eq!(role, None);
+        assert_eq!(prov, None);
+    }
+
+    #[test]
+    fn legacy_parent_without_fields_returns_none_pair() {
+        let dir = std::env::temp_dir().join(format!("twapp-fork-legacy-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(".twapp-session.json"),
+            r#"{
+                "session_id": "old",
+                "name": "legacy-parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": "/tmp/legacy",
+                "created": "2025-12-01T00:00:00Z",
+                "last_resumed": null
+            }"#,
+        )
+        .unwrap();
+
+        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        assert_eq!(role, None);
+        assert_eq!(prov, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

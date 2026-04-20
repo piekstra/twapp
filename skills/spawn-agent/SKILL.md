@@ -26,13 +26,13 @@ Inline prompts in `--run` are shell-fragile. A long prompt with curly quotes, `-
 
 **Rule: write the briefing to a markdown file first, then reference it.**
 
-Preferred (once the `--from-file` flag ships — see [Coming soon](#coming-soon)):
+Preferred:
 
 ```bash
 twapp work --name my-agent --from-file /absolute/path/to/briefing.md
 ```
 
-Manual equivalent that works on any current twapp version:
+Manual equivalent on a twapp build that predates `--from-file`:
 
 ```bash
 twapp work --name my-agent \
@@ -44,6 +44,34 @@ Notes:
 - Use an **absolute** path to the briefing. A relative path breaks the moment you combine it with `--cwd` or `cd`.
 - The `Read <path> and execute.` wrapper is deliberately short — every character is literal text the shell must carry intact to Claude. Keep what's in the markdown file.
 - Treat the briefing file as the contract. Put acceptance criteria, protocol, and a handle name in it. Don't try to squeeze those into `--run`.
+
+## Role + provenance
+
+Tag each spawned session with its **role** and mark it as **agent-spawned** so later UI, dashboards, and sessions-list output can distinguish workers from the human-driven session you're typing into.
+
+```bash
+twapp work --name my-agent \
+  --role implementer \
+  --from-file /absolute/path/to/briefing.md
+```
+
+What each flag does:
+
+- **`--role <role>`** — a free-form string stored in `.twapp-session.json`. Use the archetype names from `skills/agent-coordinator/SKILL.md §12` (e.g. `coordinator`, `implementer`, `reviewer`, `auditor`, `log-watcher`, `architect`, `qa`, `area-owner`, `designer`). Empty string is rejected. Passing an unknown token is fine — validation lives in the UI layer, not the CLI.
+- **`--from-file`** automatically implies `provenance=spawned` — a human caller would be typing `twapp work` directly, so if a briefing file is involved, it's almost always an agent launch. No need to pass `--spawned` alongside it.
+- **`--spawned`** — the explicit form; use it when spawning without `--from-file` (e.g. a `--run` spawn of a one-shot helper).
+- **`--provenance <user|spawned>`** — escape hatch. Wins over `--spawned` and over the `--from-file` auto-default. Pass `--provenance user` to mark an otherwise-spawned session as user-initiated.
+
+The role shows up in `twapp sessions` output as a bracketed 4-char tag plus a `spawned` marker when relevant:
+
+```
+Name              Ticket       Session ID        Last Active            Role              Directory
+my-agent          -            abc123def456...   2026-04-20 22:00:00    [impl] spawned    /path/to/worktree
+```
+
+Sessions created without `--role` / `--spawned` simply show `-` in that column, so pre-existing workflows aren't visually disturbed.
+
+Include the role in your briefing so the agent knows what archetype it's operating as — it influences tone, scope, and which skills it loads.
 
 ## Worktree permission pre-approval
 
@@ -117,14 +145,12 @@ If both look healthy but no hello lands within 2 min, assume the agent is blocke
 
 ## Shutdown
 
-Once `twapp stop` ships (see [Coming soon](#coming-soon)):
-
 ```bash
 twapp stop --name my-agent              # graceful
 twapp stop --name my-agent --force      # SIGKILL fallback
 ```
 
-Manual equivalent that works on any current twapp version:
+Manual equivalent on a twapp build that predates `twapp stop`:
 
 ```bash
 kill -TERM $(pgrep -f 'twapp --name my-agent')
@@ -172,10 +198,11 @@ cat > ../example-repo_my-feature-fix/.claude/settings.local.json <<'EOF'
 {"permissions":{"defaultMode":"bypassPermissions","allow":["Bash(*)","Write(**)","Edit(**)","Read(**)"]}}
 EOF
 
-# 4. Spawn.
+# 4. Spawn. --from-file auto-sets provenance=spawned; --role tags it as an implementer.
 twapp work --name my-feature-fix \
   --cwd /path/to/example-repo_my-feature-fix \
-  --run "claude --dangerously-skip-permissions 'Read /tmp/briefings/my-feature-fix.md and execute.'"
+  --role implementer \
+  --from-file /tmp/briefings/my-feature-fix.md
 
 # 5. Verify.
 twapp sessions | grep my-feature-fix
@@ -216,10 +243,11 @@ cat > "$WORKDIR/.claude/settings.local.json" <<'EOF'
 {"permissions":{"defaultMode":"bypassPermissions","allow":["Bash(*)","Write(**)","Read(**)"]}}
 EOF
 
-# 3. Spawn.
+# 3. Spawn with a reviewer role.
 twapp work --name my-reviewer \
   --cwd "$WORKDIR" \
-  --run "claude --dangerously-skip-permissions 'Read /tmp/briefings/my-reviewer.md and execute.'"
+  --role reviewer \
+  --from-file /tmp/briefings/my-reviewer.md
 
 # 4. Verify liveness.
 twapp sessions | grep my-reviewer
@@ -230,12 +258,3 @@ kill -TERM "$(pgrep -f 'twapp --name my-reviewer')"
 ```
 
 Replace `my-*` / `example-*` with your own names. Neither example assumes a particular project, language, or toolchain.
-
-## Coming soon
-
-Two ergonomic improvements are tracked in a sibling PR on this repo:
-
-- **`twapp stop --name <name>`** — graceful shutdown, with `--force` as SIGKILL fallback. Replaces the `kill -TERM $(pgrep ...)` dance above.
-- **`twapp work --from-file <path>`** — resolves `<path>` to absolute, verifies it exists before spawn, and wraps it in `Read <path> and execute.` for you. Replaces the hand-rolled `--run "claude --dangerously-skip-permissions 'Read ... and execute.'"`.
-
-Once those land, prefer the flagged forms shown at the top of each section. Until then, the manual equivalents work on any current twapp build.
