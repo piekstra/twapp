@@ -585,7 +585,9 @@ pub async fn create_and_launch_session(
     github: bool,
     chrome: bool,
 ) -> Result<(), String> {
-    let result = crate::cli::create_session_core(ticket, name, None, github, None, None, chrome)?;
+    let result = crate::cli::create_session_core(
+        ticket, name, None, github, None, None, chrome, None, Some("user".to_string()),
+    )?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
     crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
@@ -1355,6 +1357,8 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             imported_from: Some(original_cwd),
             use_chrome: None,
             override_terminal_theme: None,
+            role: None,
+            provenance: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
@@ -1488,6 +1492,8 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
+                role: None,
+                provenance: None,
             },
         )
     } else {
@@ -1530,6 +1536,8 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
+                role: None,
+                provenance: None,
             },
         )
     };

@@ -54,6 +54,16 @@ pub struct SessionData {
     pub use_chrome: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_terminal_theme: Option<bool>,
+    /// Role archetype for this session (e.g. "coordinator", "implementer", "reviewer").
+    /// Free-form — not enum-enforced at this layer; UI does any validation.
+    /// `None` means never set; treat as generic worker in UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// How the session was created: `"user"` (human ran `twapp work`) or
+    /// `"spawned"` (another twapp session invoked us, e.g. via `--from-file`).
+    /// `None` on legacy session files predating this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 impl SessionData {
@@ -415,6 +425,99 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn base_session() -> SessionData {
+        SessionData {
+            session_id: "claude-123".to_string(),
+            name: "demo".to_string(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: "/tmp/demo".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            last_resumed: None,
+            provider: Some(AgentProvider::Claude),
+            codex_session_id: None,
+            codex_cwd: None,
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+            role: None,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn session_serde_roundtrip_with_role_and_provenance() {
+        let mut data = base_session();
+        data.role = Some("implementer".to_string());
+        data.provenance = Some("spawned".to_string());
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains("\"role\":\"implementer\""));
+        assert!(json.contains("\"provenance\":\"spawned\""));
+        let back: SessionData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.role.as_deref(), Some("implementer"));
+        assert_eq!(back.provenance.as_deref(), Some("spawned"));
+    }
+
+    #[test]
+    fn session_serde_roundtrip_omits_absent_role_and_provenance() {
+        let data = base_session();
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(
+            !json.contains("\"role\""),
+            "role should be skipped when None: {}",
+            json
+        );
+        assert!(
+            !json.contains("\"provenance\""),
+            "provenance should be skipped when None: {}",
+            json
+        );
+        let back: SessionData = serde_json::from_str(&json).unwrap();
+        assert!(back.role.is_none());
+        assert!(back.provenance.is_none());
+    }
+
+    #[test]
+    fn write_then_list_sessions_preserves_role_and_provenance() {
+        let root = std::env::temp_dir().join(format!("twapp-sess-role-{}", uuid::Uuid::new_v4()));
+        let session_dir = root.join("worker");
+        fs::create_dir_all(&session_dir).unwrap();
+
+        let mut data = base_session();
+        data.name = "worker".to_string();
+        data.role = Some("coordinator".to_string());
+        data.provenance = Some("spawned".to_string());
+        write_session(&session_dir, &data).unwrap();
+
+        let listed = list_sessions(&root);
+        assert_eq!(listed.len(), 1);
+        let (loaded, _) = &listed[0];
+        assert_eq!(loaded.role.as_deref(), Some("coordinator"));
+        assert_eq!(loaded.provenance.as_deref(), Some("spawned"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_session_file_deserializes() {
+        // JSON from a twapp version predating role/provenance fields.
+        let legacy = r#"{
+            "session_id": "old-abc",
+            "name": "legacy",
+            "color": "",
+            "ticket_key": null,
+            "claude_cwd": "/tmp/legacy",
+            "created": "2025-12-01T00:00:00Z",
+            "last_resumed": null
+        }"#;
+        let data: SessionData = serde_json::from_str(legacy).unwrap();
+        assert_eq!(data.name, "legacy");
+        assert!(data.role.is_none());
+        assert!(data.provenance.is_none());
+    }
+
     #[test]
     fn display_session_id_prefers_requested_provider() {
         let data = SessionData {
@@ -433,6 +536,8 @@ mod tests {
             imported_from: None,
             use_chrome: None,
             override_terminal_theme: None,
+            role: None,
+            provenance: None,
         };
 
         assert_eq!(
@@ -463,6 +568,8 @@ mod tests {
             imported_from: None,
             use_chrome: None,
             override_terminal_theme: None,
+            role: None,
+            provenance: None,
         };
 
         assert!(data.needs_migration(AgentProvider::Codex));

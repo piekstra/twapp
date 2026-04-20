@@ -561,7 +561,7 @@ defaults:
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `.twapp-session.json` | Working dir | Session metadata, provider handles, fork ancestry |
+| `.twapp-session.json` | Working dir | Session metadata, provider handles, fork ancestry, role + provenance |
 | `.twapp-notes-{name}.json` | Working dir | Session notes |
 | `.twapp-prompts-{name}.json` | Working dir | Project-scoped quick prompts |
 | `.twapp-ticket.json` | Working dir | Linked ticket metadata |

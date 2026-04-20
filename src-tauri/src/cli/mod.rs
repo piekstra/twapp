@@ -43,6 +43,19 @@ pub enum Commands {
         /// Use Chrome instead of Claude desktop
         #[arg(long)]
         chrome: bool,
+        /// Set the role archetype for this session (e.g., coordinator,
+        /// implementer, reviewer). Stored in .twapp-session.json for later UI tagging.
+        #[arg(long)]
+        role: Option<String>,
+        /// Mark this session as agent-spawned (not user-initiated).
+        /// Use when launching this session from another twapp session
+        /// programmatically (e.g., via --from-file).
+        #[arg(long)]
+        spawned: bool,
+        /// Explicit provenance override ("user" or "spawned"). Wins over
+        /// --spawned and over the implicit default from --from-file.
+        #[arg(long)]
+        provenance: Option<String>,
     },
     /// Stop a running session by name (SIGTERM claude child + twapp host).
     ///
@@ -301,7 +314,22 @@ pub fn run(cmd: Commands) -> i32 {
             session_id: fork_session_id,
             claude_cwd,
             chrome,
-        } => cmd_work(ticket, name, run, from_file, github, fork_session_id, claude_cwd, chrome),
+            role,
+            spawned,
+            provenance,
+        } => cmd_work(
+            ticket,
+            name,
+            run,
+            from_file,
+            github,
+            fork_session_id,
+            claude_cwd,
+            chrome,
+            role,
+            spawned,
+            provenance,
+        ),
         Commands::Stop { name, force } => stop::cmd_stop(&name, force),
         Commands::Resume { fork } => cmd_resume(fork),
         Commands::Sessions { path } => cmd_sessions(path),
@@ -466,6 +494,8 @@ pub fn create_session_core(
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
     chrome: bool,
+    role: Option<String>,
+    provenance: Option<String>,
 ) -> Result<SessionCreationResult, String> {
     if ticket_id.is_none() && session_name.is_none() {
         return Err("Provide a ticket or session name".to_string());
@@ -581,6 +611,8 @@ pub fn create_session_core(
         imported_from: None,
         use_chrome: if chrome { Some(true) } else { None },
         override_terminal_theme: None,
+        role,
+        provenance,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -673,6 +705,9 @@ fn cmd_work(
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
     chrome: bool,
+    role: Option<String>,
+    spawned: bool,
+    provenance_arg: Option<String>,
 ) -> i32 {
     if ticket_id.is_none() && session_name.is_none() {
         eprintln!("Error: Provide a ticket or --name for the session.");
@@ -685,6 +720,22 @@ fn cmd_work(
         eprintln!("Error: --run and --from-file are mutually exclusive.");
         return 1;
     }
+
+    let role = match validate_role(role) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    let provenance = match resolve_provenance(provenance_arg, spawned, from_file.is_some()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
 
     // Feature: --from-file. Resolve to an absolute path and verify the file
     // exists BEFORE launching any terminal, then wrap as a claude prompt.
@@ -727,7 +778,17 @@ fn cmd_work(
         return 1;
     }
 
-    let result = match create_session_core(ticket_id, session_name, effective_run, github, fork_session_id, claude_cwd_arg, chrome) {
+    let result = match create_session_core(
+        ticket_id,
+        session_name,
+        effective_run,
+        github,
+        fork_session_id,
+        claude_cwd_arg,
+        chrome,
+        role,
+        Some(provenance),
+    ) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -847,6 +908,8 @@ fn cmd_resume(fork: bool) -> i32 {
             imported_from: None,
             use_chrome: if chrome { Some(true) } else { None },
             override_terminal_theme: None,
+            role: session_data.role.clone(),
+            provenance: session_data.provenance.clone(),
         };
         session_id = new_id;
         if let Err(e) = session::write_session(&work_dir, &session_data) {
@@ -955,10 +1018,10 @@ fn cmd_sessions(path: Option<String>) -> i32 {
     }
 
     println!(
-        "{:<25} {:<12} {:<16} {:<20} {}",
-        "Name", "Ticket", "Session ID", "Last Active", "Directory"
+        "{:<25} {:<12} {:<16} {:<20} {:<16} {}",
+        "Name", "Ticket", "Session ID", "Last Active", "Role", "Directory"
     );
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(116));
     for (s, dir) in &sessions {
         let name = &s.name[..s.name.len().min(24)];
         let ticket = s.ticket_key.as_deref().unwrap_or("-");
@@ -970,16 +1033,42 @@ fn cmd_sessions(path: Option<String>) -> i32 {
             .or(Some(s.created.as_str()))
             .unwrap_or("?");
         let last = last[..last.len().min(19)].replace('T', " ");
+        let role_cell = format_role_cell(s.role.as_deref(), s.provenance.as_deref());
         println!(
-            "{:<25} {:<12} {:<16} {:<20} {}",
+            "{:<25} {:<12} {:<16} {:<20} {:<16} {}",
             name,
             ticket,
             sid,
             last,
+            role_cell,
             dir.display()
         );
     }
     0
+}
+
+/// Format the role + provenance cell for `twapp sessions` output.
+/// Returns e.g. `[impl] spawned`, `[coor]`, `spawned`, or `-`.
+/// Role is shown as the first 4 chars in brackets; `spawned` only shown for
+/// provenance == "spawned" (user-provenance is the common case, so elided).
+pub fn format_role_cell(role: Option<&str>, provenance: Option<&str>) -> String {
+    let role_part = role
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .map(|r| {
+            let short: String = r.chars().take(4).collect();
+            format!("[{}]", short)
+        });
+    let prov_part = match provenance {
+        Some("spawned") => Some("spawned"),
+        _ => None,
+    };
+    match (role_part, prov_part) {
+        (Some(r), Some(p)) => format!("{} {}", r, p),
+        (Some(r), None) => r,
+        (None, Some(p)) => p.to_string(),
+        (None, None) => "-".to_string(),
+    }
 }
 
 fn cmd_ticket_link(ticket_key: &str, dir: Option<&str>, github: bool) -> i32 {
@@ -1686,6 +1775,44 @@ fn cmd_dev_reload(pid: Option<u32>, cwd: &str, gui_src: Option<&str>) -> i32 {
     }
 }
 
+/// Normalize a `--role` argument: reject empty/whitespace-only, otherwise pass through.
+pub fn validate_role(role: Option<String>) -> Result<Option<String>, String> {
+    match role {
+        Some(r) if r.trim().is_empty() => Err("--role cannot be empty.".to_string()),
+        other => Ok(other),
+    }
+}
+
+/// Decide the provenance value for a new session given the CLI flags.
+///
+/// Precedence: explicit `--provenance` wins; then `--spawned` → `"spawned"`;
+/// then `--from-file` implies `"spawned"`; otherwise `"user"`.
+/// Errors if `--provenance` and `--spawned` are both set with disagreeing values.
+pub fn resolve_provenance(
+    provenance_arg: Option<String>,
+    spawned_flag: bool,
+    has_from_file: bool,
+) -> Result<String, String> {
+    if let Some(p) = provenance_arg {
+        let trimmed = p.trim();
+        if trimmed.is_empty() {
+            return Err("--provenance cannot be empty.".to_string());
+        }
+        if spawned_flag && trimmed != "spawned" {
+            return Err(format!(
+                "--spawned and --provenance {} disagree; pass only one.",
+                trimmed
+            ));
+        }
+        return Ok(trimmed.to_string());
+    }
+    if spawned_flag || has_from_file {
+        Ok("spawned".to_string())
+    } else {
+        Ok("user".to_string())
+    }
+}
+
 /// Translate `--from-file <path>` into the equivalent `--run` command.
 /// Resolves `<path>` to an absolute path so later `cd`s don't break it,
 /// and returns an error if the file does not exist.
@@ -1851,5 +1978,115 @@ mod from_file_tests {
             cmd
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::{format_role_cell, resolve_provenance, validate_role};
+
+    #[test]
+    fn empty_role_errors() {
+        let err = validate_role(Some("".to_string())).unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn whitespace_role_errors() {
+        let err = validate_role(Some("   ".to_string())).unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn populated_role_passes_through_verbatim() {
+        assert_eq!(
+            validate_role(Some("coordinator".to_string())).unwrap(),
+            Some("coordinator".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_role_is_none() {
+        assert_eq!(validate_role(None).unwrap(), None);
+    }
+
+    #[test]
+    fn direct_work_defaults_to_user() {
+        assert_eq!(resolve_provenance(None, false, false).unwrap(), "user");
+    }
+
+    #[test]
+    fn spawned_flag_sets_spawned() {
+        assert_eq!(resolve_provenance(None, true, false).unwrap(), "spawned");
+    }
+
+    #[test]
+    fn from_file_implies_spawned_provenance() {
+        assert_eq!(resolve_provenance(None, false, true).unwrap(), "spawned");
+    }
+
+    #[test]
+    fn explicit_provenance_user_overrides_from_file_default() {
+        assert_eq!(
+            resolve_provenance(Some("user".to_string()), false, true).unwrap(),
+            "user"
+        );
+    }
+
+    #[test]
+    fn explicit_provenance_verbatim_passes_through() {
+        assert_eq!(
+            resolve_provenance(Some("audit".to_string()), false, false).unwrap(),
+            "audit"
+        );
+    }
+
+    #[test]
+    fn empty_provenance_errors() {
+        let err = resolve_provenance(Some("  ".to_string()), false, false).unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn provenance_and_spawned_disagreement_errors() {
+        let err = resolve_provenance(Some("user".to_string()), true, false).unwrap_err();
+        assert!(err.contains("disagree"), "got: {}", err);
+    }
+
+    #[test]
+    fn provenance_spawned_plus_spawned_flag_is_fine() {
+        assert_eq!(
+            resolve_provenance(Some("spawned".to_string()), true, false).unwrap(),
+            "spawned"
+        );
+    }
+
+    #[test]
+    fn role_cell_both_set() {
+        assert_eq!(
+            format_role_cell(Some("implementer"), Some("spawned")),
+            "[impl] spawned"
+        );
+    }
+
+    #[test]
+    fn role_cell_short_role_preserved() {
+        assert_eq!(format_role_cell(Some("qa"), Some("spawned")), "[qa] spawned");
+    }
+
+    #[test]
+    fn role_cell_role_only() {
+        assert_eq!(format_role_cell(Some("coordinator"), Some("user")), "[coor]");
+    }
+
+    #[test]
+    fn role_cell_none_shown_as_dash() {
+        assert_eq!(format_role_cell(None, None), "-");
+        assert_eq!(format_role_cell(None, Some("user")), "-");
+    }
+
+    #[test]
+    fn role_cell_provenance_only() {
+        assert_eq!(format_role_cell(None, Some("spawned")), "spawned");
     }
 }
