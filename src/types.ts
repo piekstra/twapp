@@ -186,6 +186,15 @@ export interface DeletePreflight {
   forked_from: string | null;
 }
 
+export interface SessionHistoryEvent {
+  timestamp: string;
+  event: "compacted" | "cleared" | "manual_edit";
+  old_session_id: string;
+  new_session_id: string;
+  ambiguous?: boolean | null;
+  reason?: string | null;
+}
+
 export type SortMode = "recent" | "alpha";
 
 export type LauncherView = "sessions" | "settings" | "new-session" | "import";

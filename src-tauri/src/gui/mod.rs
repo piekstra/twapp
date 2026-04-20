@@ -94,6 +94,7 @@ pub fn run(args: GuiArgs) {
             sessions::rename_session,
             sessions::update_session_color,
             sessions::update_session_fields,
+            sessions::get_session_history,
             sessions::delete_session,
             sessions::discover_claude_sessions,
             sessions::import_sessions,
