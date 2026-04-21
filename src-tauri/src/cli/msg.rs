@@ -173,13 +173,15 @@ pub enum MsgCommands {
         note: Option<String>,
     },
     /// List messages from the mailbox inbox
-    #[command(after_help = "Examples:\n  twapp msg fetch --for reviewer\n  twapp msg fetch --priority urgent\n  twapp msg fetch --since 20260420T180000Z --limit 10\n  twapp msg fetch --for reviewer --format json")]
+    #[command(after_help = "Examples:\n  twapp msg fetch --for reviewer\n  twapp msg fetch --priority urgent\n  twapp msg fetch --since 20260420T180000Z --limit 10\n  twapp msg fetch --for reviewer --mark-read\n  twapp msg fetch --for reviewer --format json")]
     Fetch {
         /// Handle to filter for. Returns direct messages + broadcasts + cc.
         /// Defaults to the current .twapp-session.json name. Omit to list everything.
         #[arg(long = "for")]
         for_handle: Option<String>,
         /// Return only messages at or after this cursor (ts or filename prefix).
+        /// When omitted, defaults to strictly-after the handle's last `read`
+        /// cursor entry (PR-3, design §2.7).
         #[arg(long)]
         since: Option<String>,
         /// Filter by priority.
@@ -191,7 +193,9 @@ pub enum MsgCommands {
         /// Filter to messages addressed to a specific channel.
         #[arg(long)]
         channel: Option<String>,
-        /// Reserved for PR-3 (cursors). No-op in PR-1.
+        /// Append `action:"read"` cursor entries for each returned message
+        /// into `<mailbox>/cursors/<for>.jsonl`. No-op without --for / a
+        /// session handle to attribute the reads to.
         #[arg(long = "mark-read")]
         mark_read: bool,
         /// Cap the number of messages returned (oldest first).
@@ -203,6 +207,41 @@ pub enum MsgCommands {
         /// Skip session-name lookup for `--for`; list everything.
         #[arg(long)]
         all: bool,
+    },
+    /// Append an `action:"ack"` cursor entry committing the handle to act on
+    /// a message (design §2.7). Use after a `fetch --mark-read` when the
+    /// worker has decided the message's ask is accepted.
+    #[command(after_help = "Examples:\n  twapp msg ack 01JS4M7Q8W\n  twapp msg ack 01JS4M7Q8W --note \"scope accepted, rebasing\"")]
+    Ack {
+        /// Message id to ack.
+        msg_id: String,
+        /// Handle performing the ack. Defaults to the current .twapp-session.json name.
+        #[arg(long)]
+        from: Option<String>,
+        /// Optional free-text note; stored alongside the cursor entry.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// One-shot directory-layout migration (design §2.1 + §2.10, PR-3).
+    ///
+    /// Moves every flat `<mailbox>/inbox/*.md` into its canonical slot under
+    /// `broadcast/`, `direct/<handle>/`, or `channel/<name>/` based on the
+    /// file's `to:` field, drops multi-recipient symlinks, and leaves a
+    /// legacy symlink at the original flat path during the grace period.
+    /// Idempotent — re-running finds nothing to move.
+    ///
+    /// `--drop-legacy` closes the grace period: removes every symlink
+    /// directly under `inbox/` (legacy shims for both new writes and
+    /// previously-migrated files).
+    #[command(after_help = "Examples:\n  twapp msg migrate --dry-run\n  twapp msg migrate\n  twapp msg migrate --drop-legacy")]
+    Migrate {
+        /// Report what would change without touching anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Additionally remove legacy `inbox/*.md` symlinks (the grace-period
+        /// compatibility shim). Safe to re-run; no-op if nothing is left.
+        #[arg(long = "drop-legacy")]
+        drop_legacy: bool,
     },
     /// Archive maintenance: rotate flat messages into `<YYYY-MM-DD>/`, purge
     /// old days, or list counts per day.
@@ -253,6 +292,107 @@ pub fn inbox_dir() -> Result<PathBuf, String> {
 
 pub fn urgent_dir(inbox: &Path) -> PathBuf {
     inbox.join("urgent")
+}
+
+pub fn broadcast_dir(inbox: &Path) -> PathBuf {
+    inbox.join("broadcast")
+}
+
+pub fn direct_dir(inbox: &Path) -> PathBuf {
+    inbox.join("direct")
+}
+
+pub fn channel_dir(inbox: &Path) -> PathBuf {
+    inbox.join("channel")
+}
+
+/// Canonical path where a message addressed to `recipient` should land under
+/// the split layout (design §2.1):
+///
+/// - `"all"` → `inbox/broadcast/<filename>`
+/// - `"channel:<name>"` → `inbox/channel/<name>/<filename>`
+/// - any other (non-empty) handle → `inbox/direct/<handle>/<filename>`
+///
+/// Empty or malformed recipients (trailing `channel:` with no name) yield
+/// None so callers can skip them.
+pub fn recipient_path(inbox: &Path, recipient: &str, filename: &str) -> Option<PathBuf> {
+    let r = recipient.trim();
+    if r.is_empty() {
+        return None;
+    }
+    if r == "all" {
+        return Some(broadcast_dir(inbox).join(filename));
+    }
+    if let Some(ch) = r.strip_prefix("channel:") {
+        let ch = ch.trim();
+        if ch.is_empty() {
+            return None;
+        }
+        return Some(channel_dir(inbox).join(ch).join(filename));
+    }
+    Some(direct_dir(inbox).join(r).join(filename))
+}
+
+/// Build a relative path from `base` to `target`, assuming both share a
+/// common absolute-or-relative prefix (all callers in this module are rooted
+/// under the inbox). Returns `None` only if the two paths have fundamentally
+/// incompatible prefixes (one absolute, one relative with no overlap).
+fn make_relative(target: &Path, base: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let t_comps: Vec<Component> = target.components().collect();
+    let b_comps: Vec<Component> = base.components().collect();
+    let mut common = 0usize;
+    while common < t_comps.len()
+        && common < b_comps.len()
+        && t_comps[common] == b_comps[common]
+    {
+        common += 1;
+    }
+    if common == 0 && target.is_absolute() != base.is_absolute() {
+        return None;
+    }
+    let up = b_comps.len() - common;
+    let mut rel = PathBuf::new();
+    for _ in 0..up {
+        rel.push("..");
+    }
+    for comp in &t_comps[common..] {
+        rel.push(comp.as_os_str());
+    }
+    Some(rel)
+}
+
+/// Create a symlink at `link_path` whose target resolves to `canonical`,
+/// expressed relative to `link_path`'s parent. Idempotent — leaves an
+/// existing file/symlink alone. Logs rather than errors on failure, matching
+/// the rest of the messaging layer's "best-effort symlink" convention.
+pub fn symlink_to_canonical(link_path: &Path, canonical: &Path) {
+    if link_path.exists() || link_path.is_symlink() {
+        return;
+    }
+    let Some(parent) = link_path.parent() else {
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(parent) {
+        log::debug!("create {} failed: {}", parent.display(), e);
+        return;
+    }
+    let Some(rel) = make_relative(canonical, parent) else {
+        log::debug!(
+            "could not relativize {} against {}",
+            canonical.display(),
+            parent.display()
+        );
+        return;
+    };
+    if let Err(e) = std::os::unix::fs::symlink(&rel, link_path) {
+        log::debug!(
+            "symlink {} -> {}: {}",
+            link_path.display(),
+            rel.display(),
+            e
+        );
+    }
 }
 
 // --- ID / timestamp generation ---------------------------------------------
@@ -402,7 +542,20 @@ pub struct SentMessage {
     pub fm: Frontmatter,
 }
 
-/// Compose + write a message to `<inbox>/<ts>-<id6>.md`.
+/// Compose + write a message under the split layout (design §2.1, PR-3):
+///
+/// - Canonical file lands under the first recipient's slot —
+///   `inbox/broadcast/<filename>`, `inbox/direct/<handle>/<filename>`,
+///   or `inbox/channel/<name>/<filename>`.
+/// - Additional `to:` recipients and every direct `cc:` get a relative
+///   symlink to the canonical file, so a reader scanning only its own
+///   `direct/<self>/` slot still finds multi-recipient traffic.
+/// - A legacy symlink at `inbox/<filename>` points back to the canonical
+///   file for the grace-period shim, so old readers doing `ls inbox/` still
+///   see everything. `twapp msg migrate --drop-legacy` closes the period.
+/// - Urgent / blocker messages additionally hardlink-via-symlink into
+///   `inbox/urgent/<recipient>/` (PR-4 behavior, retargeted at the canonical
+///   under the new layout).
 pub fn write_message(inbox: &Path, args: SendArgs) -> Result<SentMessage, String> {
     if args.to.is_empty() {
         return Err("At least one recipient is required.".to_string());
@@ -416,7 +569,6 @@ pub fn write_message(inbox: &Path, args: SendArgs) -> Result<SentMessage, String
     let ts = current_ts();
     let id6 = id.chars().take(6).collect::<String>();
     let filename = format!("{}-{}.md", ts, id6);
-    let path = inbox.join(&filename);
 
     let fm = Frontmatter {
         id,
@@ -436,20 +588,64 @@ pub fn write_message(inbox: &Path, args: SendArgs) -> Result<SentMessage, String
     content.push_str(body);
     content.push('\n');
 
-    std::fs::write(&path, content).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    // Canonical path = first routable recipient's slot. An all-empty /
+    // malformed recipient list was rejected above, but `recipient_path`
+    // still returns None for individual garbage entries — skip those.
+    let canonical = fm
+        .to
+        .iter()
+        .find_map(|r| recipient_path(inbox, r, &filename))
+        .ok_or_else(|| "No routable recipient (empty handle / bad channel name).".to_string())?;
+    if let Some(parent) = canonical.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(&canonical, &content)
+        .map_err(|e| format!("write {}: {}", canonical.display(), e))?;
 
-    // Priority lane (design §2.5, PR-4): urgent + blocker also get a symlink
-    // under inbox/urgent/<recipient>/<filename> so readers can scan the small
-    // urgent lane without listing the whole inbox. Routine messages are not
-    // linked. Channel recipients are out of scope for PR-4.
-    if matches!(fm.priority, MsgPriority::Urgent | MsgPriority::Blocker) {
-        create_urgent_symlinks(inbox, &filename, &fm.to);
+    // Secondary symlinks: every other `to:` slot that isn't already the
+    // canonical. Multi-recipient direct traffic therefore lands once on
+    // disk and is reachable from each recipient's own direct/<self>/ dir.
+    for recipient in &fm.to {
+        if let Some(p) = recipient_path(inbox, recipient, &filename) {
+            if p != canonical {
+                symlink_to_canonical(&p, &canonical);
+            }
+        }
     }
 
-    Ok(SentMessage { path, fm })
+    // CC recipients are "visible to recipient" (design §2.2) — give each
+    // one a direct/<cc>/ symlink so scoped scans pick them up. Channel and
+    // `all` cc's don't make sense; skip them.
+    for cc in &fm.cc {
+        let c = cc.trim();
+        if c.is_empty() || c == "all" || c.starts_with("channel:") {
+            continue;
+        }
+        let p = direct_dir(inbox).join(c).join(&filename);
+        if p != canonical {
+            symlink_to_canonical(&p, &canonical);
+        }
+    }
+
+    // Legacy symlink at `inbox/<filename>` so `ls inbox/` still lists every
+    // message for un-upgraded readers. PR-3 keeps this on by default;
+    // `twapp msg migrate --drop-legacy` closes the grace period.
+    let legacy = inbox.join(&filename);
+    symlink_to_canonical(&legacy, &canonical);
+
+    // Priority lane (design §2.5, PR-4): urgent + blocker also get a symlink
+    // under inbox/urgent/<recipient>/<filename>. The target is the canonical
+    // file under the new layout (direct/<first>/... or broadcast/...), so
+    // every recipient's urgent link resolves to a single real file.
+    if matches!(fm.priority, MsgPriority::Urgent | MsgPriority::Blocker) {
+        create_urgent_symlinks(inbox, &canonical, &filename, &fm.to);
+    }
+
+    Ok(SentMessage { path: canonical, fm })
 }
 
-fn create_urgent_symlinks(inbox: &Path, filename: &str, to: &[String]) {
+fn create_urgent_symlinks(inbox: &Path, canonical: &Path, filename: &str, to: &[String]) {
     let urgent_root = urgent_dir(inbox);
     for recipient in to {
         // Channel lane lives in PR-6; skip for now.
@@ -460,45 +656,77 @@ fn create_urgent_symlinks(inbox: &Path, filename: &str, to: &[String]) {
         if trimmed.is_empty() {
             continue;
         }
-        let recipient_dir = urgent_root.join(trimmed);
-        if let Err(e) = std::fs::create_dir_all(&recipient_dir) {
-            log::debug!(
-                "create urgent dir {} failed: {}",
-                recipient_dir.display(),
-                e
-            );
-            continue;
-        }
-        let link_path = recipient_dir.join(filename);
-        // Symlinks are idempotent — if one already exists at this path, leave
-        // it alone rather than failing (e.g. two writers racing to the same
-        // id6, which is astronomically unlikely but cheap to tolerate).
-        if link_path.exists() || link_path.is_symlink() {
-            continue;
-        }
-        // Relative target so moving the mailbox tree doesn't break the link.
-        let target = PathBuf::from("../..").join(filename);
-        if let Err(e) = std::os::unix::fs::symlink(&target, &link_path) {
-            log::debug!(
-                "symlink {} -> {} failed: {}",
-                link_path.display(),
-                target.display(),
-                e
-            );
-        }
+        let link_path = urgent_root.join(trimmed).join(filename);
+        symlink_to_canonical(&link_path, canonical);
     }
 }
 
 // --- Reading / parsing -----------------------------------------------------
 
+/// Scan every `.md` in the mailbox inbox under both the split layout
+/// (`broadcast/`, `direct/<handle>/`, `channel/<name>/`) and the flat legacy
+/// layout, deduped by canonical path. Messages are returned sorted by
+/// `(ts, id)` ascending.
+///
+/// The dedup step is what lets legacy symlinks at `inbox/<filename>` and
+/// per-recipient multi-write symlinks coexist with the canonical file
+/// without double-counting.
 pub fn list_messages(inbox: &Path) -> Vec<ParsedMessage> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(inbox) else {
-        return out;
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+    // New-shape scans.
+    scan_flat_dir_into(&broadcast_dir(inbox), &mut out, &mut seen);
+    scan_subdirs_into(&direct_dir(inbox), &mut out, &mut seen);
+    scan_subdirs_into(&channel_dir(inbox), &mut out, &mut seen);
+
+    // Legacy flat fallback — files directly under inbox/*.md that aren't
+    // already reachable via the new layout (dedup by canonical path).
+    if let Ok(entries) = std::fs::read_dir(inbox) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.file_type().is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.ends_with(".md") {
+                continue;
+            }
+            let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if !seen.insert(canon) {
+                continue;
+            }
+            if let Some(msg) = parse_message_file(&path) {
+                out.push(msg);
+            }
+        }
+    }
+
+    out.sort_by(|a, b| a.fm.ts.cmp(&b.fm.ts).then_with(|| a.fm.id.cmp(&b.fm.id)));
+    out
+}
+
+fn scan_flat_dir_into(
+    dir: &Path,
+    out: &mut Vec<ParsedMessage>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_dir() {
             continue;
         }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -507,12 +735,30 @@ pub fn list_messages(inbox: &Path) -> Vec<ParsedMessage> {
         if !name.ends_with(".md") {
             continue;
         }
+        let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if !seen.insert(canon) {
+            continue;
+        }
         if let Some(msg) = parse_message_file(&path) {
             out.push(msg);
         }
     }
-    out.sort_by(|a, b| a.fm.ts.cmp(&b.fm.ts).then_with(|| a.fm.id.cmp(&b.fm.id)));
-    out
+}
+
+fn scan_subdirs_into(
+    root: &Path,
+    out: &mut Vec<ParsedMessage>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_flat_dir_into(&path, out, seen);
+        }
+    }
 }
 
 /// Scan the urgent-priority lane for a given recipient (or all lanes when
@@ -1079,18 +1325,19 @@ pub fn cmd_fetch(
     priority: Option<MsgPriority>,
     thread: Option<String>,
     channel: Option<String>,
-    _mark_read: bool,
+    mark_read: bool,
     limit: Option<usize>,
     format: FetchFormat,
     all: bool,
 ) -> i32 {
-    let inbox = match inbox_dir() {
+    let mailbox = match resolve_mailbox_dir() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error: {}", e);
             return 1;
         }
     };
+    let inbox = mailbox.join("inbox");
 
     let effective_for = if all {
         None
@@ -1110,15 +1357,53 @@ pub fn cmd_fetch(
             })
     };
 
-    let msgs = select_messages(
+    // Resolve --since. Explicit value → use as-is (inclusive, legacy
+    // behavior). Omitted + we know whose reads to default to → use the
+    // handle's last-read cursor position (strictly-after, so we don't
+    // re-return what was already marked read). Omitted + no handle → no
+    // filter.
+    let (since_val, since_exclusive) = match since {
+        Some(s) => (Some(s), false),
+        None => match effective_for.as_deref() {
+            Some(h) => match super::msg_cursors::last_read_ts(&mailbox, h) {
+                Some(ts) => (Some(ts), true),
+                None => (None, false),
+            },
+            None => (None, false),
+        },
+    };
+
+    let mut msgs = select_messages(
         &inbox,
         effective_for.as_deref(),
-        since.as_deref(),
+        since_val.as_deref(),
         priority,
         thread.as_deref(),
         channel.as_deref(),
-        limit,
+        None,
     );
+    if since_exclusive {
+        if let Some(ts) = &since_val {
+            msgs.retain(|m| m.fm.ts.as_str() > ts.as_str());
+        }
+    }
+    if let Some(n) = limit {
+        msgs.truncate(n);
+    }
+
+    // Append read cursors for everything returned, attributed to
+    // `effective_for`. A --mark-read without a handle is silently skipped.
+    if mark_read {
+        if let Some(h) = effective_for.as_deref() {
+            let entries: Vec<super::msg_cursors::CursorEntry> = msgs
+                .iter()
+                .map(|m| super::msg_cursors::CursorEntry::new_read(&m.fm.ts, &m.fm.id))
+                .collect();
+            if let Err(e) = super::msg_cursors::append_entries(&mailbox, h, &entries) {
+                eprintln!("warn: cursor append failed: {}", e);
+            }
+        }
+    }
 
     match format {
         FetchFormat::Json => match serde_json::to_string_pretty(&msgs) {
@@ -2276,8 +2561,425 @@ new\n";
         assert!(thread[1].fm.ts <= thread[2].fm.ts);
     }
 
+    // ---- PR-3: directory split + read cursors ---------------------------
+
     #[test]
-    fn thread_returns_empty_on_unknown_id_without_crash() {
+    fn send_direct_writes_canonical_in_direct_subdir_plus_legacy_symlink() {
+        let g = MailboxGuard::new();
+        let sent = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "hi");
+        let filename = sent.path.file_name().unwrap().to_str().unwrap().to_string();
+
+        // Canonical lives in direct/<recipient>/ and is a regular file.
+        let canonical = g.inbox().join("direct").join("reviewer").join(&filename);
+        assert_eq!(sent.path, canonical);
+        assert!(canonical.is_file());
+        assert!(!canonical.is_symlink());
+
+        // Legacy shim symlink at inbox/<filename> resolves to canonical.
+        let legacy = g.inbox().join(&filename);
+        assert!(legacy.is_symlink(), "expected legacy symlink at {}", legacy.display());
+        assert_eq!(
+            std::fs::canonicalize(&legacy).unwrap(),
+            std::fs::canonicalize(&canonical).unwrap(),
+        );
+    }
+
+    #[test]
+    fn broadcast_writes_canonical_in_broadcast_subdir() {
+        let g = MailboxGuard::new();
+        let sent = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["all".to_string()],
+                from: "coordinator".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "standup".to_string(),
+            },
+        )
+        .unwrap();
+        let filename = sent.path.file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(sent.path, g.inbox().join("broadcast").join(&filename));
+        assert!(sent.path.is_file());
+        // Legacy symlink also lands.
+        assert!(g.inbox().join(&filename).is_symlink());
+    }
+
+    #[test]
+    fn channel_send_writes_canonical_in_channel_subdir() {
+        let g = MailboxGuard::new();
+        let sent = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["channel:reviewers-standby".to_string()],
+                from: "coordinator".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "any reviewer free?".to_string(),
+            },
+        )
+        .unwrap();
+        let filename = sent.path.file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(
+            sent.path,
+            g.inbox()
+                .join("channel")
+                .join("reviewers-standby")
+                .join(&filename)
+        );
+        assert!(sent.path.is_file());
+    }
+
+    #[test]
+    fn multi_recipient_direct_lands_one_entry_per_recipient_all_resolving_to_canonical() {
+        let g = MailboxGuard::new();
+        let sent = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string(), "qa".to_string(), "coordinator".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "multi".to_string(),
+            },
+        )
+        .unwrap();
+        let filename = sent.path.file_name().unwrap().to_str().unwrap().to_string();
+        // Canonical = first recipient.
+        assert_eq!(sent.path, g.inbox().join("direct/reviewer").join(&filename));
+        // Every recipient has an entry reachable via direct/<self>/.
+        for recipient in ["reviewer", "qa", "coordinator"] {
+            let p = g.inbox().join("direct").join(recipient).join(&filename);
+            assert!(p.exists(), "missing entry for {} at {}", recipient, p.display());
+            let resolved = std::fs::canonicalize(&p).unwrap();
+            assert_eq!(resolved, std::fs::canonicalize(&sent.path).unwrap());
+        }
+    }
+
+    #[test]
+    fn cc_recipient_gets_direct_symlink() {
+        let g = MailboxGuard::new();
+        let sent = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: vec!["coordinator".to_string(), "qa".to_string()],
+                body: "see PR".to_string(),
+            },
+        )
+        .unwrap();
+        let filename = sent.path.file_name().unwrap().to_str().unwrap().to_string();
+        for cc in ["coordinator", "qa"] {
+            let p = g.inbox().join("direct").join(cc).join(&filename);
+            assert!(p.is_symlink(), "expected cc symlink for {} at {}", cc, p.display());
+            let resolved = std::fs::canonicalize(&p).unwrap();
+            assert_eq!(resolved, std::fs::canonicalize(&sent.path).unwrap());
+        }
+    }
+
+    #[test]
+    fn list_messages_sees_split_layout_and_flat_legacy_without_duplicates() {
+        let g = MailboxGuard::new();
+        // Three new-shape sends (broadcast, direct, channel).
+        let sent_bcast = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["all".to_string()],
+                from: "coordinator".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "b".to_string(),
+            },
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let sent_dir = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "d".to_string(),
+            },
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let sent_ch = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["channel:reviewers-standby".to_string()],
+                from: "coordinator".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "c".to_string(),
+            },
+        )
+        .unwrap();
+        // A raw flat-legacy file that predates PR-3 (no symlink, real file).
+        let bare = "from: qa\nto: reviewer\nre: legacy\n\nold body\n";
+        let legacy_path = g.inbox().join("20260418T000000Z-qa-to-reviewer.md");
+        write_raw(&legacy_path, bare);
+
+        let msgs = list_messages(&g.inbox());
+        // Exactly 4 (dedup: each new-shape send has a legacy symlink shim
+        // that must not double-count).
+        assert_eq!(msgs.len(), 4, "ids: {:?}", msgs.iter().map(|m| &m.fm.id).collect::<Vec<_>>());
+        let ids: Vec<String> = msgs.iter().map(|m| m.fm.id.clone()).collect();
+        for expected in [&sent_bcast.fm.id, &sent_dir.fm.id, &sent_ch.fm.id] {
+            assert!(ids.contains(expected), "missing {}", expected);
+        }
+        assert!(msgs.iter().any(|m| m.legacy && m.body.trim() == "old body"));
+    }
+
+    #[test]
+    fn fetch_since_on_legacy_flat_message_filters_correctly() {
+        // --since still narrows based on ts, including when the mailbox only
+        // contains flat-layout legacy files.
+        let g = MailboxGuard::new();
+        let older = "---\n\
+id: AAAA000000000000000000AAAA\n\
+from: a\n\
+to: [reviewer]\n\
+priority: routine\n\
+ts: 20260419T000000Z\n\
+---\n\n\
+old\n";
+        let newer = "---\n\
+id: BBBB000000000000000000BBBB\n\
+from: a\n\
+to: [reviewer]\n\
+priority: routine\n\
+ts: 20260420T120000Z\n\
+---\n\n\
+new\n";
+        write_raw(&g.inbox().join("20260419T000000Z-AAAAAA.md"), older);
+        write_raw(&g.inbox().join("20260420T120000Z-BBBBBB.md"), newer);
+
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            Some("20260420T000000Z"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].fm.ts, "20260420T120000Z");
+    }
+
+    #[test]
+    fn legacy_symlink_is_not_double_counted_even_when_dangling() {
+        // If the canonical file is deleted mid-flight, the legacy symlink
+        // still lists but parses to None — list_messages must not crash
+        // and must not return a stale ParsedMessage.
+        let g = MailboxGuard::new();
+        let sent = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "drop me");
+        std::fs::remove_file(&sent.path).unwrap();
+
+        let msgs = list_messages(&g.inbox());
+        assert!(msgs.is_empty(), "got {:?}", msgs.iter().map(|m| &m.fm.id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn multi_recipient_send_does_not_duplicate_in_list() {
+        let g = MailboxGuard::new();
+        write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string(), "qa".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "one".to_string(),
+            },
+        )
+        .unwrap();
+        let msgs = list_messages(&g.inbox());
+        assert_eq!(msgs.len(), 1, "multi-recipient should dedupe to one");
+    }
+
+    #[test]
+    fn fetch_mark_read_appends_cursor_read_entries_for_each_returned_message() {
+        let g = MailboxGuard::new();
+        // Three direct messages to reviewer.
+        for i in 0..3 {
+            write_message(
+                &g.inbox(),
+                SendArgs {
+                    to: vec!["reviewer".to_string()],
+                    from: "implementer-a".to_string(),
+                    priority: MsgPriority::Routine,
+                    subject: Some(format!("m{}", i)),
+                    thread: None,
+                    in_reply_to: None,
+                    cc: Vec::new(),
+                    body: format!("body-{}", i),
+                },
+            )
+            .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+        // Call cmd_fetch through the real CLI entry point so --mark-read
+        // wires through end-to-end.
+        let code = cmd_fetch(
+            Some("reviewer".to_string()),
+            None,
+            None,
+            None,
+            None,
+            true,
+            None,
+            FetchFormat::Json,
+            false,
+        );
+        assert_eq!(code, 0);
+
+        let entries = crate::cli::msg_cursors::read_entries(&g.root, "reviewer");
+        assert_eq!(entries.len(), 3, "got: {:?}", entries);
+        assert!(entries.iter().all(|e| e.action == "read"));
+        // All three ts values are present.
+        let ts_set: std::collections::HashSet<_> =
+            entries.iter().map(|e| e.ts.clone()).collect();
+        assert_eq!(ts_set.len(), 3);
+    }
+
+    #[test]
+    fn fetch_default_since_picks_up_where_last_read_left_off() {
+        let g = MailboxGuard::new();
+        // One "old" message — mark it read manually so the cursor advances.
+        let old = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: Some("old".to_string()),
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "old".to_string(),
+            },
+        )
+        .unwrap();
+        crate::cli::msg_cursors::append_entries(
+            &g.root,
+            "reviewer",
+            &[crate::cli::msg_cursors::CursorEntry::new_read(
+                &old.fm.ts,
+                &old.fm.id,
+            )],
+        )
+        .unwrap();
+
+        // A new message that arrived later.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let fresh = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string()],
+                from: "implementer-a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: Some("fresh".to_string()),
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "fresh".to_string(),
+            },
+        )
+        .unwrap();
+
+        // Default --since (no explicit value) must skip `old` and return `fresh`.
+        let since_val: Option<String> =
+            crate::cli::msg_cursors::last_read_ts(&g.root, "reviewer");
+        let since_exclusive = true;
+        assert_eq!(since_val.as_deref(), Some(old.fm.ts.as_str()));
+        let mut msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            since_val.as_deref(),
+            None,
+            None,
+            None,
+            None,
+        );
+        if since_exclusive {
+            if let Some(ts) = &since_val {
+                msgs.retain(|m| m.fm.ts.as_str() > ts.as_str());
+            }
+        }
+        assert_eq!(msgs.len(), 1, "default --since should skip already-read");
+        assert_eq!(msgs[0].fm.id, fresh.fm.id);
+    }
+
+    #[test]
+    fn explicit_since_stays_inclusive_and_does_not_consume_cursor() {
+        // When the user passes --since X explicitly, it's inclusive (≥) so
+        // passing a known cursor ts re-surfaces that message. The fetch
+        // also must NOT advance the handle's cursor (--mark-read is
+        // opt-in).
+        let g = MailboxGuard::new();
+        let sent = write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["reviewer".to_string()],
+                from: "a".to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "x".to_string(),
+            },
+        )
+        .unwrap();
+
+        let code = cmd_fetch(
+            Some("reviewer".to_string()),
+            Some(sent.fm.ts.clone()),
+            None,
+            None,
+            None,
+            false, // no --mark-read
+            None,
+            FetchFormat::Json,
+            false,
+        );
+        assert_eq!(code, 0);
+        // Cursor file should not exist yet.
+        let cursor = crate::cli::msg_cursors::cursor_file(&g.root, "reviewer");
+        assert!(!cursor.exists(), "cursor file unexpectedly created");
+    }
+
+    #[test]
+    fn thread_returns_empty_on_unknown_id_without_crash_pr3() {
         let g = MailboxGuard::new();
         send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "hi");
         let thread = list_thread(&g.inbox(), "NOSUCHTHREADID");
