@@ -171,6 +171,13 @@ Include this in every briefing:
   describing what you picked up and your planned first step.
 - Invoke `/loop` after hello; poll every 90-120s. Never finish a turn
   asking the user a question; mailbox the coordinator if stuck.
+- Heartbeat on each `/loop` cycle:
+  `twapp msg presence heartbeat --task "<one-line current step>"`.
+  This writes `<mailbox>/presence/my-agent.json` so the coordinator can
+  tell you're alive and what you're doing. A handle is considered
+  *dormant* when its last heartbeat is older than 5× its
+  `poll_interval_sec` (default 90s). On offboard, run
+  `twapp msg presence clear` so peers don't see you as dormant.
 - Poll the inbox every 90s for follow-up messages addressed to your handle.
 ```
 
@@ -281,7 +288,10 @@ Acceptance: unit test added, `npm test` green, PR opened against `main`.
 
 - Handle: `my-feature-fix`
 - Hello within 2 min to `/tmp/agent-mailbox/inbox/<iso>-my-feature-fix-hello.md`.
-- Post an offboard message when the PR is merged, then exit.
+- `twapp msg presence heartbeat --task "<current step>"` each /loop cycle
+  so the coordinator can see you're alive.
+- Post an offboard message + `twapp msg presence clear` when the PR is
+  merged, then exit.
 EOF
 
 # 2. Create a dedicated worktree for the agent.

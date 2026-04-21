@@ -267,6 +267,18 @@ pub enum MsgCommands {
         #[arg(long, value_enum, default_value_t = FetchFormat::Pretty)]
         format: FetchFormat,
     },
+    /// Presence / heartbeat (design §2.6, PR-5).
+    ///
+    /// Each active agent overwrites `<mailbox>/presence/<handle>.json` on a
+    /// regular cadence so the coordinator can tell who is alive, idle, or
+    /// dormant. Heartbeating is the agent's responsibility; the CLI is a thin
+    /// writer. An absent file is "dead" (never started or offboarded);
+    /// a stale file is "dormant" (5× poll_interval_sec past last heartbeat).
+    #[command(after_help = "Examples:\n  twapp msg presence heartbeat\n  twapp msg presence list --stale\n  twapp msg presence get reviewer\n  twapp msg presence clear")]
+    Presence {
+        #[command(subcommand)]
+        command: super::msg_presence::PresenceCommands,
+    },
 }
 
 // --- Mailbox discovery ------------------------------------------------------
