@@ -57,10 +57,26 @@ it tells the new coordinator to read this skill, register in
 `handle.txt`, post a hello, and start `/loop` polling. Override it with
 `--briefing <path>` whenever project-specific scope needs to ride along.
 
+`launch` also auto-assigns the session's `colab_group` to the
+coordinator's `--name` (so by default all workers it spawns from that
+session — via `twapp work --from-file` — auto-inherit the same group and
+group cleanly under the coordinator in `twapp sessions` / launcher UI).
+Override with `--colab-group <name>` when the group name should differ
+from the coordinator's display name (for example, when one coordinator
+runs multiple disjoint co-labs back-to-back).
+
+```bash
+twapp coordinator launch --name infra-coord --colab-group infra-refresh
+# worker briefings spawned from this coordinator inherit colab_group="infra-refresh"
+```
+
 `claim` exists for the case where you're already in a running session and
 realize mid-flight that you are the coordinator — it only rewrites the
-`role` field, leaving everything else intact. Refuses to stomp on an
-existing non-coordinator role without `--force`.
+`role` field (and optionally `colab_group`), leaving everything else
+intact. Refuses to stomp on an existing non-coordinator role without
+`--force`. Pass `--colab-group <name>` to set or overwrite the co-lab
+group on the same session at claim time; omit it to leave the current
+group untouched.
 
 ## 2. Briefing structure
 

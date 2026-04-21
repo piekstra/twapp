@@ -69,6 +69,7 @@ What each flag does:
 - **`--from-file`** automatically implies `provenance=spawned` — a human caller would be typing `twapp work` directly, so if a briefing file is involved, it's almost always an agent launch. No need to pass `--spawned` alongside it.
 - **`--spawned`** — the explicit form; use it when spawning without `--from-file` (e.g. a `--run` spawn of a one-shot helper).
 - **`--provenance <user|spawned>`** — escape hatch. Wins over `--spawned` and over the `--from-file` auto-default. Pass `--provenance user` to mark an otherwise-spawned session as user-initiated.
+- **`--colab-group <name>`** — explicit co-lab group this session belongs to. When omitted and `--from-file` is set, twapp auto-inherits the spawning session's `colab_group` (walks upward from cwd to find a `.twapp-session.json`). This means coordinators launched via `twapp coordinator launch --name <coord>` naturally collect their workers into a group named `<coord>` without extra ceremony. Pass `--colab-group ""` is rejected; pass an explicit name to opt a worker out of inheritance.
 
 The role shows up in `twapp sessions` output as a bracketed 4-char tag plus a `spawned` marker when relevant:
 

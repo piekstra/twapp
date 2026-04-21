@@ -64,6 +64,16 @@ pub struct SessionData {
     /// `None` on legacy session files predating this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
+    /// The co-lab group this session belongs to. Populated on
+    /// `twapp coordinator launch` (default = coordinator's name) and
+    /// inherited by any session spawned from another session via
+    /// `--from-file`. Unset = user-created, not part of a co-lab.
+    ///
+    /// Convention is the coordinator's `--name`, but any free-form string
+    /// is allowed. UI groups sessions by this value ("My sessions" when
+    /// unset, per-group bucket when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colab_group: Option<String>,
 }
 
 impl SessionData {
@@ -576,6 +586,7 @@ mod tests {
             override_terminal_theme: None,
             role: None,
             provenance: None,
+            colab_group: None,
         }
     }
 
@@ -633,6 +644,47 @@ mod tests {
     }
 
     #[test]
+    fn session_serde_roundtrip_with_colab_group() {
+        let mut data = base_session();
+        data.colab_group = Some("feature-x".to_string());
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(
+            json.contains("\"colab_group\":\"feature-x\""),
+            "colab_group should serialize verbatim: {}",
+            json
+        );
+        let back: SessionData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.colab_group.as_deref(), Some("feature-x"));
+    }
+
+    #[test]
+    fn session_serde_roundtrip_without_colab_group() {
+        let data = base_session();
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(
+            !json.contains("\"colab_group\""),
+            "colab_group should be skipped when None: {}",
+            json
+        );
+        let back: SessionData = serde_json::from_str(&json).unwrap();
+        assert!(back.colab_group.is_none());
+
+        // Legacy file without the field (predates colab_group) round-trips
+        // unchanged — the add is backwards-compatible.
+        let legacy = r#"{
+            "session_id": "old-abc",
+            "name": "legacy",
+            "color": "",
+            "ticket_key": null,
+            "claude_cwd": "/tmp/legacy",
+            "created": "2025-12-01T00:00:00Z",
+            "last_resumed": null
+        }"#;
+        let data: SessionData = serde_json::from_str(legacy).unwrap();
+        assert!(data.colab_group.is_none());
+    }
+
+    #[test]
     fn legacy_session_file_deserializes() {
         // JSON from a twapp version predating role/provenance fields.
         let legacy = r#"{
@@ -670,6 +722,7 @@ mod tests {
             override_terminal_theme: None,
             role: None,
             provenance: None,
+            colab_group: None,
         };
 
         assert_eq!(
@@ -702,6 +755,7 @@ mod tests {
             override_terminal_theme: None,
             role: None,
             provenance: None,
+            colab_group: None,
         };
 
         assert!(data.needs_migration(AgentProvider::Codex));
