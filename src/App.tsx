@@ -28,6 +28,7 @@ import PromptSections from "./components/PromptSections";
 import type { EditingPromptState } from "./components/PromptSections";
 import SessionLauncher from "./components/SessionLauncher";
 import MessageComposer from "./components/MessageComposer";
+import UrgentInbox from "./components/UrgentInbox";
 
 
 const SESSION_COLORS = [
@@ -2372,6 +2373,9 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Urgent messages panel — renders only when session has a handle. */}
+        <UrgentInbox selfHandle={appConfig?.name && appConfig.name !== "twapp" ? appConfig.name : null} />
 
         {/* Notes Section */}
         <div className="notes-section-header">

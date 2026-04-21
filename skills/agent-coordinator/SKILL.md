@@ -236,6 +236,15 @@ blocker` is exact.
 > `--priority urgent` (or `blocker`) instead; it's the only channel
 > `twapp msg fetch --priority` knows how to find.
 
+When the recipient is running a twapp session window (not a headless
+loop), the priority lane also surfaces visually: the session sidebar
+renders an **Urgent** panel above Notes that polls `--priority urgent`
+and `--priority blocker` every 10s and renders each message as a
+clickable row with the priority chip and relative time. Blockers get the
+strongest red accent. Sending `--priority blocker` is therefore both a
+poll-time hint and an interactive interrupt — the recipient sees the
+panel light up on next poll even without reopening a terminal.
+
 ### Example message
 
 ```

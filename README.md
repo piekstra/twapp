@@ -642,6 +642,14 @@ trace, not a crash.
 > `twapp msg fetch --priority blocker` is the idiomatic first call at the
 > top of any long write cycle — before the first line of code.
 
+Inside the session window, the sidebar shows an **Urgent** panel directly
+above Notes whenever the session has a handle. It polls `twapp msg fetch
+--for <self> --priority urgent|blocker` every 10s, renders each message
+as a row (from + subject + priority chip + relative time), and auto-
+collapses after the queue has been empty for a minute. Click a row to
+open a read-only message view. Blockers get the strongest red accent,
+urgents a muted one. Single-session users with no handle see no panel.
+
 #### Reading legacy (bare) files
 
 `fetch` accepts both the new fenced-frontmatter shape and the older bare
