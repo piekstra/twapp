@@ -283,6 +283,17 @@ heartbeat loop.
 
 ### 3.3 Coordinator dashboard
 
+> **Partially landed** (ui-fleet-pane PR): the Fleet sidebar pane ships
+> read-only, reading `presence/<handle>.json` plus direct-inbox and
+> urgent-lane file counts via the new `list_fleet` Tauri command. Rows
+> are status-dot / handle / role / provenance / unread / urgent /
+> heartbeat-age; row-click raises the target session's window via the
+> existing `launch_session` focus path. Dashboard-mode expansion,
+> inbox/broadcast panes, the spawn timeline, and the quick-action
+> context menu remain separate PRs (§3.3 dashboard-mode, §3.5, §3.7).
+> Scoping: when the coordinator's session declares a `colab_group`, the
+> pane is scoped to that group; otherwise every handle is listed.
+
 Activates when the current session declares `role: coordinator` **and**
 at least one other session in the shared dir has a live
 `presence/<handle>.json`. Below that threshold, nothing changes in the
