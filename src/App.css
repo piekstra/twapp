@@ -4532,12 +4532,15 @@ a.file-link {
   z-index: 60;
 }
 
-/* Urgent-inbox panel (sidebar) */
+/* Urgent-inbox panel (sidebar).
+ * Background inherits the sidebar's session-accent color (applyThemeColor
+ * sets --bg-secondary to the per-instance accent). Tones overlay a red tint
+ * on top when urgent/blocker messages are present. */
 .urgent-panel {
   border-top: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
   padding: 8px 12px 6px;
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 .urgent-panel.urgent-tone-blocker {
@@ -4629,14 +4632,16 @@ a.file-link {
   font-style: italic;
 }
 
-.urgent-error {
-  padding: 6px 8px;
-  background: rgba(220, 38, 38, 0.10);
-  border: 1px solid rgba(220, 38, 38, 0.45);
-  color: #b91c1c;
-  border-radius: 6px;
-  font-size: 12px;
-  white-space: pre-wrap;
+/* Discreet footer shown when the mailbox is configured but a fetch failed
+ * (permissions, disk, etc.). Deliberately understated — the old URGENT-styled
+ * error banner was read as a real urgent message and alarmed vanilla users. */
+.urgent-footer-unavailable {
+  margin-top: 6px;
+  padding: 4px 0 2px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .urgent-list {
@@ -4791,12 +4796,13 @@ a.file-link {
   flex: 1;
 }
 
-/* Coordinator fleet pane (sidebar) */
+/* Coordinator fleet pane (sidebar). Transparent so the sidebar's session
+ * accent (--bg-secondary) shows through — same pattern as .urgent-panel. */
 .fleet-panel {
   border-top: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
   padding: 8px 12px 6px;
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 .fleet-header {
@@ -5000,7 +5006,7 @@ a.file-link {
 .timeline-panel {
   border-bottom: 1px solid var(--border-color);
   padding: 8px 12px 6px;
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 .timeline-header {

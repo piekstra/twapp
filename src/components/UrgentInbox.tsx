@@ -22,10 +22,16 @@ type FetchArgs = {
   limit?: number;
 };
 
+export type MailboxStatus = { configured: boolean; source?: string };
+
 type UrgentInboxProps = {
   selfHandle: string | null;
   // Injected in tests; defaults to the Tauri invoke bridge.
   fetcher?: (args: FetchArgs) => Promise<UrgentMessage[]>;
+  // Mailbox-availability probe. Injected in tests; defaults to the Tauri
+  // `get_mailbox_status` bridge. Returning `{configured:false}` hides the
+  // panel entirely — vanilla single-session users never see urgent UI.
+  mailboxProbe?: () => Promise<MailboxStatus>;
   // Clock injection for deterministic relative-time tests.
   now?: () => number;
   // Poll interval in ms while expanded. 10s per briefing.
@@ -90,26 +96,80 @@ export function rowPreview(m: UrgentMessage): string {
   return firstLine ? firstLine.trim().slice(0, 120) : "(no subject)";
 }
 
+/** Pure: decide what the urgent panel should render, given the four inputs
+ *  it actually reacts to. Splitting this out keeps the gating logic
+ *  test-friendly and shields the main component from regressing the
+ *  "vanilla session sees scary URGENT banner" bug that this PR fixes. */
+export type PanelVisibility =
+  | { kind: "hidden" }
+  | { kind: "empty" }
+  | { kind: "list"; count: number }
+  | { kind: "error-footer"; message: string };
+
+export function panelVisibility(
+  selfHandle: string | null,
+  mailboxConfigured: boolean | null,
+  messages: UrgentMessage[],
+  error: string | null,
+): PanelVisibility {
+  // Single-session users (no handle) never see the panel.
+  if (!selfHandle) return { kind: "hidden" };
+  // Probe hasn't resolved yet, or resolved as "not configured".
+  if (!mailboxConfigured) return { kind: "hidden" };
+  if (messages.length > 0) return { kind: "list", count: messages.length };
+  if (error) return { kind: "error-footer", message: error };
+  return { kind: "empty" };
+}
+
 const tauriFetcher = (args: FetchArgs): Promise<UrgentMessage[]> =>
   invoke<UrgentMessage[]>("fetch_messages", { args });
+
+const tauriMailboxProbe = (): Promise<MailboxStatus> =>
+  invoke<MailboxStatus>("get_mailbox_status");
 
 /** Collapsible urgent-inbox panel for the session sidebar.
  *
  *  Fetches `priority: urgent` + `priority: blocker` messages addressed to the
  *  session's own handle and surfaces them with a red accent. Polls every 10s
- *  while expanded; auto-collapses when empty for >60s. No user handle = no
- *  panel (single-session users never see urgent UI). */
+ *  while expanded; auto-collapses when empty for >60s.
+ *
+ *  Rendering gates (both must be true):
+ *  - `selfHandle` is set — single-session users never see urgent UI.
+ *  - `get_mailbox_status` reports a configured mailbox — vanilla instances
+ *    without TWAPP_MAILBOX_DIR / TWAPP_SHARED_DIR / `./mailbox/inbox/` get
+ *    nothing, not an error banner. */
 export default function UrgentInbox({
   selfHandle,
   fetcher = tauriFetcher,
+  mailboxProbe = tauriMailboxProbe,
   now = () => Date.now(),
   pollMs = 10_000,
   collapseAfterEmptyMs = 60_000,
 }: UrgentInboxProps) {
+  // `null` = probe in flight (hide panel until we know); boolean = resolved.
+  const [mailboxConfigured, setMailboxConfigured] = useState<boolean | null>(null);
   const [messages, setMessages] = useState<UrgentMessage[]>([]);
   const [expanded, setExpanded] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<UrgentMessage | null>(null);
+
+  // One-shot mailbox probe at panel init. No handle = no probe: we already
+  // render nothing, and probing would just be pointless filesystem I/O.
+  useEffect(() => {
+    if (!selfHandle) return;
+    let cancelled = false;
+    mailboxProbe()
+      .then((s) => {
+        if (!cancelled) setMailboxConfigured(!!s?.configured);
+      })
+      .catch(() => {
+        // Probe failure is a soft "no mailbox": hide, don't yell.
+        if (!cancelled) setMailboxConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selfHandle, mailboxProbe]);
 
   // `userCollapsed` is set when the user clicks the header to collapse.
   // It survives auto-collapse-due-to-empty: a subsequent manual expand re-enables
@@ -137,18 +197,23 @@ export default function UrgentInbox({
       setError(null);
     } catch (e) {
       if (seq !== fetchSeqRef.current) return;
+      // Log-then-soften: backend errors (permissions, disk, stale mailbox) get
+      // a discreet footer, never a scary URGENT-styled banner. See PR
+      // fix/ui-urgent-gate-on-mailbox for the rationale.
+      console.warn("[urgent] fetch failed:", e);
       setError(String(e));
     }
   }, [selfHandle, fetcher]);
 
   // Poll — runs whether expanded or not, because the chevron needs a live
   // count and auto-collapse decisions depend on knowing the queue is empty.
+  // Gated on mailboxConfigured so we don't spam the backend on vanilla sessions.
   useEffect(() => {
-    if (!selfHandle) return;
+    if (!selfHandle || !mailboxConfigured) return;
     doFetch();
     const h = window.setInterval(doFetch, pollMs);
     return () => window.clearInterval(h);
-  }, [selfHandle, doFetch, pollMs]);
+  }, [selfHandle, mailboxConfigured, doFetch, pollMs]);
 
   // Auto-collapse after sustained emptiness.
   useEffect(() => {
@@ -190,7 +255,11 @@ export default function UrgentInbox({
     }
   };
 
+  // Two gates: (a) no handle → single-session user, never render. (b) probe
+  // pending or resolved-as-not-configured → hide. Both avoid the prior bug
+  // where vanilla sessions saw a scary "URGENT: Error: No mailbox..." banner.
   if (!selfHandle) return null;
+  if (!mailboxConfigured) return null;
 
   const tone =
     messages.some((m) => m.priority === "blocker")
@@ -239,11 +308,10 @@ export default function UrgentInbox({
 
       {expanded && (
         <div className="urgent-body">
-          {error && <div className="urgent-error">{error}</div>}
-          {!error && messages.length === 0 && (
+          {messages.length === 0 && !error && (
             <div className="urgent-empty">No urgent messages.</div>
           )}
-          {!error && messages.length > 0 && (
+          {messages.length > 0 && (
             <ul className="urgent-list">
               {messages.map((m) => (
                 <li
@@ -265,6 +333,11 @@ export default function UrgentInbox({
                 </li>
               ))}
             </ul>
+          )}
+          {error && (
+            <div className="urgent-footer-unavailable" title={error}>
+              Urgent feed unavailable
+            </div>
           )}
         </div>
       )}
