@@ -130,6 +130,7 @@ pub fn run(args: GuiArgs) {
             files::reveal_in_finder,
             msg::send_message,
             msg::fetch_messages,
+            msg::get_mailbox_status,
             fleet::list_fleet,
             timeline::list_timeline_events,
             agent_actions::focus_agent_window,
