@@ -227,6 +227,10 @@ pub fn inbox_dir() -> Result<PathBuf, String> {
     Ok(resolve_mailbox_dir()?.join("inbox"))
 }
 
+pub fn urgent_dir(inbox: &Path) -> PathBuf {
+    inbox.join("urgent")
+}
+
 // --- ID / timestamp generation ---------------------------------------------
 
 // Crockford base32 alphabet (ULID).
@@ -409,7 +413,56 @@ pub fn write_message(inbox: &Path, args: SendArgs) -> Result<SentMessage, String
     content.push('\n');
 
     std::fs::write(&path, content).map_err(|e| format!("write {}: {}", path.display(), e))?;
+
+    // Priority lane (design §2.5, PR-4): urgent + blocker also get a symlink
+    // under inbox/urgent/<recipient>/<filename> so readers can scan the small
+    // urgent lane without listing the whole inbox. Routine messages are not
+    // linked. Channel recipients are out of scope for PR-4.
+    if matches!(fm.priority, MsgPriority::Urgent | MsgPriority::Blocker) {
+        create_urgent_symlinks(inbox, &filename, &fm.to);
+    }
+
     Ok(SentMessage { path, fm })
+}
+
+fn create_urgent_symlinks(inbox: &Path, filename: &str, to: &[String]) {
+    let urgent_root = urgent_dir(inbox);
+    for recipient in to {
+        // Channel lane lives in PR-6; skip for now.
+        if recipient.starts_with("channel:") {
+            continue;
+        }
+        let trimmed = recipient.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let recipient_dir = urgent_root.join(trimmed);
+        if let Err(e) = std::fs::create_dir_all(&recipient_dir) {
+            log::debug!(
+                "create urgent dir {} failed: {}",
+                recipient_dir.display(),
+                e
+            );
+            continue;
+        }
+        let link_path = recipient_dir.join(filename);
+        // Symlinks are idempotent — if one already exists at this path, leave
+        // it alone rather than failing (e.g. two writers racing to the same
+        // id6, which is astronomically unlikely but cheap to tolerate).
+        if link_path.exists() || link_path.is_symlink() {
+            continue;
+        }
+        // Relative target so moving the mailbox tree doesn't break the link.
+        let target = PathBuf::from("../..").join(filename);
+        if let Err(e) = std::os::unix::fs::symlink(&target, &link_path) {
+            log::debug!(
+                "symlink {} -> {} failed: {}",
+                link_path.display(),
+                target.display(),
+                e
+            );
+        }
+    }
 }
 
 // --- Reading / parsing -----------------------------------------------------
@@ -436,6 +489,124 @@ pub fn list_messages(inbox: &Path) -> Vec<ParsedMessage> {
     }
     out.sort_by(|a, b| a.fm.ts.cmp(&b.fm.ts).then_with(|| a.fm.id.cmp(&b.fm.id)));
     out
+}
+
+/// Scan the urgent-priority lane for a given recipient (or all lanes when
+/// `handle` is None). Follows symlinks, de-duplicates by canonical path, and
+/// skips broken links with a `log::debug!` trace instead of crashing.
+pub fn scan_urgent_lane(inbox: &Path, handle: Option<&str>) -> Vec<ParsedMessage> {
+    let urgent_root = urgent_dir(inbox);
+    let subdirs: Vec<PathBuf> = match handle {
+        Some(h) => {
+            // Messages directly to the handle plus any broadcasts (to: all).
+            let mut v = vec![urgent_root.join(h)];
+            if h != "all" {
+                v.push(urgent_root.join("all"));
+            }
+            v
+        }
+        None => match std::fs::read_dir(&urgent_root) {
+            Ok(it) => it
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+    };
+
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for dir in subdirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let link_path = entry.path();
+            let Some(name) = link_path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.ends_with(".md") {
+                continue;
+            }
+            let canonical = match std::fs::canonicalize(&link_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    log::debug!(
+                        "urgent lane: skipping broken link {}: {}",
+                        link_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            if !seen.insert(canonical.clone()) {
+                continue;
+            }
+            if let Some(msg) = parse_message_file(&canonical) {
+                out.push(msg);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.fm.ts.cmp(&b.fm.ts).then_with(|| a.fm.id.cmp(&b.fm.id)));
+    out
+}
+
+/// Apply the `fetch` filter pipeline (priority lane fast-path, --for,
+/// --since, --priority semantics, --thread, --channel, --limit). Extracted
+/// from `cmd_fetch` so tests can exercise the same filter logic without
+/// going through stdout.
+#[allow(clippy::too_many_arguments)]
+pub fn select_messages(
+    inbox: &Path,
+    for_handle: Option<&str>,
+    since: Option<&str>,
+    priority: Option<MsgPriority>,
+    thread: Option<&str>,
+    channel: Option<&str>,
+    limit: Option<usize>,
+) -> Vec<ParsedMessage> {
+    // Fast path for --priority urgent|blocker: scan the priority lane under
+    // inbox/urgent/<handle>/ (+ inbox/urgent/all/ for broadcasts) instead of
+    // the whole flat inbox. Design §2.5 / §2.9.
+    let mut msgs = match priority {
+        Some(MsgPriority::Urgent) | Some(MsgPriority::Blocker) => {
+            scan_urgent_lane(inbox, for_handle)
+        }
+        _ => list_messages(inbox),
+    };
+
+    if let Some(h) = for_handle {
+        msgs.retain(|m| matches_for_handle(&m.fm, h));
+    }
+    if let Some(ts_or_cursor) = since {
+        let cursor = ts_or_cursor.trim();
+        msgs.retain(|m| !m.fm.ts.is_empty() && m.fm.ts.as_str() >= cursor);
+    }
+    if let Some(p) = priority {
+        // `--priority urgent` returns the whole urgent lane (urgent + blocker);
+        // `--priority blocker` is an exact match; `--priority routine` is
+        // exact too. This matches how a reader thinks about "show me what
+        // deserves attention" vs "show me what must stop work now".
+        msgs.retain(|m| match p {
+            MsgPriority::Urgent => matches!(
+                m.fm.priority,
+                MsgPriority::Urgent | MsgPriority::Blocker
+            ),
+            MsgPriority::Blocker => m.fm.priority == MsgPriority::Blocker,
+            MsgPriority::Routine => m.fm.priority == MsgPriority::Routine,
+        });
+    }
+    if let Some(t) = thread {
+        msgs.retain(|m| m.fm.thread.as_deref() == Some(t) || m.fm.id == t);
+    }
+    if let Some(ch) = channel {
+        msgs.retain(|m| matches_channel(&m.fm, ch));
+    }
+    if let Some(n) = limit {
+        msgs.truncate(n);
+    }
+    msgs
 }
 
 pub fn parse_message_file(path: &Path) -> Option<ParsedMessage> {
@@ -915,29 +1086,15 @@ pub fn cmd_fetch(
             })
     };
 
-    let mut msgs = list_messages(&inbox);
-
-    if let Some(h) = effective_for.as_deref() {
-        msgs.retain(|m| matches_for_handle(&m.fm, h));
-    }
-    if let Some(ref ts_or_cursor) = since {
-        let cursor = ts_or_cursor.trim();
-        msgs.retain(|m| !m.fm.ts.is_empty() && m.fm.ts.as_str() >= cursor);
-    }
-    if let Some(p) = priority {
-        msgs.retain(|m| m.fm.priority == p);
-    }
-    if let Some(ref t) = thread {
-        msgs.retain(|m| {
-            m.fm.thread.as_deref() == Some(t.as_str()) || m.fm.id == *t
-        });
-    }
-    if let Some(ref ch) = channel {
-        msgs.retain(|m| matches_channel(&m.fm, ch));
-    }
-    if let Some(n) = limit {
-        msgs.truncate(n);
-    }
+    let msgs = select_messages(
+        &inbox,
+        effective_for.as_deref(),
+        since.as_deref(),
+        priority,
+        thread.as_deref(),
+        channel.as_deref(),
+        limit,
+    );
 
     match format {
         FetchFormat::Json => match serde_json::to_string_pretty(&msgs) {
@@ -1719,5 +1876,218 @@ new\n";
             }
             _ => panic!("expected Send"),
         }
+    }
+
+    // ---- PR-4: priority lane (urgent/ symlinks + --priority filter) -------
+
+    fn send(
+        inbox: &Path,
+        to: Vec<&str>,
+        priority: MsgPriority,
+        body: &str,
+    ) -> SentMessage {
+        write_message(
+            inbox,
+            SendArgs {
+                to: to.into_iter().map(|s| s.to_string()).collect(),
+                from: "implementer-a".to_string(),
+                priority,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn send_urgent_creates_symlink_in_urgent_lane() {
+        let g = MailboxGuard::new();
+        let sent = send(&g.inbox(), vec!["reviewer"], MsgPriority::Urgent, "ping");
+
+        let filename = sent.path.file_name().unwrap().to_str().unwrap();
+        let link = g.inbox().join("urgent").join("reviewer").join(filename);
+        assert!(link.is_symlink(), "expected symlink at {}", link.display());
+
+        // The symlink resolves to the canonical file under the flat inbox.
+        let resolved = std::fs::canonicalize(&link).unwrap();
+        let canonical = std::fs::canonicalize(&sent.path).unwrap();
+        assert_eq!(resolved, canonical);
+
+        // Blocker behaves the same way (same lane).
+        let sent2 = send(
+            &g.inbox(),
+            vec!["reviewer"],
+            MsgPriority::Blocker,
+            "stop everything",
+        );
+        let f2 = sent2.path.file_name().unwrap().to_str().unwrap();
+        assert!(g.inbox().join("urgent").join("reviewer").join(f2).is_symlink());
+    }
+
+    #[test]
+    fn send_routine_does_not_create_urgent_symlink() {
+        let g = MailboxGuard::new();
+        let sent = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "fyi");
+
+        let filename = sent.path.file_name().unwrap().to_str().unwrap();
+        let link = g.inbox().join("urgent").join("reviewer").join(filename);
+        assert!(!link.exists(), "urgent link unexpectedly created: {}", link.display());
+        assert!(!link.is_symlink());
+
+        // Even the per-recipient urgent dir should not be auto-created for
+        // routine traffic. (Sweeping it out keeps `ls inbox/urgent/` tidy.)
+        let per_recipient = g.inbox().join("urgent").join("reviewer");
+        assert!(!per_recipient.exists(), "urgent/reviewer/ created for routine: {}", per_recipient.display());
+    }
+
+    #[test]
+    fn fetch_priority_urgent_returns_urgent_and_blocker_not_routine() {
+        let g = MailboxGuard::new();
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "r");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Urgent, "u");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Blocker, "b");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            None,
+            Some(MsgPriority::Urgent),
+            None,
+            None,
+            None,
+        );
+        let bodies: Vec<String> = msgs.iter().map(|m| m.body.trim().to_string()).collect();
+        assert_eq!(msgs.len(), 2, "got bodies: {:?}", bodies);
+        assert!(bodies.contains(&"u".to_string()));
+        assert!(bodies.contains(&"b".to_string()));
+        assert!(!bodies.contains(&"r".to_string()));
+    }
+
+    #[test]
+    fn fetch_priority_blocker_returns_only_blocker() {
+        let g = MailboxGuard::new();
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "r");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Urgent, "u");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Blocker, "b");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            None,
+            Some(MsgPriority::Blocker),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].fm.priority, MsgPriority::Blocker);
+        assert_eq!(msgs[0].body.trim(), "b");
+    }
+
+    #[test]
+    fn broken_symlink_in_urgent_lane_does_not_crash_fetch() {
+        let g = MailboxGuard::new();
+        let sent = send(
+            &g.inbox(),
+            vec!["reviewer"],
+            MsgPriority::Urgent,
+            "will be orphaned",
+        );
+        // Delete the canonical file — the urgent/ symlink now dangles.
+        std::fs::remove_file(&sent.path).unwrap();
+
+        // Also add a second message with a separately-dangling symlink that
+        // was never sent via write_message, to cover the "someone manually
+        // put a broken link in urgent/" case.
+        let orphan_target = PathBuf::from("../../ghost-20260420T000000Z-ZZZZZZ.md");
+        let orphan_link = g
+            .inbox()
+            .join("urgent")
+            .join("reviewer")
+            .join("20260420T000000Z-ZZZZZZ.md");
+        std::os::unix::fs::symlink(&orphan_target, &orphan_link).unwrap();
+
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            None,
+            Some(MsgPriority::Urgent),
+            None,
+            None,
+            None,
+        );
+        // Nothing crashes, nothing resolves.
+        assert_eq!(msgs.len(), 0, "got: {:?}", msgs);
+    }
+
+    #[test]
+    fn multi_recipient_direct_urgent_symlinks_one_per_recipient() {
+        let g = MailboxGuard::new();
+        let sent = send(
+            &g.inbox(),
+            vec!["reviewer", "qa", "coordinator"],
+            MsgPriority::Urgent,
+            "heads up",
+        );
+        let filename = sent.path.file_name().unwrap().to_str().unwrap();
+        for recipient in ["reviewer", "qa", "coordinator"] {
+            let link = g.inbox().join("urgent").join(recipient).join(filename);
+            assert!(
+                link.is_symlink(),
+                "missing urgent symlink for {} at {}",
+                recipient,
+                link.display()
+            );
+            let canonical = std::fs::canonicalize(&link).unwrap();
+            assert_eq!(canonical, std::fs::canonicalize(&sent.path).unwrap());
+        }
+        // And every recipient's fetch sees exactly one message.
+        for recipient in ["reviewer", "qa", "coordinator"] {
+            let msgs = select_messages(
+                &g.inbox(),
+                Some(recipient),
+                None,
+                Some(MsgPriority::Urgent),
+                None,
+                None,
+                None,
+            );
+            assert_eq!(
+                msgs.len(),
+                1,
+                "recipient {} saw {} msgs",
+                recipient,
+                msgs.len()
+            );
+        }
+    }
+
+    #[test]
+    fn broadcast_urgent_lands_in_urgent_all() {
+        let g = MailboxGuard::new();
+        let sent = send(&g.inbox(), vec!["all"], MsgPriority::Urgent, "merge freeze");
+        let filename = sent.path.file_name().unwrap().to_str().unwrap();
+        let link = g.inbox().join("urgent").join("all").join(filename);
+        assert!(link.is_symlink(), "expected urgent/all symlink at {}", link.display());
+
+        // A recipient fetching --priority urgent sees it via the urgent/all/ scan.
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer"),
+            None,
+            Some(MsgPriority::Urgent),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].body.trim(), "merge freeze");
     }
 }

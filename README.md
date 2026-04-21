@@ -519,10 +519,12 @@ without leaving twapp.
 fenced-frontmatter markdown files into a shared `inbox/` directory and
 reads them back. See
 [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) for
-the full model. Today's CLI covers **PR-1** of that design — `send`,
-`broadcast`, and `fetch` against the current flat `inbox/` layout.
-Threading, directory split, cursors, priority lanes, presence, channels,
-and archive rotation all land in later PRs.
+the full model. Today's CLI covers **PR-1** (scaffolding) and **PR-4**
+(priority lane) of that design — `send`, `broadcast`, and `fetch`
+against the current flat `inbox/` layout, plus urgent-lane symlinks
+under `inbox/urgent/<recipient>/` for time-sensitive traffic.
+Threading, directory split, cursors, presence, channels, and archive
+rotation all land in later PRs.
 
 #### Configure the mailbox
 
@@ -566,6 +568,41 @@ twapp msg fetch --for reviewer --format json | jq
 If `--from` is not passed, the sender handle is taken from the current
 directory's `.twapp-session.json` `name`. Bodies may be passed as a
 positional argument or piped in on stdin.
+
+#### Priority lanes
+
+Messages carry a `priority:` frontmatter field — `routine` (default),
+`urgent`, or `blocker`. When a message is sent with `--priority urgent`
+or `--priority blocker`, `twapp msg send` (and `broadcast`) additionally
+writes a symlink under `inbox/urgent/<recipient>/<ts>-<id6>.md` pointing
+at the canonical file in the flat inbox. Broadcasts symlink into
+`inbox/urgent/all/`; multi-recipient direct messages get one symlink
+per recipient.
+
+```bash
+# Urgent — asks the recipient to interrupt their batch and read next poll.
+twapp msg send reviewer --priority urgent --subject "scope change" "see body"
+
+# Blocker — asks the recipient to stop current work and handle this first.
+twapp msg send worker-a --priority blocker --subject "rewind PR" "force-push coming"
+
+# Fetch only what deserves attention. `--priority urgent` is the "urgent
+# lane" — it returns both urgent AND blocker traffic. `--priority blocker`
+# is an exact match for the rare stop-the-world case.
+twapp msg fetch --priority urgent            # urgent + blocker
+twapp msg fetch --priority blocker           # blocker only
+twapp msg fetch --priority routine           # everything else
+```
+
+Under the hood, `fetch --priority urgent|blocker` scans
+`inbox/urgent/<you>/` (and `inbox/urgent/all/` for broadcasts) first —
+much cheaper than listing the flat inbox as it grows. Routine traffic
+stays out of the urgent lane entirely. Broken symlinks (canonical
+deleted, lane entry not yet swept) are skipped with a `log::debug!`
+trace, not a crash.
+
+> `twapp msg fetch --priority blocker` is the idiomatic first call at the
+> top of any long write cycle — before the first line of code.
 
 #### Reading legacy (bare) files
 
