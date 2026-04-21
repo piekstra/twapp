@@ -631,13 +631,12 @@ back. See
 [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) for
 the full model. Today's CLI covers **PR-1** (scaffolding), **PR-2**
 (threading), **PR-3** (directory split + read cursors), **PR-4**
-(priority lane), **PR-5** (presence / heartbeat), and **PR-7** (archive
-rotation) of that design. Sends land under a per-recipient layout
-(`inbox/broadcast/`, `inbox/direct/<handle>/`, `inbox/channel/<name>/`);
-every send also drops a grace-period symlink at the flat
-`inbox/<filename>.md` path so un-upgraded readers doing `ls inbox/`
-keep working. First-class channel subscriptions still land in a later
-PR.
+(priority lane), **PR-5** (presence / heartbeat), **PR-6** (channels),
+and **PR-7** (archive rotation) of that design. Sends land under a
+per-recipient layout (`inbox/broadcast/`, `inbox/direct/<handle>/`,
+`inbox/channel/<name>/`); every send also drops a grace-period symlink
+at the flat `inbox/<filename>.md` path so un-upgraded readers doing
+`ls inbox/` keep working.
 
 #### Configure the mailbox
 
@@ -872,6 +871,56 @@ Agents are expected to heartbeat on their /loop cadence (today, manually;
 a follow-up PR will wire heartbeats into the /loop skill itself). The
 `spawn-agent` and `agent-coordinator` skill docs call this out in the
 worker protocol.
+
+#### Channels (PR-6)
+
+Channels are topic-scoped fan-in: a sender writes to a *name*, not a
+handle, and any subscriber watching that name picks up the traffic.
+They replace the ad-hoc `-standby`-handle hack the pre-PR-6 corpus used
+to signal "a reviewer, currently in standby mode, please pick this up
+if that's you". Design §2.3.
+
+```bash
+# Send — either `channel:<name>` as the positional recipient, or
+# `--channel <name>`. Both forms write to inbox/channel/<name>/.
+twapp msg send channel:reviewers "anyone free to look at PR-91?"
+twapp msg send --channel reviewers "anyone free to look at PR-91?"
+
+# Multi-destination: direct + channel in the same send.
+twapp msg send worker-a --channel announcements --priority urgent \
+  "merge freeze starts at 5pm"
+
+# Broadcasts can also fan into a channel instead of every handle.
+twapp msg broadcast --channel reviewers-standby "PR-91 needs eyes"
+
+# Fetch — scope to a single channel. Optional --for filters out the
+# caller's own sends (so your loop doesn't re-surface messages you just
+# wrote).
+twapp msg fetch --channel reviewers
+twapp msg fetch --channel reviewers --for reviewer-a
+
+# Observability — what channels exist and who's listening.
+twapp msg channel list                      # pretty table of name + count
+twapp msg channel list --format json | jq
+twapp msg channel subscribers reviewers     # handles whose presence.claims holds channel:reviewers
+twapp msg channel subscribers reviewers --format json
+```
+
+Subscription is by-convention (design §2.3): a worker declares its
+interest by putting `channel:<name>` into its `presence/<handle>.json`
+`claims` array — typically via `twapp msg presence heartbeat --claims
+channel:reviewers,channel:announcements`. The claims list is coordinator-
+facing observability; senders don't consult it, and nothing enforces
+that a non-subscriber won't read the channel. Actual delivery = every
+subscriber scanning its own claimed channels in its /loop fetch cycle.
+
+> Unknown channel fetch is a no-op: `twapp msg fetch --channel
+> never-created-yet` returns `(no messages)` and exit 0, not a crash.
+
+Channel messages archive under the same daily rotation as every other
+message — drop a channel file into `archive/` (flat) and
+`twapp msg archive rotate` groups it under `archive/<YYYY-MM-DD>/`
+by its frontmatter `ts`, same as broadcasts and direct messages.
 
 #### Migrating the inbox layout
 

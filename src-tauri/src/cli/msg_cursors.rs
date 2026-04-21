@@ -161,14 +161,8 @@ pub fn cmd_ack(msg_id: String, from: Option<String>, note: Option<String>) -> i3
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
+    use crate::cli::test_env;
+    use std::sync::MutexGuard;
 
     struct Guard {
         root: PathBuf,
@@ -179,7 +173,7 @@ mod tests {
 
     impl Guard {
         fn new() -> Self {
-            let _guard = env_lock();
+            let _guard = test_env::lock();
             let root = std::env::temp_dir().join(format!(
                 "twapp-cursor-test-{}",
                 uuid::Uuid::new_v4()

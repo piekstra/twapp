@@ -311,7 +311,47 @@ so its workers can see it's alive.
 
 - `to: all` — broadcast (every online agent reads and archives).
 - `to: <handle>` — directed (only that agent archives; others ignore).
+- `to: channel:<name>` — topic-scoped fan-in; any subscriber reading that channel picks it up (see below).
 - `cc: <handle>` — optional courtesy copy.
+
+### Channels (PR-6) — topic-scoped fan-in
+
+Channels replace the `reviewer-standby`-style pseudo-handle hack the
+pre-PR-6 corpus used to signal "any reviewer, please pick this up".
+Instead of renaming the recipient slot, send to a channel name and let
+any worker that subscribes pick it up:
+
+```bash
+# Send — either positional `channel:<name>` or `--channel <name>`.
+twapp msg send channel:reviewers "PR-91 needs eyes"
+twapp msg broadcast --channel reviewers-standby "anyone free for a pass?"
+
+# Read — scope to one channel; optional --for filters out own sends.
+twapp msg fetch --channel reviewers
+twapp msg fetch --channel reviewers --for <me>
+
+# Observability — what channels exist, who's listening where.
+twapp msg channel list
+twapp msg channel subscribers reviewers
+```
+
+Subscription is by-convention: each worker declares what it listens
+to via its presence `claims` array, typically as part of its heartbeat:
+
+```bash
+twapp msg presence heartbeat \
+  --claims channel:reviewers,channel:announcements
+```
+
+`twapp msg channel subscribers <name>` reads those claim arrays and
+prints the handles currently claiming that channel. Senders don't
+consult the list — a channel send is fan-in, not fan-out, and every
+subscriber scans its own claimed channels in its /loop fetch cycle.
+
+> **Prefer channels over the `-standby` handle convention.** The
+> filename hack (`reviewer-standby`, `<worker>-URGENT`) was always
+> routing state leaked into the receiver slot. Channels give that
+> state a real home.
 
 ### Priority lanes (urgent / blocker)
 
@@ -707,7 +747,7 @@ A handful of role patterns recur. Pick the closest archetype and adapt the brief
 |---|---|---|---|---|
 | `coordinator` | session-long | mailbox, PRs, processes | briefings, mailbox, merges | singleton |
 | `implementer` | until its PR merges | briefing, code | one PR in one scope | scope-named |
-| `reviewer` | until user-stop | open PRs + diffs | PR comments only | `reviewer-standby` |
+| `reviewer` | until user-stop | open PRs + diffs | PR comments only | `reviewer` (subscribes to `channel:reviewers`) |
 | `auditor` | until report posted | codebase + logs | mailbox report (no code) | `audit-<area>`, `<topic>-autopsy` |
 | `log-watcher` | live session | log stream | mailbox PING/STOP/NOTE | `log-watcher` |
 | `architect` | topic-bounded | codebase | RFC / design doc in `docs/` | `architect`, `innovator` |
