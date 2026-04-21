@@ -5,6 +5,7 @@ pub mod models;
 pub mod monitor;
 pub mod msg;
 pub mod msg_archive;
+pub mod msg_channel;
 pub mod msg_claim;
 pub mod msg_cursors;
 pub mod msg_migrate;
@@ -15,6 +16,8 @@ pub mod prompts;
 pub mod session;
 pub mod session_attribution;
 pub mod stop;
+#[cfg(test)]
+pub mod test_env;
 pub mod theme;
 pub mod ticket;
 
@@ -561,6 +564,12 @@ pub fn run(cmd: Commands) -> i32 {
                 }
                 msg_presence::PresenceCommands::Clear { handle } => {
                     msg_presence::cmd_clear(handle)
+                }
+            },
+            MsgCommands::Channel { command } => match command {
+                msg_channel::ChannelCommands::List { format } => msg_channel::cmd_list(format),
+                msg_channel::ChannelCommands::Subscribers { name, format } => {
+                    msg_channel::cmd_subscribers(name, format)
                 }
             },
         },

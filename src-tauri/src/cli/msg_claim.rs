@@ -654,14 +654,8 @@ impl From<ClaimListFormat> for FetchFormat {
 mod tests {
     use super::*;
     use crate::cli::msg::parse_message_file;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
+    use crate::cli::test_env;
+    use std::sync::MutexGuard;
 
     struct MailboxGuard {
         root: PathBuf,
@@ -672,7 +666,7 @@ mod tests {
 
     impl MailboxGuard {
         fn new() -> Self {
-            let _guard = env_lock();
+            let _guard = test_env::lock();
             let root = std::env::temp_dir()
                 .join(format!("twapp-claim-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(root.join("inbox")).unwrap();

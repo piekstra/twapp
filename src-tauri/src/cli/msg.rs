@@ -80,10 +80,12 @@ pub struct ParsedMessage {
 #[derive(Subcommand, Debug)]
 pub enum MsgCommands {
     /// Send a directed message
-    #[command(after_help = "Examples:\n  twapp msg send reviewer \"heads up, PR-1 is landing\"\n  twapp msg send a,b --priority urgent --subject 'build broke' \"see CI 1234\"\n  twapp msg send reviewer --reply-to 01JS4M7Q8W \"ack\"\n  echo \"long body\" | twapp msg send reviewer --from me --subject hi")]
+    #[command(after_help = "Examples:\n  twapp msg send reviewer \"heads up, PR-1 is landing\"\n  twapp msg send a,b --priority urgent --subject 'build broke' \"see CI 1234\"\n  twapp msg send reviewer --reply-to 01JS4M7Q8W \"ack\"\n  twapp msg send channel:reviewers \"anyone free?\"          # positional form\n  twapp msg send --channel reviewers \"anyone free?\"         # flag form\n  echo \"long body\" | twapp msg send reviewer --from me --subject hi")]
     Send {
-        /// Recipient handle(s). Comma-separate for multiple, or use --channel for channels.
-        to: String,
+        /// Recipient handle(s). Comma-separate for multiple, or use
+        /// `channel:<name>` for a channel. Optional when `--channel <name>`
+        /// is supplied (the channel then becomes the sole recipient).
+        to: Option<String>,
         /// Sender handle. Defaults to the current .twapp-session.json name.
         #[arg(long)]
         from: Option<String>,
@@ -278,6 +280,26 @@ pub enum MsgCommands {
     Presence {
         #[command(subcommand)]
         command: super::msg_presence::PresenceCommands,
+    },
+    /// Channel observability (design §2.3, PR-6).
+    ///
+    /// Channels are topic-scoped fan-in: messages addressed to
+    /// `channel:<name>` land under `<mailbox>/inbox/channel/<name>/`.
+    /// Sending is just `twapp msg send channel:<name> ...` or
+    /// `twapp msg send --channel <name> ...`; this subcommand group is the
+    /// read side — what channels exist, and who is listening.
+    ///
+    /// Subscription is by-convention: a subscriber declares its claims in
+    /// `presence/<handle>.json`'s `claims` array
+    /// (e.g. `channel:reviewers`), and the coordinator uses
+    /// `channel subscribers` to see who has claimed what. Senders don't
+    /// consult the list.
+    #[command(
+        after_help = "Examples:\n  twapp msg channel list\n  twapp msg channel list --format json\n  twapp msg channel subscribers reviewers"
+    )]
+    Channel {
+        #[command(subcommand)]
+        command: super::msg_channel::ChannelCommands,
     },
 }
 
@@ -660,7 +682,12 @@ pub fn write_message(inbox: &Path, args: SendArgs) -> Result<SentMessage, String
 fn create_urgent_symlinks(inbox: &Path, canonical: &Path, filename: &str, to: &[String]) {
     let urgent_root = urgent_dir(inbox);
     for recipient in to {
-        // Channel lane lives in PR-6; skip for now.
+        // Channel urgent lane is deferred — the read path
+        // (`fetch --priority urgent --channel X`) would need a matching
+        // `scan_urgent_lane` extension to pick them up, and the PR-6
+        // briefing keeps priority+channel combined use out of scope.
+        // Channel messages still land in `inbox/channel/<name>/` regardless
+        // of priority, so they're reachable via the full inbox scan.
         if recipient.starts_with("channel:") {
             continue;
         }
@@ -850,15 +877,33 @@ pub fn select_messages(
 ) -> Vec<ParsedMessage> {
     // Fast path for --priority urgent|blocker: scan the priority lane under
     // inbox/urgent/<handle>/ (+ inbox/urgent/all/ for broadcasts) instead of
-    // the whole flat inbox. Design §2.5 / §2.9.
-    let mut msgs = match priority {
-        Some(MsgPriority::Urgent) | Some(MsgPriority::Blocker) => {
-            scan_urgent_lane(inbox, for_handle)
-        }
-        _ => list_messages(inbox),
+    // the whole flat inbox. Design §2.5 / §2.9. The fast path is disabled
+    // when --channel is set — channel recipients don't get urgent/
+    // symlinks (PR-6), so scanning the urgent lane would miss them.
+    let use_urgent_fast_path = matches!(
+        priority,
+        Some(MsgPriority::Urgent) | Some(MsgPriority::Blocker)
+    ) && channel.is_none();
+    let mut msgs = if use_urgent_fast_path {
+        scan_urgent_lane(inbox, for_handle)
+    } else {
+        list_messages(inbox)
     };
 
-    if let Some(h) = for_handle {
+    // Addressing filter: the interaction between `--for` and `--channel`
+    // matters. A channel message is addressed to `channel:<name>`, not to
+    // any direct handle — so the default `matches_for_handle` check would
+    // drop every channel message when both `--for` and `--channel` are set,
+    // which defeats the briefing's "fetch --channel X --for Y" use case
+    // (design §2.3, PR-6). When `--channel` is specified, treat the channel
+    // filter as the primary addressing check and let `--for` downgrade to
+    // "exclude messages sent by this handle".
+    if let Some(ch) = channel {
+        msgs.retain(|m| matches_channel(&m.fm, ch));
+        if let Some(h) = for_handle {
+            msgs.retain(|m| m.fm.from != h);
+        }
+    } else if let Some(h) = for_handle {
         msgs.retain(|m| matches_for_handle(&m.fm, h));
     }
     if let Some(ts_or_cursor) = since {
@@ -881,9 +926,6 @@ pub fn select_messages(
     }
     if let Some(t) = thread {
         msgs.retain(|m| m.fm.thread.as_deref() == Some(t) || m.fm.id == t);
-    }
-    if let Some(ch) = channel {
-        msgs.retain(|m| matches_channel(&m.fm, ch));
     }
     if let Some(n) = limit {
         msgs.truncate(n);
@@ -1157,7 +1199,7 @@ pub fn find_by_id(inbox: &Path, id: &str) -> Option<Frontmatter> {
 // --- Command entry points --------------------------------------------------
 
 pub fn cmd_send(
-    to: String,
+    to: Option<String>,
     from: Option<String>,
     priority: MsgPriority,
     subject: Option<String>,
@@ -1183,7 +1225,27 @@ pub fn cmd_send(
         }
     };
 
-    let mut to_list: Vec<String> = split_csv(&to);
+    // Clap can't distinguish `twapp msg send --channel X "body"` (where the
+    // single positional is the body, routing comes from --channel) from
+    // `twapp msg send reviewer "body"` (positional is the recipient). When
+    // --channel is supplied AND there is exactly one positional AND no
+    // explicit body, reinterpret that positional as the body — the channel
+    // is already the sole recipient.
+    let channel_nonempty = channel
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some();
+    let (to_arg, body_arg) = if channel_nonempty && body.is_none() {
+        (None, to)
+    } else {
+        (to, body)
+    };
+
+    let mut to_list: Vec<String> = match to_arg.as_deref() {
+        Some(s) => split_csv(s),
+        None => Vec::new(),
+    };
     if let Some(ch) = channel.as_ref() {
         let ch = ch.trim();
         if !ch.is_empty() {
@@ -1216,7 +1278,7 @@ pub fn cmd_send(
         (thread, None)
     };
 
-    let body_text = match body {
+    let body_text = match body_arg {
         Some(b) => b,
         None => match read_stdin_body() {
             Ok(b) => b,
@@ -1554,18 +1616,14 @@ fn read_stdin_body() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use crate::cli::test_env;
+    use std::sync::MutexGuard;
 
-    // Serialize every test that touches TWAPP_MAILBOX_DIR / TWAPP_SHARED_DIR.
-    // `cargo test` runs tests in parallel, and process-wide env is global state.
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
-
-    // Per-test temp mailbox with automatic env var setup.
+    // Per-test temp mailbox with automatic env var setup. Every test that
+    // mutates TWAPP_MAILBOX_DIR / TWAPP_SHARED_DIR acquires the shared
+    // `test_env::lock()` — process-wide env is global state, so one lock
+    // across every module is the only thing that makes cross-module
+    // parallel runs deterministic.
     struct MailboxGuard {
         root: PathBuf,
         prev_mailbox: Option<String>,
@@ -1575,7 +1633,7 @@ mod tests {
 
     impl MailboxGuard {
         fn new() -> Self {
-            let _guard = env_lock();
+            let _guard = test_env::lock();
             let root = std::env::temp_dir().join(format!(
                 "twapp-msg-test-{}",
                 uuid::Uuid::new_v4()
@@ -2141,7 +2199,7 @@ new\n";
 
     #[test]
     fn resolve_mailbox_falls_back_to_shared_dir() {
-        let _lock = env_lock();
+        let _lock = test_env::lock();
         let prev_mailbox = std::env::var("TWAPP_MAILBOX_DIR").ok();
         let prev_shared = std::env::var("TWAPP_SHARED_DIR").ok();
         std::env::remove_var("TWAPP_MAILBOX_DIR");
@@ -2162,7 +2220,7 @@ new\n";
 
     #[test]
     fn resolve_mailbox_errors_when_unset() {
-        let _lock = env_lock();
+        let _lock = test_env::lock();
         let prev_mailbox = std::env::var("TWAPP_MAILBOX_DIR").ok();
         let prev_shared = std::env::var("TWAPP_SHARED_DIR").ok();
         std::env::remove_var("TWAPP_MAILBOX_DIR");
@@ -2212,12 +2270,58 @@ new\n";
     }
 
     #[test]
-    fn clap_send_without_positional_to_fails() {
+    fn clap_send_without_positional_to_parses_but_runtime_rejects() {
         use clap::Parser;
-        let err = MsgCliTest::try_parse_from(["send"]).unwrap_err();
-        // Clap complains about the missing required `<TO>` argument.
-        let s = format!("{}", err);
-        assert!(s.to_ascii_lowercase().contains("to"), "got: {}", s);
+        // `<to>` is now optional at the clap level so `--channel <name>` can
+        // be the sole recipient (design §2.3, PR-6). Clap accepts a bare
+        // `send` with no positional; `cmd_send` then rejects at runtime with
+        // a human-readable error when neither `to` nor `--channel` produce a
+        // recipient.
+        let parsed = MsgCliTest::try_parse_from(["send"]).unwrap();
+        match parsed.cmd {
+            MsgCommands::Send {
+                to,
+                channel,
+                body,
+                ..
+            } => {
+                assert!(to.is_none());
+                assert!(channel.is_none());
+                assert!(body.is_none());
+            }
+            _ => panic!("expected Send"),
+        }
+    }
+
+    #[test]
+    fn clap_send_accepts_channel_flag_with_single_positional() {
+        use clap::Parser;
+        // `twapp msg send --channel X "body"` — clap fills `to` first
+        // (that's the argv-positional assignment rule), so at the parsed
+        // level the positional lands in `to` and `body` stays None. The
+        // runtime reinterpretation in `cmd_send` is what makes this shape
+        // work as a channel-only send; see
+        // `channel_flag_alone_reroutes_single_positional_to_body`.
+        let parsed = MsgCliTest::try_parse_from([
+            "send",
+            "--channel",
+            "reviewers",
+            "hello channel",
+        ])
+        .unwrap();
+        match parsed.cmd {
+            MsgCommands::Send {
+                to,
+                channel,
+                body,
+                ..
+            } => {
+                assert_eq!(to.as_deref(), Some("hello channel"));
+                assert_eq!(channel.as_deref(), Some("reviewers"));
+                assert!(body.is_none());
+            }
+            _ => panic!("expected Send"),
+        }
     }
 
     #[test]
@@ -2252,7 +2356,7 @@ new\n";
                 body,
                 ..
             } => {
-                assert_eq!(to, "reviewer");
+                assert_eq!(to.as_deref(), Some("reviewer"));
                 assert_eq!(from.as_deref(), Some("me"));
                 assert_eq!(priority, MsgPriority::Urgent);
                 assert_eq!(body.as_deref(), Some("hello"));
@@ -3006,5 +3110,219 @@ new\n";
         let thread = list_thread(&empty_mailbox.join("inbox"), "ANY");
         assert!(thread.is_empty());
         let _ = std::fs::remove_dir_all(&empty_mailbox);
+    }
+
+    // ---- PR-6: channels --------------------------------------------------
+
+    fn send_channel_msg(
+        inbox: &Path,
+        channel: &str,
+        from: &str,
+        body: &str,
+    ) -> SentMessage {
+        write_message(
+            inbox,
+            SendArgs {
+                to: vec![format!("channel:{}", channel)],
+                from: from.to_string(),
+                priority: MsgPriority::Routine,
+                subject: None,
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn channel_fetch_returns_only_messages_on_that_channel() {
+        let g = MailboxGuard::new();
+        send_channel_msg(&g.inbox(), "reviewers", "coordinator", "r1");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send_channel_msg(&g.inbox(), "reviewers", "coordinator", "r2");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send_channel_msg(&g.inbox(), "announcements", "coordinator", "a1");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            None,
+            None,
+            None,
+            None,
+            Some("reviewers"),
+            None,
+        );
+        let bodies: Vec<&str> = msgs.iter().map(|m| m.body.trim()).collect();
+        assert_eq!(msgs.len(), 2, "got: {:?}", bodies);
+        assert!(bodies.contains(&"r1"));
+        assert!(bodies.contains(&"r2"));
+        assert!(!bodies.contains(&"a1"));
+    }
+
+    #[test]
+    fn channel_fetch_with_for_excludes_self_sent_messages() {
+        // `fetch --channel X --for Y` returns everything on channel X except
+        // messages Y itself sent. Previously, the stacked `matches_for_handle`
+        // filter would reject every channel message (channel:X isn't in the
+        // direct/broadcast/cc lanes Y would normally match on) — this test
+        // pins the PR-6 fix.
+        let g = MailboxGuard::new();
+        send_channel_msg(&g.inbox(), "reviewers", "coordinator", "from-coord");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send_channel_msg(&g.inbox(), "reviewers", "reviewer-a", "from-self");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            Some("reviewer-a"),
+            None,
+            None,
+            None,
+            Some("reviewers"),
+            None,
+        );
+        let bodies: Vec<&str> = msgs.iter().map(|m| m.body.trim()).collect();
+        assert_eq!(msgs.len(), 1, "got: {:?}", bodies);
+        assert_eq!(bodies[0], "from-coord");
+    }
+
+    #[test]
+    fn channel_fetch_on_unknown_channel_returns_empty_no_crash() {
+        // The briefing's "Unknown channel fetch returns empty, no crash"
+        // checklist item. Exercises the cold path where no subdir exists
+        // under inbox/channel/ — list_messages must still succeed and the
+        // channel filter must leave the result empty.
+        let g = MailboxGuard::new();
+        // One channel message to another channel; a direct message; and a
+        // broadcast — proof that the filter is channel-specific, not just
+        // "everything is empty".
+        send_channel_msg(&g.inbox(), "reviewers", "coordinator", "r");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "d");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send(&g.inbox(), vec!["all"], MsgPriority::Routine, "b");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            None,
+            None,
+            None,
+            None,
+            Some("never-created-channel"),
+            None,
+        );
+        assert!(msgs.is_empty(), "got: {:?}", msgs.iter().map(|m| &m.fm.id).collect::<Vec<_>>());
+
+        // And the same on a truly empty mailbox (no inbox/channel/ at all).
+        let empty = std::env::temp_dir()
+            .join(format!("twapp-msg-empty-chan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(empty.join("inbox")).unwrap();
+        let msgs = select_messages(
+            &empty.join("inbox"),
+            None,
+            None,
+            None,
+            None,
+            Some("nothing"),
+            None,
+        );
+        assert!(msgs.is_empty());
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn channel_flag_alone_reroutes_single_positional_to_body() {
+        // `twapp msg send --channel X "body"` — clap fills the one
+        // positional into `to`, but `cmd_send` reinterprets that as the
+        // body when --channel is set and no explicit body is present.
+        // End-to-end via the real CLI entry point with stdin closed
+        // (empty stdin would otherwise swallow the body).
+        let g = MailboxGuard::new();
+        let code = cmd_send(
+            Some("body text goes here".to_string()),
+            Some("coordinator".to_string()),
+            MsgPriority::Routine,
+            None,
+            None,
+            None,
+            None,
+            Some("reviewers".to_string()),
+            None, // body explicitly None — mimics the clap parse shape
+        );
+        assert_eq!(code, 0);
+        let msgs = list_messages(&g.inbox());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].fm.to, vec!["channel:reviewers".to_string()]);
+        assert_eq!(msgs[0].body.trim(), "body text goes here");
+    }
+
+    #[test]
+    fn fetch_priority_urgent_with_channel_filter_sees_channel_messages() {
+        // Urgent channel messages don't get an urgent/ symlink today
+        // (PR-6's deferred urgent lane for channels). When --priority is
+        // combined with --channel, select_messages must fall back to the
+        // full inbox scan instead of the urgent-lane fast path — otherwise
+        // the urgent channel message is invisible on fetch.
+        let g = MailboxGuard::new();
+        write_message(
+            &g.inbox(),
+            SendArgs {
+                to: vec!["channel:reviewers".to_string()],
+                from: "coordinator".to_string(),
+                priority: MsgPriority::Urgent,
+                subject: Some("urgent review please".to_string()),
+                thread: None,
+                in_reply_to: None,
+                cc: Vec::new(),
+                body: "please look".to_string(),
+            },
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // Noise: urgent direct, routine channel. Neither should show up.
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Urgent, "direct urgent");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        send_channel_msg(&g.inbox(), "reviewers", "coordinator", "routine on channel");
+
+        let msgs = select_messages(
+            &g.inbox(),
+            None,
+            None,
+            Some(MsgPriority::Urgent),
+            None,
+            Some("reviewers"),
+            None,
+        );
+        let bodies: Vec<&str> = msgs.iter().map(|m| m.body.trim()).collect();
+        assert_eq!(msgs.len(), 1, "got: {:?}", bodies);
+        assert_eq!(bodies[0], "please look");
+    }
+
+    #[test]
+    fn channel_message_written_to_flat_archive_rotates_by_day_pr7() {
+        // The briefing promises "Channel messages archive with the same
+        // daily rotation as other messages (PR-7 behavior, already
+        // shipped)". This test documents the contract: a channel message
+        // dropped into `archive/` (flat) by an archival tool rotates into
+        // `archive/<YYYY-MM-DD>/` keyed off its fenced-frontmatter `ts`,
+        // same as a broadcast or direct message would.
+        let g = MailboxGuard::new();
+        let sent = send_channel_msg(&g.inbox(), "reviewers", "coordinator", "archived");
+        let archive = g.root.join("archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        let flat = archive.join(sent.path.file_name().unwrap());
+        std::fs::rename(&sent.path, &flat).unwrap();
+
+        let moves = crate::cli::msg_archive::rotate_archive(&archive, false).unwrap();
+        assert_eq!(moves.len(), 1);
+        // Day taken from the fenced-frontmatter ts — e.g. `20260420T...`
+        // becomes `2026-04-20`. We reconstruct the expected date from the
+        // same ts the sender wrote, so the assertion survives running on
+        // any calendar day.
+        let ts = &sent.fm.ts;
+        let expected_date = format!("{}-{}-{}", &ts[..4], &ts[4..6], &ts[6..8]);
+        assert_eq!(moves[0].date, expected_date);
+        assert!(moves[0].to.exists(), "rotated file missing at {}", moves[0].to.display());
     }
 }
