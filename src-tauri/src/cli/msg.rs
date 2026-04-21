@@ -204,6 +204,16 @@ pub enum MsgCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Archive maintenance: rotate flat messages into `<YYYY-MM-DD>/`, purge
+    /// old days, or list counts per day.
+    ///
+    /// Cron-friendly — exits 0 on success or no-op, non-zero only on
+    /// filesystem errors. See `docs/designs/agent-messaging.md` §2.8.
+    #[command(after_help = "Examples:\n  twapp msg archive rotate\n  twapp msg archive purge --retain-days 14\n  twapp msg archive list --since 2026-04-01 --format json")]
+    Archive {
+        #[command(subcommand)]
+        command: super::msg_archive::ArchiveCommands,
+    },
 }
 
 // --- Mailbox discovery ------------------------------------------------------
