@@ -109,6 +109,7 @@ operation — worker contract" below), self-merge criteria,
 offboard shape, hard rules.>
 
 - Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
+- Heartbeat each `/loop` cycle: `twapp msg presence heartbeat --task "<one-line current step>"`. On offboard, `twapp msg presence clear`. See §3 Presence / heartbeats.
 
 ## Coordinate with
 <Names of other in-flight workers whose work overlaps —
@@ -146,6 +147,7 @@ Coordinators MUST include this mandate in every worker briefing's `## Protocol` 
 
 ```
 - Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
+- Heartbeat each `/loop` cycle: `twapp msg presence heartbeat --task "<one-line current step>"`. On offboard, `twapp msg presence clear`. See §3 Presence / heartbeats.
 ```
 
 Workers may occasionally address the user directly when the coordinator explicitly routes a question there, but the default interaction channel is async mailbox with the coordinator — **not** a trailing "do you want me to ...?" question that freezes the turn and blocks silently until someone happens to look.
@@ -246,6 +248,57 @@ twapp msg ack <msg-id> --note "rebasing now"
 ### Archive maintenance
 
 The flat `archive/` fills up over time. Coordinators may run `twapp msg archive rotate` daily to partition it into `archive/<YYYY-MM-DD>/` dirs, and `twapp msg archive purge` to drop days older than 14. See the README "Archive maintenance" section for the cron line.
+
+### Presence / heartbeats (PR-5)
+
+Every worker heartbeats on its `/loop` cadence so the coordinator can
+see who is alive, what they're doing, and how long it's been since
+their last tick — without opening N inboxes. One file per handle at
+`<shared-dir>/mailbox/presence/<handle>.json`, overwritten in place.
+
+**Worker expectation (put this in every briefing's Protocol section):**
+
+```
+- Heartbeat each /loop cycle:
+  twapp msg presence heartbeat --task "<one-line current step>"
+- On offboard, run `twapp msg presence clear` so the coordinator doesn't
+  see you as dormant.
+```
+
+**Coordinator fleet view:**
+
+```bash
+# Everyone with a presence file, alphabetical.
+twapp msg presence list
+
+# Only dormant handles (last_heartbeat > 5 × poll_interval_sec).
+twapp msg presence list --stale
+
+# Drill into one.
+twapp msg presence get worker-a
+```
+
+Three liveness states the coordinator reasons about:
+
+- **processing / idle** — heartbeat within `5 × poll_interval_sec`. Alive.
+- **dormant** — file exists but last heartbeat is past threshold. A busy
+  worker deep in a write cycle can legitimately go dormant; treat
+  `--stale` as a hint to check in, not a verdict. Pair with §6.5 Reap
+  sweep before any stop decision.
+- **dead** — no presence file at all. Means "never started or fully
+  offboarded". `presence list` omits these.
+
+A `--stale` entry is the earliest reliable signal that a worker's loop
+may have stalled. Use it as the trigger to mailbox a "still with us?"
+nudge — cheaper than polling inboxes and more accurate than process
+liveness (a `twapp` host can be up while its child claude is wedged).
+
+The coordinator itself should also heartbeat on each status-check cycle
+so its workers can see it's alive.
+
+> Heartbeating is the worker's responsibility today. A follow-up PR may
+> wire automatic heartbeats into the `/loop` skill; until then, the
+> worker briefing must call it out explicitly.
 
 ### Addressing
 
@@ -485,7 +538,11 @@ Then:
 
 ```
 mv <shared-dir>/mailbox/inbox/<read-msgs>.md <shared-dir>/mailbox/archive/
+twapp msg presence clear
 ```
+
+`presence clear` removes the worker's `presence/<handle>.json` so the
+coordinator's `presence list` no longer shows it as dormant.
 
 Do not delete the worktree yourself — coordinator handles that so force-pushed extra commits don't get stranded.
 
