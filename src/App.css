@@ -4632,16 +4632,6 @@ a.file-link {
   font-style: italic;
 }
 
-.urgent-error {
-  padding: 6px 8px;
-  background: rgba(220, 38, 38, 0.10);
-  border: 1px solid rgba(220, 38, 38, 0.45);
-  color: #b91c1c;
-  border-radius: 6px;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
 /* Discreet footer shown when the mailbox is configured but a fetch failed
  * (permissions, disk, etc.). Deliberately understated — the old URGENT-styled
  * error banner was read as a real urgent message and alarmed vanilla users. */

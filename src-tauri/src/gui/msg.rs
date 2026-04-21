@@ -273,6 +273,14 @@ pub struct MailboxStatus {
 /// The briefing says: TWAPP_MAILBOX_DIR → TWAPP_SHARED_DIR/mailbox → `<cwd>/mailbox/inbox`.
 /// A path counts as "configured" only if it actually exists on disk — empty
 /// env strings, missing dirs, and non-dir files all fall through.
+///
+/// This is a *cheap* existence check, not an authoritative reachability one:
+/// a read-only inbox, a permission-stripped directory, or a stale NFS mount
+/// still pass the probe and will surface their real failure when
+/// `fetch_messages` runs. That's deliberate — the probe is there to spare
+/// vanilla single-session users any urgent-lane UI at all, not to guarantee
+/// the feed works. Fetch-time errors degrade to the "Urgent feed unavailable"
+/// footer rather than bouncing back up to a render-gate.
 pub fn probe_mailbox_status(
     mailbox_env: Option<&str>,
     shared_env: Option<&str>,
