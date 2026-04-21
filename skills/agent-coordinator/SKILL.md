@@ -10,6 +10,8 @@ The long-running orchestration loop that wraps around many agent launches.
 
 This skill teaches a Claude instance how to act as a **coordinator** — managing the lifecycle of two or more twapp-hosted worker agents, reviewing their work, merging their PRs, and keeping a shared mailbox tidy.
 
+> This is the orchestration half of the twapp README's [co-lab overview](../../README.md#co-lab-multi-agent-coordination-on-twapp); pair it with [`spawn-agent`](../spawn-agent/SKILL.md) for the individual-worker primitive.
+
 For launching a single agent, use the [`spawn-agent`](../spawn-agent/SKILL.md) skill. This skill assumes you already know how to spawn one agent; it covers what to do when you have many.
 
 ## 1. When to use
