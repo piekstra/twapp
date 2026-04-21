@@ -473,37 +473,39 @@ automating spawns.
 
 ### Bootstrapping a coordinator
 
-> **Coming in [#44](https://github.com/piekstra/twapp/pull/44).** That
-> PR adds `twapp coordinator launch` and `twapp coordinator claim`,
-> which wrap the moves below into a one-liner and ship a bundled
-> bootstrap briefing pointing new coordinators at
-> [`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md).
-
-A coordinator today is just a regular `twapp work` session opened in
-whatever directory holds your mailbox, with the
-[`agent-coordinator`](skills/agent-coordinator/SKILL.md) skill in scope.
+Use `twapp coordinator launch` to stand up a coordinator session —
+`.twapp-session.json` is stamped with `role: "coordinator"`, a bundled
+bootstrap briefing is materialized next to the session, and
+`TWAPP_MAILBOX_DIR` is plumbed through so `twapp msg` / `twapp
+coordinator claim` in the new terminal see the same mailbox without
+ceremony.
 
 ```bash
-# Start a coordinator session (pre-#44).
-export TWAPP_MAILBOX_DIR=$HOME/collab/mailbox
-mkdir -p "$TWAPP_MAILBOX_DIR/inbox" "$TWAPP_MAILBOX_DIR/archive"
-twapp work --name coordinator --cwd "$HOME/collab"
-```
-
-Once #44 lands:
-
-```bash
-twapp coordinator launch                       # uses a bundled bootstrap briefing
+twapp coordinator launch                       # uses the bundled bootstrap briefing
 twapp coordinator launch --briefing /path/to/bootstrap.md
 twapp coordinator launch --shared-dir ~/collab/mailbox
 twapp coordinator claim                        # flip an existing session's role in place
 ```
 
-The bundled bootstrap briefing points the new coordinator at the
-`agent-coordinator` skill, the messaging design doc, and the mailbox
-protocol, so you don't have to hand-roll a prompt when you stand up a
-fleet. Override it with `--briefing <path>` when you want a
-project-specific bootstrap.
+`launch` refuses to overwrite an existing session at the target
+directory — use `twapp coordinator claim` to take over in place, or
+`twapp stop` the old session first. `claim` rewrites only the `role`
+field in `.twapp-session.json` and refuses to overwrite an existing
+non-coordinator role without `--force`.
+
+`--shared-dir` precedence for the mailbox: the flag wins; otherwise
+`TWAPP_MAILBOX_DIR` is inherited from the parent env; otherwise
+`./mailbox/` under the coordinator cwd is reused if it already exists;
+otherwise `./collab/mailbox/` is created under the cwd and the path is
+printed to stderr.
+
+The bundled bootstrap
+([`templates/coordinator-bootstrap.md`](templates/coordinator-bootstrap.md))
+points the new coordinator at the
+[`agent-coordinator`](skills/agent-coordinator/SKILL.md) skill, the
+messaging design doc, and the mailbox protocol, so you don't have to
+hand-roll a prompt when you stand up a fleet. Override it with
+`--briefing <path>` when you want a project-specific bootstrap.
 
 ### Messaging between sessions
 
@@ -765,6 +767,8 @@ burns iteration.
 | `twapp msg claim <lane-id> [--note <s>]` | Atomically claim a shared lane (PR, audit, backlog item); exit 1 if already claimed |
 | `twapp msg release <lane-id> [--note <s>]` | Release a lane you own; writes `released.json` and broadcasts the release |
 | `twapp msg claim --list [--lane-prefix <p>]` | List all active (unreleased, unstale) claims; `--format json` for machine-readable |
+| `twapp coordinator launch [--briefing <p>] [--name <n>] [--shared-dir <d>]` | Spawn a fresh session wired as coordinator (writes `role: "coordinator"`) |
+| `twapp coordinator claim [--name <n>] [--force]` | Re-tag an existing session's role to `coordinator` |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |
 | `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |

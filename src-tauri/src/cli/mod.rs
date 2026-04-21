@@ -1,5 +1,6 @@
 pub mod app_bundle;
 pub mod config;
+pub mod coordinator;
 pub mod models;
 pub mod monitor;
 pub mod msg;
@@ -14,6 +15,7 @@ pub mod theme;
 pub mod ticket;
 
 use clap::Subcommand;
+use coordinator::CoordinatorCommands;
 use msg::MsgCommands;
 use session::{AgentProvider, build_claude_run_command, build_codex_run_command, shell_escape_single};
 
@@ -155,6 +157,17 @@ pub enum Commands {
     Rename {
         /// New session name
         name: String,
+    },
+    /// Launch or claim a coordinator session.
+    ///
+    /// A coordinator is a long-running twapp session that orchestrates other
+    /// agent sessions — writing briefings, watching the shared mailbox,
+    /// merging PRs. See `skills/agent-coordinator/SKILL.md` for its operating
+    /// manual.
+    #[command(after_help = "Examples:\n  twapp coordinator launch                                 Spawn a coordinator named 'coordinator' with the bundled bootstrap\n  twapp coordinator launch --briefing /path/to/brief.md    Override the bootstrap\n  twapp coordinator launch --name ux-coord                 Custom session name\n  twapp coordinator launch --shared-dir /tmp/collab        Point at a specific shared mailbox\n  twapp coordinator claim                                  Re-tag the current session as coordinator\n  twapp coordinator claim --name worker-a --force          Overwrite an existing non-coordinator role")]
+    Coordinator {
+        #[command(subcommand)]
+        command: CoordinatorCommands,
     },
     /// Send / fetch / broadcast messages in a shared filesystem mailbox.
     ///
@@ -443,6 +456,7 @@ pub fn run(cmd: Commands) -> i32 {
             }
         }
         Commands::Rename { name } => cmd_rename(&name),
+        Commands::Coordinator { command } => coordinator::run(command),
         Commands::Msg { command } => match command {
             MsgCommands::Send {
                 to,
@@ -563,6 +577,11 @@ pub fn create_session_core(
     role: Option<String>,
     provenance: Option<String>,
 ) -> Result<SessionCreationResult, String> {
+    if let Some(ref r) = role {
+        if r.trim().is_empty() {
+            return Err("--role cannot be empty".to_string());
+        }
+    }
     if ticket_id.is_none() && session_name.is_none() {
         return Err("Provide a ticket or session name".to_string());
     }

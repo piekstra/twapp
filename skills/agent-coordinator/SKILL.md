@@ -26,6 +26,42 @@ Invoke this skill when the caller is acting as a coordinator — i.e., spawning 
 
 Do **not** invoke this skill for single one-shot agent launches — `spawn-agent` is the right primitive for those.
 
+## 1b. Bootstrapping a coordinator
+
+Use `twapp coordinator launch` to spawn the coordinator session itself —
+it's the canonical entry point, preferred over the generic
+`twapp work --name coordinator --from-file …` invocation.
+
+```bash
+# Default: writes role=coordinator and materializes the bundled bootstrap
+# at <cwd>/.twapp-coordinator-bootstrap.md, then spawns a twapp session.
+twapp coordinator launch
+
+# Point at a project-specific briefing and a shared mailbox root.
+twapp coordinator launch \
+  --briefing /absolute/path/to/coord-briefing.md \
+  --shared-dir /tmp/collab \
+  --name ux-coord
+
+# Already running as a generic session? Re-tag it in place instead.
+twapp coordinator claim                 # claims the session in the current cwd
+twapp coordinator claim --name worker-a --force  # overwrites an existing non-coord role
+```
+
+`launch` sets `role: "coordinator"` in `.twapp-session.json` and plumbs
+`TWAPP_MAILBOX_DIR` through to the spawned claude so downstream
+`twapp msg` / `twapp coordinator claim` invocations see the same mailbox
+without ceremony. The bundled default briefing is
+[`templates/coordinator-bootstrap.md`](../../templates/coordinator-bootstrap.md) —
+it tells the new coordinator to read this skill, register in
+`handle.txt`, post a hello, and start `/loop` polling. Override it with
+`--briefing <path>` whenever project-specific scope needs to ride along.
+
+`claim` exists for the case where you're already in a running session and
+realize mid-flight that you are the coordinator — it only rewrites the
+`role` field, leaving everything else intact. Refuses to stomp on an
+existing non-coordinator role without `--force`.
+
 ## 2. Briefing structure
 
 Each worker receives a markdown file on disk and reads it via the `spawn-agent` file-reference pattern. A complete briefing has these sections:

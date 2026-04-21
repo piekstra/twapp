@@ -22,6 +22,12 @@ Signals you want this skill:
 
 For a plain "open a named terminal for me" session, `twapp work --name foo` on its own is fine. Skip this skill.
 
+**Spawning a coordinator?** Use `twapp coordinator launch` and the
+[`agent-coordinator`](../agent-coordinator/SKILL.md) skill instead. The
+coordinator gets a dedicated command (canonical role metadata, bundled
+bootstrap, mailbox plumbing) that this generic worker-spawn path doesn't
+reproduce. This skill stays focused on workers.
+
 ## The file-reference pattern
 
 Inline prompts in `--run` are shell-fragile. A long prompt with curly quotes, `--flags`, backticks, or unicode arrows will be silently mangled by quoting before Claude ever sees it, and you'll spend ten minutes wondering why the agent is confused.
@@ -162,9 +168,13 @@ Include this in every briefing:
 - Within 2 minutes of spawn, write a hello message to
   `/tmp/agent-mailbox/inbox/<ISO-timestamp>-my-agent-hello.md`
   describing what you picked up and your planned first step.
+- Invoke `/loop` after hello; poll every 90-120s. Never finish a turn
+  asking the user a question; mailbox the coordinator if stuck.
 - Poll the inbox every 90s for follow-up messages addressed to your handle.
-- Invoke `/loop` after hello; poll every 90-120s. Never finish a turn asking the user a question — mailbox the coordinator if stuck.
 ```
+
+See [Headless operation](#headless-operation) below for the per-state
+defaults this rule encodes.
 
 Caller-side poll after spawn:
 
