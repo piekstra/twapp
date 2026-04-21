@@ -30,6 +30,7 @@ import SessionLauncher from "./components/SessionLauncher";
 import MessageComposer from "./components/MessageComposer";
 import UrgentInbox from "./components/UrgentInbox";
 import FleetPane from "./components/FleetPane";
+import TimelinePane from "./components/TimelinePane";
 
 
 const SESSION_COLORS = [
@@ -2392,6 +2393,12 @@ function App() {
 
         {/* Coordinator fleet pane — renders only when role === "coordinator". */}
         <FleetPane
+          isCoordinator={sessionRole === "coordinator"}
+          colabGroup={sessionColabGroup}
+        />
+
+        {/* Coordinator spawn/teardown timeline — renders only when role === "coordinator". */}
+        <TimelinePane
           isCoordinator={sessionRole === "coordinator"}
           colabGroup={sessionColabGroup}
         />

@@ -288,11 +288,21 @@ heartbeat loop.
 > urgent-lane file counts via the new `list_fleet` Tauri command. Rows
 > are status-dot / handle / role / provenance / unread / urgent /
 > heartbeat-age; row-click raises the target session's window via the
-> existing `launch_session` focus path. Dashboard-mode expansion,
-> inbox/broadcast panes, the spawn timeline, and the quick-action
-> context menu remain separate PRs (§3.3 dashboard-mode, §3.5, §3.7).
-> Scoping: when the coordinator's session declares a `colab_group`, the
-> pane is scoped to that group; otherwise every handle is listed.
+> existing `launch_session` focus path. Dashboard-mode expansion and
+> the inbox/broadcast panes remain separate PRs (§3.3 dashboard-mode,
+> §3.5). Scoping: when the coordinator's session declares a
+> `colab_group`, the pane is scoped to that group; otherwise every
+> handle is listed.
+>
+> **Additionally landed** (ui-spawn-timeline PR): the spawn/teardown
+> timeline strip is now a sibling panel under the fleet pane. Backend
+> `list_timeline_events` aggregates spawn events (session-metadata
+> `created`), claim/reclaim/release events (from `<mailbox>/claims/`
+> and its `.released-*` archives), offboard broadcasts (`to: [all]`
+> messages whose subject or body contains "offboard"), and dead events
+> (presence heartbeat older than 15× `poll_interval_sec`). Frontend
+> polls every 30s, filters by handle, and paginates older events by
+> walking `beforeTs` backward 7 days per click.
 
 Activates when the current session declares `role: coordinator` **and**
 at least one other session in the shared dir has a live
@@ -365,9 +375,17 @@ the terminal is the right shape.
   not a direct recipient. This is the only cross-agent peek the
   dashboard does, because "a blocker anywhere in the fleet" is load-
   bearing for the coordinator.
-- **Spawn timeline** — horizontal strip below the panes, one tick per
-  spawn / offboard event in the last 2 hours. Hover = briefing title,
-  exit reason, duration. See §3.7 on the event-log dependency.
+- **Spawn timeline** — chronological list below the fleet pane
+  (ui-spawn-timeline PR). One row per spawn / claim / reclaim / release
+  / offboard / dead event, newest first, default window of 7 days with
+  a *Load more* paginator that extends 7 days back per click. Each row
+  shows a ts chip, a kind chip (styled per kind via
+  `.timeline-chip-{spawn,claim,reclaim,release,offboard,dead}`), the
+  handle, and a one-line description. A free-text handle filter
+  narrows the list without re-fetching. The originally-sketched
+  horizontal strip with hover tooltips is deferred — the list shape
+  fits the sidebar-column layout more naturally and lines up with the
+  fleet pane's vocabulary.
 
 In sidebar-only (non-expanded) mode, only the fleet pane summary
 (`6 active · 1 urgent`) is visible, and it deep-links to the full

@@ -4995,6 +4995,208 @@ a.file-link {
   white-space: nowrap;
 }
 
+/* ----- Coordinator spawn/teardown timeline (§3.3) ----- */
+
+.timeline-panel {
+  border-bottom: 1px solid var(--border-color);
+  padding: 8px 12px 6px;
+  background: var(--bg-primary);
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timeline-header h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.timeline-title {
+  font-weight: 600;
+}
+
+.timeline-summary {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.timeline-body {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline-filter {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
+.timeline-filter:focus {
+  outline: none;
+  border-color: var(--text-muted);
+}
+
+.timeline-empty {
+  padding: 8px 0 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
+.timeline-error {
+  padding: 6px 8px;
+  background: rgba(220, 38, 38, 0.10);
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  color: #b91c1c;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.timeline-ts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.timeline-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.timeline-chip-spawn {
+  border-color: rgba(22, 163, 74, 0.55);
+  color: #15803d;
+}
+
+.timeline-chip-claim {
+  border-color: rgba(37, 99, 235, 0.55);
+  color: #1d4ed8;
+}
+
+.timeline-chip-reclaim {
+  border-color: rgba(202, 138, 4, 0.55);
+  color: #a16207;
+}
+
+.timeline-chip-release {
+  border-color: rgba(100, 116, 139, 0.55);
+  color: #475569;
+}
+
+.timeline-chip-offboard {
+  border-color: rgba(124, 58, 237, 0.55);
+  color: #6d28d9;
+}
+
+.timeline-chip-dead {
+  border-color: rgba(220, 38, 38, 0.55);
+  color: #b91c1c;
+}
+
+.timeline-handle {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.timeline-desc {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.timeline-load-more {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.timeline-load-more:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.timeline-load-more:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* ----- Agent context menu (§3.5 fleet-pane quick actions) ----- */
 
 .agent-menu-backdrop {

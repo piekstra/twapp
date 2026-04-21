@@ -11,6 +11,7 @@ pub mod pty;
 pub mod sessions;
 pub mod shell_env;
 pub mod tickets;
+pub mod timeline;
 pub mod title;
 pub mod types;
 
@@ -130,6 +131,7 @@ pub fn run(args: GuiArgs) {
             msg::send_message,
             msg::fetch_messages,
             fleet::list_fleet,
+            timeline::list_timeline_events,
             agent_actions::focus_agent_window,
             agent_actions::stop_agent,
             agent_actions::list_agent_prs,
