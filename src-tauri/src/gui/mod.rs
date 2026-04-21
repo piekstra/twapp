@@ -1,6 +1,7 @@
 pub mod config;
 pub mod files;
 pub mod monitor;
+pub mod msg;
 pub mod notes;
 pub mod prompts;
 pub mod pty;
@@ -111,6 +112,7 @@ pub fn run(args: GuiArgs) {
             config::set_monitor_float,
             monitor::list_monitor_logs,
             files::reveal_in_finder,
+            msg::send_message,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label

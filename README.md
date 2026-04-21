@@ -563,6 +563,12 @@ twapp msg fetch --since 20260420T120000Z --limit 20
 twapp msg fetch --for reviewer --format json | jq
 ```
 
+Inside a twapp session window, the same `send` / `broadcast` actions are
+reachable from the UI: **Actions ▸ Send Message…** or the keyboard
+shortcut **⌘⇧M** (Ctrl+Shift+M on non-Mac) opens a composer modal that
+shells out to `twapp msg` under the hood. `To: all` routes through
+`broadcast`; any other value goes through `send`.
+
 If `--from` is not passed, the sender handle is taken from the current
 directory's `.twapp-session.json` `name`. Bodies may be passed as a
 positional argument or piped in on stdin.
