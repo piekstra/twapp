@@ -580,8 +580,14 @@ twapp msg send reviewer "PR-1 is up, ready to review"
 twapp msg send worker-a,worker-b --priority urgent --subject "build broke" "see CI 1234"
 twapp msg send reviewer --cc coordinator,qa "heads up on scope change"
 
-# Replies inherit the parent's thread id and set in_reply_to.
+# Replies inherit the parent's thread id and set in_reply_to. If the
+# parent is itself a root (no thread: field), the reply's thread id
+# becomes the parent's own id. Replies at any depth thread to the root.
 twapp msg send reviewer --reply-to 01JS4M7Q8W "ack, rebasing now"
+
+# List every message in a thread (root + all replies), chronologically.
+twapp msg thread 01JS4M7Q8W
+twapp msg thread 01JS4M7Q8W --format json | jq
 
 # Broadcast — writes to: [all], or to: [channel:<name>] with --channel.
 twapp msg broadcast "standup in 5"
@@ -922,6 +928,7 @@ burns iteration.
 | `twapp msg send <to> [body]` | Send a message (writes to the shared mailbox inbox) |
 | `twapp msg broadcast [body]` | Broadcast to every handle (`to: [all]`) |
 | `twapp msg fetch [--for <h>] [--since <ts>]` | List inbox messages, filtered |
+| `twapp msg thread <thread-id>` | List every message in a thread chronologically; `--format json` for machine-readable |
 | `twapp msg claim <lane-id> [--note <s>]` | Atomically claim a shared lane (PR, audit, backlog item); exit 1 if already claimed |
 | `twapp msg release <lane-id> [--note <s>]` | Release a lane you own; writes `released.json` and broadcasts the release |
 | `twapp msg claim --list [--lane-prefix <p>]` | List all active (unreleased, unstale) claims; `--format json` for machine-readable |
