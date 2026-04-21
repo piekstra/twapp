@@ -29,6 +29,7 @@ import type { EditingPromptState } from "./components/PromptSections";
 import SessionLauncher from "./components/SessionLauncher";
 import MessageComposer from "./components/MessageComposer";
 import UrgentInbox from "./components/UrgentInbox";
+import FleetPane from "./components/FleetPane";
 
 
 const SESSION_COLORS = [
@@ -62,6 +63,11 @@ function App() {
   const [ticketExpanded, setTicketExpanded] = useState(false);
   const [ticketSectionExpanded, setTicketSectionExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  // Role + colab_group are not in AppConfig — they live in the session file and
+  // the fleet pane gates on them. Loaded alongside get_app_config at boot and
+  // refreshed after session-field edits that touch these values.
+  const [sessionRole, setSessionRole] = useState<string | null>(null);
+  const [sessionColabGroup, setSessionColabGroup] = useState<string | null>(null);
 
   // Ticket linking state
   const [linkTicketKey, setLinkTicketKey] = useState("");
@@ -563,6 +569,16 @@ function App() {
       if (config.name && config.name !== "twapp") {
         setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: config.name } : t));
       }
+
+      // Role + colab_group drive the coordinator fleet pane. Silent on failure —
+      // a missing/unparseable session file just means "no fleet pane here".
+      invoke<Record<string, unknown> | null>("get_session_info").then((data) => {
+        if (!data) return;
+        const role = typeof data.role === "string" ? data.role : null;
+        const group = typeof data.colab_group === "string" ? data.colab_group : null;
+        setSessionRole(role);
+        setSessionColabGroup(group);
+      }).catch(() => {});
 
       // Launcher mode — don't spawn shell or initialize terminal peripherals
       if (!config.command && !config.session_id) {
@@ -2373,6 +2389,12 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Coordinator fleet pane — renders only when role === "coordinator". */}
+        <FleetPane
+          isCoordinator={sessionRole === "coordinator"}
+          colabGroup={sessionColabGroup}
+        />
 
         {/* Urgent messages panel — renders only when session has a handle. */}
         <UrgentInbox selfHandle={appConfig?.name && appConfig.name !== "twapp" ? appConfig.name : null} />
