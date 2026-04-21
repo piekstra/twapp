@@ -8,6 +8,8 @@ allowed-tools: Bash(twapp *), Bash(mkdir *), Bash(cat *), Bash(git worktree *), 
 
 Spawn a background / long-running Claude agent as a twapp-hosted session, give it a briefing it can actually read, and confirm it came up.
 
+> This is one of the **co-lab** patterns the twapp README describes — see the [co-lab overview](../../README.md#co-lab-multi-agent-coordination-on-twapp) for how spawning fits alongside messaging, roles, and the coordinator. Use [`agent-coordinator`](../agent-coordinator/SKILL.md) for the supervision loop that wraps many spawns.
+
 ## When to use
 
 Use this skill when you want to launch a **worker** — a Claude instance that executes a prepared briefing in its own terminal window until the job is done — not when you want to open an interactive shell for yourself.
