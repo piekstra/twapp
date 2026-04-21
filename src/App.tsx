@@ -27,6 +27,7 @@ import { renderJsonNode, renderYamlNode } from "./components/FilePreview/rendere
 import PromptSections from "./components/PromptSections";
 import type { EditingPromptState } from "./components/PromptSections";
 import SessionLauncher from "./components/SessionLauncher";
+import MessageComposer from "./components/MessageComposer";
 
 
 const SESSION_COLORS = [
@@ -126,6 +127,11 @@ function App() {
 
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
+
+  // Message composer modal
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerToast, setComposerToast] = useState<string | null>(null);
+  const composerToastTimer = useRef<number | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
   // Session settings popover
@@ -939,6 +945,11 @@ function App() {
       if (e.key === "N" || (e.shiftKey && e.key === "n")) {
         e.preventDefault();
         invoke("fork_session", { ticketKey: null }).catch(console.error);
+      }
+      // Cmd+Shift+M — open message composer
+      if (e.key === "M" || (e.shiftKey && e.key === "m")) {
+        e.preventDefault();
+        setComposerOpen(true);
       }
       // Cmd+Shift+] — next tab
       if (e.key === "}" || (e.shiftKey && e.key === "]")) {
@@ -2245,6 +2256,9 @@ function App() {
                     <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setShowForkDialog(true); }}>
                       Fork Session...
                     </button>
+                    <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setComposerOpen(true); }}>
+                      Send Message... <span className="actions-menu-shortcut">⌘⇧M</span>
+                    </button>
                     <div className="actions-menu-separator" />
                     <button
                       className="actions-menu-item"
@@ -2930,6 +2944,27 @@ function App() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      <MessageComposer
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        onSent={(id) => {
+          if (composerToastTimer.current !== null) {
+            window.clearTimeout(composerToastTimer.current);
+          }
+          setComposerToast(id);
+          composerToastTimer.current = window.setTimeout(() => {
+            setComposerToast(null);
+            composerToastTimer.current = null;
+          }, 4000);
+        }}
+      />
+
+      {composerToast && (
+        <div className="composer-toast" onClick={() => setComposerToast(null)}>
+          Message sent (id: {composerToast.slice(0, 6)})
         </div>
       )}
     </div>
