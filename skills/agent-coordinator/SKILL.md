@@ -245,6 +245,30 @@ strongest red accent. Sending `--priority blocker` is therefore both a
 poll-time hint and an interactive interrupt — the recipient sees the
 panel light up on next poll even without reopening a terminal.
 
+### Threading (`--reply-to` + `msg thread`)
+
+Long coordinator ↔ worker conversations span multiple messages. Keep
+them coherent by threading instead of leaning on `re:` prose:
+
+```bash
+# Start a thread (the root is whatever you sent first — no flag needed).
+twapp msg send worker-a --subject "scope change" "<body>"
+
+# Reply to a specific parent — inherits the parent's thread id and sets
+# in_reply_to. If the parent is itself a root (no thread: field), the
+# reply's thread id becomes the parent's own id.
+twapp msg send worker-a --reply-to 01JS4M7Q8W "ack, rebasing now"
+
+# List every message in a thread chronologically (root + all replies).
+twapp msg thread 01JS4M7Q8W
+twapp msg thread 01JS4M7Q8W --format json | jq
+```
+
+Use this for REDIRECTs, scope changes, and multi-turn reviews — anywhere
+the second message only makes sense in the context of the first. The
+thread id is stable for the lifetime of the conversation; a reply at
+depth N still threads to the root, not to the immediate parent.
+
 ### Example message
 
 ```

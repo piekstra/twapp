@@ -528,6 +528,7 @@ pub fn run(cmd: Commands) -> i32 {
                     msg_archive::cmd_list(since, format)
                 }
             },
+            MsgCommands::Thread { thread_id, format } => msg::cmd_thread(thread_id, format),
         },
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
