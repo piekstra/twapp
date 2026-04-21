@@ -501,6 +501,7 @@ ceremony.
 twapp coordinator launch                       # uses the bundled bootstrap briefing
 twapp coordinator launch --briefing /path/to/bootstrap.md
 twapp coordinator launch --shared-dir ~/collab/mailbox
+twapp coordinator launch --model claude-opus-4-7
 twapp coordinator claim                        # flip an existing session's role in place
 ```
 
@@ -509,6 +510,20 @@ directory — use `twapp coordinator claim` to take over in place, or
 `twapp stop` the old session first. `claim` rewrites only the `role`
 field in `.twapp-session.json` and refuses to overwrite an existing
 non-coordinator role without `--force`.
+
+`--model <name>` is pass-through to the spawned `claude` CLI — same
+semantics as `twapp work --model`. Use `twapp models list` to see
+cached names. Unset falls back to the `claude` CLI default.
+
+Both actions are also available from the launcher UI: the
+crosshair-icon button in the top-bar opens a menu with **Launch
+coordinator…** and **Claim coordinator…**. The launch dialog takes
+the same name / briefing / shared-dir / model fields the CLI does;
+the claim dialog lists every session whose `role` is not already
+`coordinator` and prompts for a force confirmation when the picked
+session has a different role set. The Claim menu item hides itself
+when no session is eligible — single-session users see no new UI
+demands.
 
 `--shared-dir` precedence for the mailbox: the flag wins; otherwise
 `TWAPP_MAILBOX_DIR` is inherited from the parent env; otherwise
@@ -902,7 +917,7 @@ burns iteration.
 | `twapp msg claim <lane-id> [--note <s>]` | Atomically claim a shared lane (PR, audit, backlog item); exit 1 if already claimed |
 | `twapp msg release <lane-id> [--note <s>]` | Release a lane you own; writes `released.json` and broadcasts the release |
 | `twapp msg claim --list [--lane-prefix <p>]` | List all active (unreleased, unstale) claims; `--format json` for machine-readable |
-| `twapp coordinator launch [--briefing <p>] [--name <n>] [--shared-dir <d>] [--colab-group <g>]` | Spawn a fresh session wired as coordinator (writes `role: "coordinator"`; default `colab_group = --name`) |
+| `twapp coordinator launch [--briefing <p>] [--name <n>] [--shared-dir <d>] [--colab-group <g>] [--model <m>]` | Spawn a fresh session wired as coordinator (writes `role: "coordinator"`; default `colab_group = --name`) |
 | `twapp coordinator claim [--name <n>] [--force] [--colab-group <g>]` | Re-tag an existing session's role to `coordinator` (optionally set/overwrite `colab_group`) |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |

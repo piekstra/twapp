@@ -189,6 +189,18 @@ export interface DeletePreflight {
   forked_from: string | null;
 }
 
+export interface ClaimableSession {
+  name: string;
+  directory: string;
+  role: string | null;
+}
+
+export interface CoordinatorModel {
+  name: string;
+  tier: string;
+  description: string;
+}
+
 export interface SessionHistoryEvent {
   timestamp: string;
   event: "compacted" | "cleared" | "manual_edit";

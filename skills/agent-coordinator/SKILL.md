@@ -70,6 +70,10 @@ twapp coordinator launch --name infra-coord --colab-group infra-refresh
 # worker briefings spawned from this coordinator inherit colab_group="infra-refresh"
 ```
 
+Both subcommands are also reachable from the launcher UI's top-bar
+crosshair-icon button (**Launch coordinator…** / **Claim coordinator…**) —
+no terminal drop-through needed when you already have twapp open.
+
 `claim` exists for the case where you're already in a running session and
 realize mid-flight that you are the coordinator — it only rewrites the
 `role` field (and optionally `colab_group`), leaving everything else
