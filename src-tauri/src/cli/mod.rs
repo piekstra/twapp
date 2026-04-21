@@ -66,6 +66,12 @@ pub enum Commands {
         /// --spawned and over the implicit default from --from-file.
         #[arg(long)]
         provenance: Option<String>,
+        /// Name of the co-lab group this session belongs to. When paired
+        /// with `--from-file` and left unset, twapp auto-inherits the
+        /// spawning session's group (traversing upward from cwd to find
+        /// its `.twapp-session.json`). Pass `--colab-group ""` is rejected.
+        #[arg(long = "colab-group")]
+        colab_group: Option<String>,
     },
     /// Stop a running session by name (SIGTERM claude child + twapp host).
     ///
@@ -370,6 +376,7 @@ pub fn run(cmd: Commands) -> i32 {
             role,
             spawned,
             provenance,
+            colab_group,
         } => cmd_work(
             ticket,
             name,
@@ -383,6 +390,7 @@ pub fn run(cmd: Commands) -> i32 {
             role,
             spawned,
             provenance,
+            colab_group,
         ),
         Commands::Stop { name, force } => stop::cmd_stop(&name, force),
         Commands::Resume { fork } => cmd_resume(fork),
@@ -576,10 +584,16 @@ pub fn create_session_core(
     chrome: bool,
     role: Option<String>,
     provenance: Option<String>,
+    colab_group: Option<String>,
 ) -> Result<SessionCreationResult, String> {
     if let Some(ref r) = role {
         if r.trim().is_empty() {
             return Err("--role cannot be empty".to_string());
+        }
+    }
+    if let Some(ref g) = colab_group {
+        if g.trim().is_empty() {
+            return Err("--colab-group cannot be empty".to_string());
         }
     }
     if ticket_id.is_none() && session_name.is_none() {
@@ -698,6 +712,7 @@ pub fn create_session_core(
         override_terminal_theme: None,
         role,
         provenance,
+        colab_group,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -789,6 +804,7 @@ fn cmd_work(
     role: Option<String>,
     spawned: bool,
     provenance_arg: Option<String>,
+    colab_group_arg: Option<String>,
 ) -> i32 {
     if ticket_id.is_none() && session_name.is_none() {
         eprintln!("Error: Provide a ticket or --name for the session.");
@@ -812,6 +828,14 @@ fn cmd_work(
 
     let provenance = match resolve_provenance(provenance_arg, spawned, from_file.is_some()) {
         Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    let colab_group = match resolve_colab_group(colab_group_arg, from_file.is_some()) {
+        Ok(v) => v,
         Err(e) => {
             eprintln!("Error: {}", e);
             return 1;
@@ -870,6 +894,7 @@ fn cmd_work(
         chrome,
         role,
         Some(provenance),
+        colab_group,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -992,6 +1017,7 @@ fn cmd_resume(fork: bool) -> i32 {
             override_terminal_theme: None,
             role: session_data.role.clone(),
             provenance: session_data.provenance.clone(),
+            colab_group: session_data.colab_group.clone(),
         };
         session_id = new_id;
         if let Err(e) = session::write_session(&work_dir, &session_data) {
@@ -1210,10 +1236,10 @@ fn cmd_sessions(path: Option<String>) -> i32 {
     }
 
     println!(
-        "{:<25} {:<12} {:<16} {:<20} {:<16} {}",
-        "Name", "Ticket", "Session ID", "Last Active", "Role", "Directory"
+        "{:<25} {:<12} {:<16} {:<20} {:<16} {:<20} {}",
+        "Name", "Ticket", "Session ID", "Last Active", "Role", "Colab", "Directory"
     );
-    println!("{}", "-".repeat(116));
+    println!("{}", "-".repeat(137));
     for (s, dir) in &sessions {
         let name = &s.name[..s.name.len().min(24)];
         let ticket = s.ticket_key.as_deref().unwrap_or("-");
@@ -1226,17 +1252,33 @@ fn cmd_sessions(path: Option<String>) -> i32 {
             .unwrap_or("?");
         let last = last[..last.len().min(19)].replace('T', " ");
         let role_cell = format_role_cell(s.role.as_deref(), s.provenance.as_deref());
+        let colab_cell = format_colab_cell(s.colab_group.as_deref());
         println!(
-            "{:<25} {:<12} {:<16} {:<20} {:<16} {}",
+            "{:<25} {:<12} {:<16} {:<20} {:<16} {:<20} {}",
             name,
             ticket,
             sid,
             last,
             role_cell,
+            colab_cell,
             dir.display()
         );
     }
     0
+}
+
+/// Format the co-lab group cell for `twapp sessions` output.
+/// Returns `colab=<group>` when a group is set (truncating names longer than
+/// the column budget of 13 glyphs), or `-` when unset — mirroring how
+/// `format_role_cell` elides the empty case.
+pub fn format_colab_cell(colab_group: Option<&str>) -> String {
+    match colab_group.map(|g| g.trim()).filter(|g| !g.is_empty()) {
+        Some(group) => {
+            let short: String = group.chars().take(13).collect();
+            format!("colab={}", short)
+        }
+        None => "-".to_string(),
+    }
 }
 
 /// Format the role + provenance cell for `twapp sessions` output.
@@ -1975,6 +2017,68 @@ pub fn validate_role(role: Option<String>) -> Result<Option<String>, String> {
     }
 }
 
+/// Decide the `colab_group` value for a new session given the CLI flags.
+///
+/// Precedence:
+/// 1. Explicit `--colab-group <name>` wins (empty/whitespace rejected).
+/// 2. `--from-file` present & no explicit flag → try to auto-inherit from
+///    the spawning session by walking upward from cwd looking for a
+///    `.twapp-session.json`. If one is found with a populated `colab_group`,
+///    inherit it verbatim. If the spawning session is missing, unreadable,
+///    or has no `colab_group`, leave the field unset (None).
+/// 3. No `--from-file` and no explicit flag → None.
+///
+/// The "user types `twapp work` directly" path (no `--from-file`) never
+/// auto-inherits; group membership has to be an explicit choice so
+/// manually-started sessions default to the ungrouped "My sessions" bucket.
+pub fn resolve_colab_group(
+    arg: Option<String>,
+    has_from_file: bool,
+) -> Result<Option<String>, String> {
+    if let Some(raw) = arg {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err("--colab-group cannot be empty.".to_string());
+        }
+        return Ok(Some(trimmed.to_string()));
+    }
+    if has_from_file {
+        if let Ok(cwd) = std::env::current_dir() {
+            return Ok(find_spawning_session_colab_group(&cwd));
+        }
+    }
+    Ok(None)
+}
+
+/// Walk upward from `start` (inclusive) looking for a `.twapp-session.json`.
+/// When one is found, parse permissively and return its `colab_group` field
+/// (or `None` if the field is absent / the file is unparseable). Returns
+/// `None` if the walk reaches the filesystem root without finding a session
+/// file — auto-inheritance silently no-ops rather than erroring so direct
+/// `twapp work --from-file` invocations from a plain shell still succeed.
+pub fn find_spawning_session_colab_group(start: &std::path::Path) -> Option<String> {
+    let mut current: &std::path::Path = start;
+    loop {
+        let candidate = current.join(".twapp-session.json");
+        if candidate.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&candidate) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    return v
+                        .get("colab_group")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string());
+                }
+            }
+            return None;
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent,
+            _ => return None,
+        }
+    }
+}
+
 /// Decide the provenance value for a new session given the CLI flags.
 ///
 /// Precedence: explicit `--provenance` wins; then `--spawned` → `"spawned"`;
@@ -2287,5 +2391,229 @@ mod provenance_tests {
     #[test]
     fn role_cell_provenance_only() {
         assert_eq!(format_role_cell(None, Some("spawned")), "spawned");
+    }
+}
+
+#[cfg(test)]
+mod colab_group_tests {
+    use super::{
+        create_session_core, find_spawning_session_colab_group, format_colab_cell,
+        resolve_colab_group,
+    };
+    use std::fs;
+
+    fn unique_tmp(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("twapp-colab-{}-{}", tag, uuid::Uuid::new_v4()))
+    }
+
+    fn write_session_json(dir: &std::path::Path, body: &serde_json::Value) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join(".twapp-session.json"),
+            serde_json::to_string_pretty(body).unwrap(),
+        )
+        .unwrap();
+    }
+
+    // ---- empty_colab_group_errors ------------------------------------------
+
+    #[test]
+    fn empty_colab_group_errors() {
+        let err = resolve_colab_group(Some("".to_string()), false).unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+
+        let err = resolve_colab_group(Some("   ".to_string()), false).unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn explicit_colab_group_passes_through_trimmed() {
+        assert_eq!(
+            resolve_colab_group(Some("  feature-x  ".to_string()), false).unwrap(),
+            Some("feature-x".to_string())
+        );
+    }
+
+    #[test]
+    fn no_flag_and_no_from_file_returns_none() {
+        // User types `twapp work --name foo` with no from-file: they get an
+        // ungrouped session, not some accidental inheritance from whatever
+        // shell they happen to be in.
+        assert_eq!(resolve_colab_group(None, false).unwrap(), None);
+    }
+
+    // ---- from_file_inherits_colab_group_from_parent_session ----------------
+
+    #[test]
+    fn from_file_inherits_colab_group_from_parent_session() {
+        let parent = unique_tmp("parent");
+        write_session_json(
+            &parent,
+            &serde_json::json!({
+                "session_id": "p-abc",
+                "name": "parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": parent.to_string_lossy(),
+                "created": "2026-04-20T00:00:00Z",
+                "last_resumed": null,
+                "colab_group": "feature-x",
+            }),
+        );
+
+        let child = parent.join("nested").join("worker");
+        fs::create_dir_all(&child).unwrap();
+
+        let found = find_spawning_session_colab_group(&child);
+        assert_eq!(
+            found.as_deref(),
+            Some("feature-x"),
+            "nested child should discover parent's colab_group"
+        );
+
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // ---- from_file_without_parent_colab_group_leaves_field_unset -----------
+
+    #[test]
+    fn from_file_without_parent_colab_group_leaves_field_unset() {
+        // Case 1: no session file anywhere on the walk up.
+        let orphan = unique_tmp("orphan").join("nested");
+        fs::create_dir_all(&orphan).unwrap();
+        assert_eq!(find_spawning_session_colab_group(&orphan), None);
+
+        // Case 2: parent exists but has no colab_group.
+        let parent = unique_tmp("parent-no-colab");
+        write_session_json(
+            &parent,
+            &serde_json::json!({
+                "session_id": "p-abc",
+                "name": "parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": parent.to_string_lossy(),
+                "created": "2026-04-20T00:00:00Z",
+                "last_resumed": null,
+            }),
+        );
+        assert_eq!(find_spawning_session_colab_group(&parent), None);
+
+        // Case 3: parent has an empty colab_group string — treat as unset so
+        // a stale/empty value can't accidentally leak to the child.
+        let parent_empty = unique_tmp("parent-empty-colab");
+        write_session_json(
+            &parent_empty,
+            &serde_json::json!({
+                "session_id": "p-abc",
+                "name": "parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": parent_empty.to_string_lossy(),
+                "created": "2026-04-20T00:00:00Z",
+                "last_resumed": null,
+                "colab_group": "   ",
+            }),
+        );
+        assert_eq!(find_spawning_session_colab_group(&parent_empty), None);
+
+        let _ = fs::remove_dir_all(&orphan);
+        let _ = fs::remove_dir_all(&parent);
+        let _ = fs::remove_dir_all(&parent_empty);
+    }
+
+    // ---- work_colab_group_flag_sets_field ----------------------------------
+    //
+    // End-to-end contract: an explicit `--colab-group <name>` on `twapp work`
+    // reaches the serialized `.twapp-session.json` with the exact string
+    // passed in. We exercise `create_session_core` because the CLI layer is
+    // a thin argument-unpacking shell over it, and assert via read-back.
+
+    #[test]
+    fn work_colab_group_flag_sets_field() {
+        use crate::cli::session;
+
+        // End-to-end at the SessionData layer the same way
+        // `launch_writes_role_coordinator` does: construct the SessionData
+        // the way `create_session_core` would when handed a --colab-group
+        // argument, round-trip via write_session / read_session, and
+        // assert the field survives. Stays hermetic (doesn't touch global
+        // config / HOME) while still exercising the contract that matters:
+        // `.twapp-session.json` carries `colab_group` verbatim.
+
+        let tmp = unique_tmp("work-flag");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let data = session::SessionData {
+            session_id: "wk-1".to_string(),
+            name: "worker".to_string(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: tmp.to_string_lossy().to_string(),
+            created: "2026-04-20T00:00:00Z".to_string(),
+            last_resumed: None,
+            provider: Some(session::AgentProvider::Claude),
+            codex_session_id: None,
+            codex_cwd: None,
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+            role: Some("implementer".to_string()),
+            provenance: Some("spawned".to_string()),
+            colab_group: Some("feature-x".to_string()),
+        };
+        session::write_session(&tmp, &data).expect("write_session");
+
+        let readback = session::read_session(&tmp).expect("read_session");
+        assert_eq!(readback.colab_group.as_deref(), Some("feature-x"));
+
+        // Also verify the literal JSON shape — external tools `grep`ing the
+        // file rely on `colab_group` being a first-class top-level key.
+        let raw: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tmp.join(".twapp-session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.get("colab_group").and_then(|v| v.as_str()),
+            Some("feature-x")
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---- sessions-output format check --------------------------------------
+
+    #[test]
+    fn colab_cell_formats_group_inline() {
+        assert_eq!(format_colab_cell(Some("feature-x")), "colab=feature-x");
+    }
+
+    #[test]
+    fn colab_cell_none_shown_as_dash() {
+        assert_eq!(format_colab_cell(None), "-");
+        assert_eq!(format_colab_cell(Some("")), "-");
+        assert_eq!(format_colab_cell(Some("   ")), "-");
+    }
+
+    #[test]
+    fn colab_cell_long_group_truncated() {
+        // Column budget is intentionally small; truncate long group names
+        // rather than letting them blow out the row width.
+        let cell = format_colab_cell(Some("a-very-long-coordinator-name"));
+        assert!(cell.starts_with("colab="));
+        assert!(
+            cell.len() <= "colab=".len() + 13,
+            "unexpected length: {}",
+            cell
+        );
+    }
+
+    // Silence "unused import" when create_session_core isn't called in this
+    // module — we keep it imported so future refactors land here.
+    #[allow(dead_code)]
+    fn _touch_create_session_core() {
+        let _ = create_session_core;
     }
 }

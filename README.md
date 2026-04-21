@@ -642,6 +642,44 @@ workers and supervisors are visually distinct. Legacy
 `.twapp-session.json` files without these fields continue to load
 unchanged.
 
+### Co-lab groups
+
+When a coordinator supervises several workers, group membership is
+tracked by the `colab_group` field on `.twapp-session.json`. The
+convention is that a coordinator's group name equals its `--name`, and
+workers spawned under that coordinator auto-inherit the group. That
+lets the launcher render "My sessions" vs per-coordinator buckets
+without any extra coordination overhead.
+
+- `twapp coordinator launch --name infra-coord` stamps
+  `colab_group = "infra-coord"`. Override with
+  `--colab-group <name>` when the group should differ from the
+  coordinator's display name.
+- `twapp work --from-file <briefing>` with no explicit
+  `--colab-group` walks upward from the calling shell's cwd looking for
+  a `.twapp-session.json` and inherits the parent's `colab_group` when
+  one is set. User-typed `twapp work` invocations without `--from-file`
+  never inherit — ad-hoc sessions stay ungrouped by default.
+- `twapp coordinator claim --colab-group <name>` sets or overwrites the
+  group on an existing session (handy when you realize mid-flight that
+  a session belongs to a co-lab).
+
+```bash
+# Coordinator anchors the group.
+twapp coordinator launch --name feature-x   # colab_group="feature-x"
+
+# Worker auto-inherits when spawned via --from-file.
+twapp work --name worker-a --from-file /path/to/worker-a.md
+
+# Opt-out / override an inherited group.
+twapp work --name audit-helper --from-file /path/brief.md --colab-group ""  # rejected
+twapp work --name audit-helper --from-file /path/brief.md --colab-group shared-audit
+```
+
+`twapp sessions` renders a `Colab` column (`colab=<group>`) alongside
+the existing `Role` column. Sessions without a group show `-`; legacy
+session files without `colab_group` load unchanged.
+
 ### Model selection per agent
 
 `twapp work --model <name>` pass-through sets the model on the spawned
@@ -767,8 +805,8 @@ burns iteration.
 | `twapp msg claim <lane-id> [--note <s>]` | Atomically claim a shared lane (PR, audit, backlog item); exit 1 if already claimed |
 | `twapp msg release <lane-id> [--note <s>]` | Release a lane you own; writes `released.json` and broadcasts the release |
 | `twapp msg claim --list [--lane-prefix <p>]` | List all active (unreleased, unstale) claims; `--format json` for machine-readable |
-| `twapp coordinator launch [--briefing <p>] [--name <n>] [--shared-dir <d>]` | Spawn a fresh session wired as coordinator (writes `role: "coordinator"`) |
-| `twapp coordinator claim [--name <n>] [--force]` | Re-tag an existing session's role to `coordinator` |
+| `twapp coordinator launch [--briefing <p>] [--name <n>] [--shared-dir <d>] [--colab-group <g>]` | Spawn a fresh session wired as coordinator (writes `role: "coordinator"`; default `colab_group = --name`) |
+| `twapp coordinator claim [--name <n>] [--force] [--colab-group <g>]` | Re-tag an existing session's role to `coordinator` (optionally set/overwrite `colab_group`) |
 | `twapp install-gui <binary>` | Install or update the app bundle |
 | `twapp setup-cert` | Create code signing certificate |
 | `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |

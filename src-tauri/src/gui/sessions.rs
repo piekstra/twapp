@@ -10,14 +10,17 @@ use crate::cli::session::{
 };
 use crate::cli::session_attribution;
 
-/// Read `(role, provenance)` from the parent session file so a GUI fork can
-/// inherit them. Returns `(None, None)` if the file is missing or unreadable —
-/// a fork off an unknown session is treated as a plain session.
-pub fn read_fork_inherited_metadata(parent_cwd: &str) -> (Option<String>, Option<String>) {
+/// Read `(role, provenance, colab_group)` from the parent session file so a
+/// GUI fork can inherit them. Returns `(None, None, None)` if the file is
+/// missing or unreadable — a fork off an unknown session is treated as a
+/// plain session.
+pub fn read_fork_inherited_metadata(
+    parent_cwd: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
     crate::cli::session::read_session(std::path::Path::new(parent_cwd))
         .ok()
-        .map(|s| (s.role, s.provenance))
-        .unwrap_or((None, None))
+        .map(|s| (s.role, s.provenance, s.colab_group))
+        .unwrap_or((None, None, None))
 }
 
 pub fn sanitize_instance_name(name: &str) -> String {
@@ -625,6 +628,7 @@ pub async fn create_and_launch_session(
         chrome,
         None,
         Some("user".to_string()),
+        None,
     )?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
@@ -1432,6 +1436,7 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             override_terminal_theme: None,
             role: None,
             provenance: None,
+            colab_group: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
@@ -1457,10 +1462,12 @@ pub async fn fork_session(
     let provider = config.provider;
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
-    // Fork inherits role + provenance from the parent session so CLI `twapp resume --fork`
-    // and the GUI fork button agree. A fork is a derivative of the parent's context, not
-    // a fresh launch — resetting these would drop the agent tag on every fork.
-    let (parent_role, parent_provenance) = read_fork_inherited_metadata(&original_cwd);
+    // Fork inherits role + provenance + colab_group from the parent session so CLI
+    // `twapp resume --fork` and the GUI fork button agree. A fork is a derivative of
+    // the parent's context, not a fresh launch — resetting these would drop the agent
+    // tag (or colab membership) on every fork.
+    let (parent_role, parent_provenance, parent_colab_group) =
+        read_fork_inherited_metadata(&original_cwd);
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
         .and_then(|n| n.to_str())
@@ -1571,6 +1578,7 @@ pub async fn fork_session(
                 override_terminal_theme: None,
                 role: parent_role.clone(),
                 provenance: parent_provenance.clone(),
+                colab_group: parent_colab_group.clone(),
             },
         )
     } else {
@@ -1615,6 +1623,7 @@ pub async fn fork_session(
                 override_terminal_theme: None,
                 role: parent_role,
                 provenance: parent_provenance,
+                colab_group: parent_colab_group,
             },
         )
     };
@@ -1684,9 +1693,10 @@ mod fork_inheritance_tests {
         )
         .unwrap();
 
-        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role.as_deref(), Some("implementer"));
         assert_eq!(prov.as_deref(), Some("spawned"));
+        assert_eq!(colab, None);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1695,9 +1705,10 @@ mod fork_inheritance_tests {
     fn missing_parent_returns_none_pair() {
         let dir = std::env::temp_dir().join(format!("twapp-fork-missing-{}", uuid::Uuid::new_v4()));
         // Intentionally do not create the directory; fork against a path with no session file.
-        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role, None);
         assert_eq!(prov, None);
+        assert_eq!(colab, None);
     }
 
     #[test]
@@ -1718,9 +1729,36 @@ mod fork_inheritance_tests {
         )
         .unwrap();
 
-        let (role, prov) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role, None);
         assert_eq!(prov, None);
+        assert_eq!(colab, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inherits_colab_group_from_parent_session_file() {
+        let dir = std::env::temp_dir().join(format!("twapp-fork-colab-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(".twapp-session.json"),
+            serde_json::json!({
+                "session_id": "abc",
+                "name": "parent",
+                "color": "",
+                "ticket_key": null,
+                "claude_cwd": dir.to_string_lossy(),
+                "created": "2026-01-01T00:00:00Z",
+                "last_resumed": null,
+                "colab_group": "feature-x",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (_role, _prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        assert_eq!(colab.as_deref(), Some("feature-x"));
 
         let _ = fs::remove_dir_all(&dir);
     }
