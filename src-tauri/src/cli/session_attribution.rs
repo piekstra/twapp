@@ -483,6 +483,7 @@ mod tests {
             override_terminal_theme: None,
             role: None,
             provenance: None,
+            colab_group: None,
         }
     }
 

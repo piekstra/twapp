@@ -39,6 +39,11 @@ pub enum CoordinatorCommands {
         /// otherwise creates `./collab/mailbox/`.
         #[arg(long = "shared-dir")]
         shared_dir: Option<String>,
+        /// Name of the co-lab group this coordinator anchors. Defaults to
+        /// the session's `--name` (so workers spawned under this coordinator
+        /// auto-inherit the same group by default). Empty string rejected.
+        #[arg(long = "colab-group")]
+        colab_group: Option<String>,
     },
     /// Flip an existing session's role to `coordinator` by rewriting its
     /// `.twapp-session.json`. Defaults to the current directory's session.
@@ -51,6 +56,11 @@ pub enum CoordinatorCommands {
         /// claim refuses to stomp on a populated `role` field.
         #[arg(long)]
         force: bool,
+        /// Set (or overwrite) the co-lab group on this session at the same
+        /// time as flipping the role. Empty string rejected. Omit to leave
+        /// the current `colab_group` unchanged.
+        #[arg(long = "colab-group")]
+        colab_group: Option<String>,
     },
 }
 
@@ -61,8 +71,13 @@ pub fn run(cmd: CoordinatorCommands) -> i32 {
             name,
             cwd,
             shared_dir,
-        } => cmd_launch(briefing, name, cwd, shared_dir),
-        CoordinatorCommands::Claim { name, force } => cmd_claim(name, force),
+            colab_group,
+        } => cmd_launch(briefing, name, cwd, shared_dir, colab_group),
+        CoordinatorCommands::Claim {
+            name,
+            force,
+            colab_group,
+        } => cmd_claim(name, force, colab_group),
     }
 }
 
@@ -73,8 +88,17 @@ fn cmd_launch(
     name: Option<String>,
     cwd: Option<String>,
     shared_dir: Option<String>,
+    colab_group_arg: Option<String>,
 ) -> i32 {
     let session_name = name.unwrap_or_else(|| DEFAULT_NAME.to_string());
+
+    let colab_group = match resolve_launch_colab_group(colab_group_arg, &session_name) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
 
     let work_dir = match resolve_work_dir(&session_name, cwd.as_deref()) {
         Ok(p) => p,
@@ -147,6 +171,7 @@ fn cmd_launch(
         false,
         Some(COORDINATOR_ROLE.to_string()),
         Some("spawned".to_string()),
+        Some(colab_group),
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -309,7 +334,15 @@ fn build_run_command(briefing_path: &Path, mailbox_dir: &Path) -> String {
 
 // --- claim ------------------------------------------------------------------
 
-fn cmd_claim(name: Option<String>, force: bool) -> i32 {
+fn cmd_claim(name: Option<String>, force: bool, colab_group: Option<String>) -> i32 {
+    let colab_group = match colab_group {
+        Some(raw) if raw.trim().is_empty() => {
+            eprintln!("Error: --colab-group cannot be empty.");
+            return 1;
+        }
+        Some(raw) => Some(raw.trim().to_string()),
+        None => None,
+    };
     let target_dir = match find_session_dir(name.as_deref()) {
         Ok(p) => p,
         Err(e) => {
@@ -317,13 +350,21 @@ fn cmd_claim(name: Option<String>, force: bool) -> i32 {
             return 1;
         }
     };
-    claim_at(&target_dir, force)
+    claim_at(&target_dir, force, colab_group.as_deref())
 }
 
 /// Flip `.twapp-session.json:role` to coordinator at a specific directory.
 /// Split from `cmd_claim` so tests can exercise the behavior without
 /// mutating process-wide current-directory state.
-pub(crate) fn claim_at(target_dir: &Path, force: bool) -> i32 {
+///
+/// When `colab_group` is `Some(value)`, the session's `colab_group` field is
+/// set/overwritten to `value` in the same write. When `None`, the field is
+/// left untouched (preserving or absence alike).
+pub(crate) fn claim_at(
+    target_dir: &Path,
+    force: bool,
+    colab_group: Option<&str>,
+) -> i32 {
     let session_file = target_dir.join(".twapp-session.json");
     let content = match std::fs::read_to_string(&session_file) {
         Ok(c) => c,
@@ -348,14 +389,13 @@ pub(crate) fn claim_at(target_dir: &Path, force: bool) -> i32 {
         }
     };
 
+    let already_coordinator = matches!(
+        obj.get("role").and_then(|v| v.as_str()),
+        Some(r) if r == COORDINATOR_ROLE
+    );
+
     match obj.get("role").and_then(|v| v.as_str()) {
-        Some(existing) if existing == COORDINATOR_ROLE => {
-            println!(
-                "Session at {} is already role=coordinator. Nothing to do.",
-                target_dir.display()
-            );
-            return 0;
-        }
+        Some(existing) if existing == COORDINATOR_ROLE => {}
         Some(existing) if !force => {
             eprintln!(
                 "Error: session at {} already has role=\"{}\". Pass --force to overwrite.",
@@ -367,10 +407,26 @@ pub(crate) fn claim_at(target_dir: &Path, force: bool) -> i32 {
         _ => {}
     }
 
+    // Nothing to change when the target is already coordinator and no colab
+    // group tweak was requested.
+    if already_coordinator && colab_group.is_none() {
+        println!(
+            "Session at {} is already role=coordinator. Nothing to do.",
+            target_dir.display()
+        );
+        return 0;
+    }
+
     obj.insert(
         "role".to_string(),
         Value::String(COORDINATOR_ROLE.to_string()),
     );
+    if let Some(group) = colab_group {
+        obj.insert(
+            "colab_group".to_string(),
+            Value::String(group.to_string()),
+        );
+    }
     let serialized = match serde_json::to_string_pretty(&data) {
         Ok(s) => s,
         Err(e) => {
@@ -383,11 +439,40 @@ pub(crate) fn claim_at(target_dir: &Path, force: bool) -> i32 {
         return 1;
     }
 
-    println!(
-        "Claimed coordinator role on session at {}.",
-        target_dir.display()
-    );
+    if already_coordinator {
+        println!(
+            "Updated coordinator session at {} (colab_group={}).",
+            target_dir.display(),
+            colab_group.unwrap_or("-")
+        );
+    } else {
+        println!(
+            "Claimed coordinator role on session at {}.",
+            target_dir.display()
+        );
+    }
     0
+}
+
+/// Resolve the `colab_group` value used by `twapp coordinator launch`.
+///
+/// Precedence:
+/// - Explicit `--colab-group <name>` wins (empty/whitespace rejected).
+/// - Otherwise the default is the session `--name` so workers spawned from
+///   within the coordinator's session (and not overriding the flag) land in
+///   the same group as the coordinator itself.
+pub fn resolve_launch_colab_group(
+    arg: Option<String>,
+    session_name: &str,
+) -> Result<String, String> {
+    if let Some(raw) = arg {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err("--colab-group cannot be empty.".to_string());
+        }
+        return Ok(trimmed.to_string());
+    }
+    Ok(session_name.to_string())
 }
 
 /// Locate the target session directory for `claim`.
@@ -520,6 +605,7 @@ mod tests {
             override_terminal_theme: None,
             role: Some(COORDINATOR_ROLE.to_string()),
             provenance: Some("spawned".to_string()),
+            colab_group: None,
         };
         session::write_session(&tmp, &data).expect("write_session");
 
@@ -586,7 +672,7 @@ mod tests {
         let work_dir = unique_tmp("twapp-coord-claim-flip");
         write_session(&work_dir, "some-worker", None);
 
-        let rc = claim_at(&work_dir, false);
+        let rc = claim_at(&work_dir, false, None);
 
         assert_eq!(rc, 0, "claim should succeed when role is unset");
         assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
@@ -601,9 +687,9 @@ mod tests {
         let work_dir = unique_tmp("twapp-coord-claim-refuse");
         write_session(&work_dir, "worker", Some("implementer"));
 
-        let rc_refused = claim_at(&work_dir, false);
+        let rc_refused = claim_at(&work_dir, false, None);
         let role_after_refuse = read_role(&work_dir);
-        let rc_forced = claim_at(&work_dir, true);
+        let rc_forced = claim_at(&work_dir, true, None);
 
         assert_eq!(rc_refused, 2, "claim should refuse existing non-coord role without --force");
         assert_eq!(role_after_refuse.as_deref(), Some("implementer"));
@@ -692,6 +778,87 @@ mod tests {
         assert_eq!(resolved, work_dir.join("mailbox"));
         // Precedence rung 3 must not create the rung-4 fallback.
         assert!(!work_dir.join("collab").exists());
+
+        let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    // ---- coordinator_launch_defaults_colab_group_to_name -----------------
+
+    #[test]
+    fn coordinator_launch_defaults_colab_group_to_name() {
+        // Absent --colab-group, launch uses the session name as the default
+        // group so workers spawned inside the coordinator's session land in
+        // the same bucket without per-spawn ceremony.
+        let resolved = resolve_launch_colab_group(None, "feature-x").unwrap();
+        assert_eq!(resolved, "feature-x");
+
+        // The literal DEFAULT_NAME case — `twapp coordinator launch` with no
+        // flags — should produce `colab_group = "coordinator"`.
+        let resolved = resolve_launch_colab_group(None, DEFAULT_NAME).unwrap();
+        assert_eq!(resolved, DEFAULT_NAME);
+    }
+
+    // ---- coordinator_launch_colab_group_override -------------------------
+
+    #[test]
+    fn coordinator_launch_colab_group_override() {
+        // Explicit flag beats the --name-derived default, and the value is
+        // trimmed so a trailing newline from shell expansion doesn't poison
+        // the group key used for grouping.
+        let resolved =
+            resolve_launch_colab_group(Some("  custom-group  ".to_string()), "coordinator")
+                .unwrap();
+        assert_eq!(resolved, "custom-group");
+
+        // Empty / whitespace-only explicit flag is rejected — we don't silently
+        // fall back to --name when the caller explicitly asked for "no group".
+        let err = resolve_launch_colab_group(Some("   ".to_string()), "coordinator").unwrap_err();
+        assert!(err.contains("cannot be empty"), "got: {}", err);
+    }
+
+    // ---- coordinator_claim_with_colab_group_sets_field -------------------
+
+    #[test]
+    fn coordinator_claim_with_colab_group_sets_field() {
+        let work_dir = unique_tmp("twapp-coord-claim-colab");
+        write_session(&work_dir, "some-worker", None);
+
+        let rc = claim_at(&work_dir, false, Some("feature-x"));
+
+        assert_eq!(rc, 0, "claim --colab-group should succeed");
+        assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
+
+        let raw: Value = serde_json::from_str(
+            &fs::read_to_string(work_dir.join(".twapp-session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.get("colab_group").and_then(|v| v.as_str()),
+            Some("feature-x"),
+            "claim should stamp colab_group on the session file"
+        );
+
+        let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    #[test]
+    fn coordinator_claim_updates_colab_group_on_existing_coordinator() {
+        // Already role=coordinator + new --colab-group → colab_group gets set
+        // and the call does not early-exit with "nothing to do".
+        let work_dir = unique_tmp("twapp-coord-claim-update");
+        write_session(&work_dir, "coordinator", Some(COORDINATOR_ROLE));
+
+        let rc = claim_at(&work_dir, false, Some("new-group"));
+        assert_eq!(rc, 0);
+
+        let raw: Value = serde_json::from_str(
+            &fs::read_to_string(work_dir.join(".twapp-session.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.get("colab_group").and_then(|v| v.as_str()),
+            Some("new-group")
+        );
 
         let _ = fs::remove_dir_all(&work_dir);
     }
