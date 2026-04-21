@@ -570,15 +570,17 @@ filesystem mailbox is a simple way to let them leave each other messages
 without leaving twapp.
 
 `twapp msg` is a thin wrapper over that convention: it drops
-fenced-frontmatter markdown files into a shared `inbox/` directory and
-reads them back. See
+fenced-frontmatter markdown files into a shared mailbox and reads them
+back. See
 [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) for
-the full model. Today's CLI covers **PR-1** (scaffolding) and **PR-4**
-(priority lane) of that design — `send`, `broadcast`, and `fetch`
-against the current flat `inbox/` layout, plus urgent-lane symlinks
-under `inbox/urgent/<recipient>/` for time-sensitive traffic.
-Threading, directory split, cursors, presence, channels, and archive
-rotation all land in later PRs.
+the full model. Today's CLI covers **PR-1** (scaffolding), **PR-2**
+(threading), **PR-3** (directory split + read cursors), **PR-4**
+(priority lane), and **PR-7** (archive rotation) of that design. Sends
+land under a per-recipient layout (`inbox/broadcast/`,
+`inbox/direct/<handle>/`, `inbox/channel/<name>/`); every send also
+drops a grace-period symlink at the flat `inbox/<filename>.md` path so
+un-upgraded readers doing `ls inbox/` keep working. Presence and
+first-class channel subscriptions still land in later PRs.
 
 #### Configure the mailbox
 
@@ -592,7 +594,22 @@ export TWAPP_MAILBOX_DIR="$HOME/collab/mailbox"
 export TWAPP_SHARED_DIR="$HOME/collab"
 ```
 
-Messages land in `<mailbox>/inbox/<YYYYMMDDTHHMMSSZ>-<id6>.md`.
+Messages land under the per-recipient split layout (design §2.1):
+
+```
+<mailbox>/inbox/
+  broadcast/<ts>-<id6>.md          # to: [all]
+  direct/<handle>/<ts>-<id6>.md    # to: [<handle>]
+  channel/<name>/<ts>-<id6>.md     # to: [channel:<name>]
+  urgent/<handle-or-all>/…         # priority lane (PR-4)
+  <ts>-<id6>.md                    # grace-period symlink → canonical
+```
+
+A send always writes one canonical file and leaves symlinks for every
+additional recipient, every direct `cc:`, and the legacy flat path.
+`twapp msg migrate` (below) moves any pre-PR-3 flat files into the new
+slots; `migrate --drop-legacy` closes the grace period by removing the
+flat symlinks once every participant is on the new layout.
 
 #### Send, broadcast, fetch
 
@@ -684,8 +701,61 @@ urgents a muted one. Single-session users with no handle see no panel.
 `from:` / `to:` / `re:` layout so inboxes don't need to be migrated
 wholesale — messages missing a frontmatter `id`, `thread`, or `priority`
 get synthetic defaults (routine priority, no thread, id derived from the
-filename). This keeps day-one upgrades unbreaking; directory split and
-layout migration live in later PRs.
+filename). `fetch` also scans both the new split subdirs and anything
+left flat under `inbox/*.md`, deduped by canonical path.
+
+#### Read cursors & ack (PR-3)
+
+Each handle's reads and acks are appended to
+`<mailbox>/cursors/<handle>.jsonl`, one JSON object per line:
+
+```jsonl
+{"ts":"20260420T202957Z","msg_id":"01JS4M7Q8W","action":"read"}
+{"ts":"20260420T203102Z","msg_id":"01JS4M7Q8W","action":"ack","note":"scope accepted"}
+```
+
+- `read` — "I consumed this message" (past `ls`-and-skim).
+- `ack` — "I commit to acting on it." Archiving is neither.
+
+The cursor `ts` is the *message's* frontmatter ts (compact
+`YYYYMMDDTHHMMSSZ`), so it can be passed directly as a `--since` value.
+
+```bash
+# Read the queue AND advance the cursor in one go.
+twapp msg fetch --for reviewer --mark-read
+
+# Default --since picks up strictly after the last `read` entry, so a
+# second call with no flag returns only what arrived since.
+twapp msg fetch --for reviewer
+
+# Explicit --since is still inclusive — pass a known ts to re-surface.
+twapp msg fetch --for reviewer --since 20260420T120000Z
+
+# Commit to action on a specific message.
+twapp msg ack 01JS4M7Q8W --note "rebasing now"
+```
+
+`--mark-read` is opt-in; a plain `fetch` never advances the cursor.
+
+#### Migrating the inbox layout
+
+`twapp msg migrate` rewrites the mailbox from the pre-PR-3 flat layout
+into the split layout. It parses each `inbox/*.md` regular file (fenced
+or bare), moves it under `broadcast/`, `direct/<handle>/`, or
+`channel/<name>/` based on its `to:` field, and leaves a symlink at the
+original flat path so grace-period readers keep working. Idempotent —
+re-running finds nothing to move.
+
+```bash
+# Plan only — prints the moves without touching anything.
+twapp msg migrate --dry-run
+
+# Real run. Leaves grace-period symlinks at inbox/*.md.
+twapp msg migrate
+
+# Once every participant is on the new layout, close the grace period.
+twapp msg migrate --drop-legacy
+```
 
 ### Lane claims — coordinating N workers on a shared queue
 

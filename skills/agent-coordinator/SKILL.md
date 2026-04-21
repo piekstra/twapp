@@ -171,8 +171,15 @@ A plain-directory mailbox is the coordination bus. No database, no service — j
 ### Directory shape
 
 ```
-<shared-dir>/mailbox/inbox/
-<shared-dir>/mailbox/archive/
+<shared-dir>/mailbox/
+  inbox/
+    broadcast/<ts>-<id6>.md             # to: [all]
+    direct/<handle>/<ts>-<id6>.md       # to: [<handle>]
+    channel/<name>/<ts>-<id6>.md        # to: [channel:<name>]
+    urgent/<handle-or-all>/…            # priority lane (PR-4)
+    <ts>-<id6>.md                       # grace-period symlink → canonical
+  cursors/<handle>.jsonl                # read + ack log (PR-3, §2.7)
+  archive/<YYYY-MM-DD>/…                # rotated daily (PR-7)
 ```
 
 Pick `<shared-dir>` once at the start of a multi-agent session and put the path in every briefing.
@@ -180,10 +187,12 @@ Pick `<shared-dir>` once at the start of a multi-agent session and put the path 
 ### Filename convention
 
 ```
-YYYYMMDDTHHMMSSZ-<from-handle>-to-<to-handle>.md
+<ts>-<id6>.md                           # where <ts> is YYYYMMDDTHHMMSSZ
 ```
 
-Use `to-all.md` for broadcasts. UTC timestamps keep the directory listing sortable; handles in the name make the inbox greppable and auditable.
+The recipient lives in the subdirectory, not the filename — `direct/<handle>/…` or `broadcast/…`. UTC timestamps keep each slot sortable.
+
+Legacy flat files (`YYYYMMDDTHHMMSSZ-<from>-to-<to>.md`) still parse, and `twapp msg migrate` walks them into the split layout. After running `twapp msg migrate --drop-legacy`, the flat-path compatibility symlinks are gone and every reader must use the split layout or the CLI.
 
 ### Reading
 
@@ -194,10 +203,45 @@ Workers poll `inbox/` every 90-120 seconds from their `/loop`. The coordinator p
 After a worker reads a message addressed to it (or to `all`), it moves the file to `archive/`:
 
 ```
-mv <shared-dir>/mailbox/inbox/<msg>.md <shared-dir>/mailbox/archive/
+# Canonical file lives under the split layout — archive from there.
+mv <shared-dir>/mailbox/inbox/direct/<me>/<msg>.md <shared-dir>/mailbox/archive/
 ```
 
 Messages addressed to *other* agents stay in `inbox/` — never archive on someone else's behalf. The coordinator sweeps stragglers periodically (agents that offboarded without tidying).
+
+### Read cursors (PR-3)
+
+Each handle's reads and acks are appended to `<shared-dir>/mailbox/cursors/<handle>.jsonl` — one JSON object per line, per design §2.7:
+
+```jsonl
+{"ts":"<msg-fm-ts>","msg_id":"<id>","action":"read"}
+{"ts":"<msg-fm-ts>","msg_id":"<id>","action":"ack","note":"optional free text"}
+```
+
+Semantics:
+
+- `read` — "I consumed this message" (past ls-and-skim).
+- `ack` — "I commit to acting on the ask." Archiving is neither.
+- The entry's `ts` is the **message's** fenced-frontmatter ts (compact `YYYYMMDDTHHMMSSZ`), not wall-clock action time — so it's a drop-in `--since` value.
+
+CLI:
+
+```bash
+# Poll + advance the cursor in one go. Without --mark-read, the cursor
+# never advances — a plain fetch is a peek, not a commit.
+twapp msg fetch --for <me> --mark-read
+
+# Default --since (no explicit value) is the max-read ts + strict `>`,
+# so the next fetch returns only what arrived since the last mark-read.
+twapp msg fetch --for <me>
+
+# Explicit --since is still inclusive (≥). Pass a known ts / cursor to
+# re-surface its message (e.g. after a crash).
+twapp msg fetch --for <me> --since 20260420T120000Z
+
+# Commit to action on a specific message; stored alongside the read log.
+twapp msg ack <msg-id> --note "rebasing now"
+```
 
 ### Archive maintenance
 
