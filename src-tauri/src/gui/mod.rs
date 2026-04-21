@@ -1,4 +1,5 @@
 pub mod config;
+pub mod coordinator;
 pub mod files;
 pub mod monitor;
 pub mod msg;
@@ -113,6 +114,10 @@ pub fn run(args: GuiArgs) {
             monitor::list_monitor_logs,
             files::reveal_in_finder,
             msg::send_message,
+            coordinator::launch_coordinator,
+            coordinator::claim_coordinator,
+            coordinator::list_claimable_sessions,
+            coordinator::list_coordinator_models,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
