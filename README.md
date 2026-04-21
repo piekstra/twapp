@@ -612,6 +612,43 @@ records `reclaimed_from: <previous>` for the audit trail. See
 for the full design (atomic-mkdir rationale, stale semantics, and
 what's out of scope).
 
+#### Archive maintenance
+
+After workers archive their read messages (see
+[`skills/agent-coordinator/SKILL.md`](skills/agent-coordinator/SKILL.md#archiving)),
+the flat `<mailbox>/archive/` fills up over time. `twapp msg archive`
+provides three cron-friendly subcommands for keeping it tidy:
+
+```bash
+# Move flat archive/*.md messages into archive/<YYYY-MM-DD>/ by
+# frontmatter ts (falling back to filename ts, then file mtime).
+# Idempotent — run as often as you like.
+twapp msg archive rotate
+twapp msg archive rotate --dry-run     # show planned moves, touch nothing
+
+# Drop day-directories older than --retain-days (default 14).
+# Never touches inbox/, presence/, cursors/, claims/, or the current day.
+twapp msg archive purge
+twapp msg archive purge --retain-days 30
+twapp msg archive purge --dry-run
+
+# Per-day message counts.
+twapp msg archive list
+twapp msg archive list --since 2026-04-01
+twapp msg archive list --format json | jq
+```
+
+All three exit 0 on success or no-op and non-zero only on filesystem
+errors, so they're safe to wire into a daily cron:
+
+```cron
+# Daily at 04:15 — rotate yesterday's flat files, then purge >14 days.
+15 4 * * * TWAPP_MAILBOX_DIR=$HOME/collab/mailbox /usr/local/bin/twapp msg archive rotate && TWAPP_MAILBOX_DIR=$HOME/collab/mailbox /usr/local/bin/twapp msg archive purge
+```
+
+See [`docs/designs/agent-messaging.md` §2.8](docs/designs/agent-messaging.md)
+for the retention rationale.
+
 ### Roles and provenance
 
 Every session carries two extra pieces of metadata on

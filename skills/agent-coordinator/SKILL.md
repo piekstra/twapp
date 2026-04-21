@@ -179,6 +179,10 @@ mv <shared-dir>/mailbox/inbox/<msg>.md <shared-dir>/mailbox/archive/
 
 Messages addressed to *other* agents stay in `inbox/` — never archive on someone else's behalf. The coordinator sweeps stragglers periodically (agents that offboarded without tidying).
 
+### Archive maintenance
+
+The flat `archive/` fills up over time. Coordinators may run `twapp msg archive rotate` daily to partition it into `archive/<YYYY-MM-DD>/` dirs, and `twapp msg archive purge` to drop days older than 14. See the README "Archive maintenance" section for the cron line.
+
 ### Addressing
 
 - `to: all` — broadcast (every online agent reads and archives).
