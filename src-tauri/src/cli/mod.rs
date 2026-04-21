@@ -4,6 +4,7 @@ pub mod coordinator;
 pub mod models;
 pub mod monitor;
 pub mod msg;
+pub mod msg_archive;
 pub mod msg_claim;
 pub mod notes;
 pub mod permissions;
@@ -507,6 +508,18 @@ pub fn run(cmd: Commands) -> i32 {
                 from,
                 note,
             } => msg_claim::cmd_release(lane_id, from, note),
+            MsgCommands::Archive { command } => match command {
+                msg_archive::ArchiveCommands::Rotate { dry_run } => {
+                    msg_archive::cmd_rotate(dry_run)
+                }
+                msg_archive::ArchiveCommands::Purge {
+                    retain_days,
+                    dry_run,
+                } => msg_archive::cmd_purge(retain_days, dry_run),
+                msg_archive::ArchiveCommands::List { since, format } => {
+                    msg_archive::cmd_list(since, format)
+                }
+            },
         },
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
