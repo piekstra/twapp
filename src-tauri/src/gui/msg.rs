@@ -6,11 +6,15 @@
 //! - `fetch_messages` — `msg fetch --format json`. Used by the urgent-inbox
 //!   panel (`src/components/UrgentInbox.tsx`), which calls it once per
 //!   priority (urgent + blocker) and merges the results.
+//! - `get_mailbox_status` — pure filesystem probe. Lets co-lab UI decide
+//!   whether to render at all. Vanilla single-session users never see the
+//!   urgent panel because `configured: false` short-circuits the render.
 
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -250,6 +254,65 @@ pub fn fetch_messages(
 ) -> Result<Vec<FetchedMessage>, String> {
     let argv = build_fetch_argv(&args)?;
     run_fetch(argv, config.cwd.as_deref())
+}
+
+// --- mailbox status probe ---------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MailboxStatus {
+    /// True when at least one of the resolution paths exists on disk.
+    /// Co-lab UI (urgent panel, etc.) renders only when this is true.
+    pub configured: bool,
+    /// Which resolution path "won", for logs / future diagnostics. None when
+    /// nothing resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// Pure helper: given env lookups + cwd, decide whether a mailbox is reachable.
+/// The briefing says: TWAPP_MAILBOX_DIR → TWAPP_SHARED_DIR/mailbox → `<cwd>/mailbox/inbox`.
+/// A path counts as "configured" only if it actually exists on disk — empty
+/// env strings, missing dirs, and non-dir files all fall through.
+///
+/// This is a *cheap* existence check, not an authoritative reachability one:
+/// a read-only inbox, a permission-stripped directory, or a stale NFS mount
+/// still pass the probe and will surface their real failure when
+/// `fetch_messages` runs. That's deliberate — the probe is there to spare
+/// vanilla single-session users any urgent-lane UI at all, not to guarantee
+/// the feed works. Fetch-time errors degrade to the "Urgent feed unavailable"
+/// footer rather than bouncing back up to a render-gate.
+pub fn probe_mailbox_status(
+    mailbox_env: Option<&str>,
+    shared_env: Option<&str>,
+    cwd: Option<&Path>,
+) -> MailboxStatus {
+    if let Some(v) = mailbox_env.map(str::trim).filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(v);
+        if p.is_dir() {
+            return MailboxStatus { configured: true, source: Some("TWAPP_MAILBOX_DIR".into()) };
+        }
+    }
+    if let Some(v) = shared_env.map(str::trim).filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(v).join("mailbox");
+        if p.is_dir() {
+            return MailboxStatus { configured: true, source: Some("TWAPP_SHARED_DIR".into()) };
+        }
+    }
+    if let Some(c) = cwd {
+        let p = c.join("mailbox").join("inbox");
+        if p.is_dir() {
+            return MailboxStatus { configured: true, source: Some("cwd".into()) };
+        }
+    }
+    MailboxStatus { configured: false, source: None }
+}
+
+#[tauri::command]
+pub fn get_mailbox_status(config: tauri::State<'_, GuiArgs>) -> MailboxStatus {
+    let mailbox_env = std::env::var("TWAPP_MAILBOX_DIR").ok();
+    let shared_env = std::env::var("TWAPP_SHARED_DIR").ok();
+    let cwd = config.cwd.as_deref().map(Path::new);
+    probe_mailbox_status(mailbox_env.as_deref(), shared_env.as_deref(), cwd)
 }
 
 #[cfg(test)]
@@ -542,6 +605,104 @@ mod tests {
         let msgs = parse_fetch_stdout(json).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].id, "OK");
+    }
+
+    // --- mailbox status tests ------------------------------------------------
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir().join(format!(
+            "twapp-mailbox-status-{}-{}-{}",
+            tag,
+            std::process::id(),
+            nanos
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn mailbox_status_unset_is_not_configured() {
+        let s = probe_mailbox_status(None, None, None);
+        assert!(!s.configured);
+        assert!(s.source.is_none());
+    }
+
+    #[test]
+    fn mailbox_status_empty_env_strings_are_ignored() {
+        // Shell exports like `TWAPP_MAILBOX_DIR=` set the var to an empty
+        // string; resolve_mailbox_dir treats those as unset, and so do we.
+        let s = probe_mailbox_status(Some(""), Some("   "), None);
+        assert!(!s.configured);
+    }
+
+    #[test]
+    fn mailbox_status_mailbox_env_points_at_existing_dir() {
+        let tmp = tmp_dir("mb-env");
+        let s = probe_mailbox_status(Some(tmp.to_str().unwrap()), None, None);
+        assert!(s.configured);
+        assert_eq!(s.source.as_deref(), Some("TWAPP_MAILBOX_DIR"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mailbox_status_mailbox_env_missing_dir_falls_through() {
+        // Env is set but the path doesn't exist — should not count as configured.
+        let s = probe_mailbox_status(Some("/definitely/not/a/real/path/twapp"), None, None);
+        assert!(!s.configured);
+    }
+
+    #[test]
+    fn mailbox_status_shared_env_fallback() {
+        let tmp = tmp_dir("shared-env");
+        std::fs::create_dir_all(tmp.join("mailbox")).unwrap();
+        let s = probe_mailbox_status(None, Some(tmp.to_str().unwrap()), None);
+        assert!(s.configured);
+        assert_eq!(s.source.as_deref(), Some("TWAPP_SHARED_DIR"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mailbox_status_shared_env_without_mailbox_subdir_falls_through() {
+        let tmp = tmp_dir("shared-bare");
+        // Note: no `mailbox/` created inside — shared-dir without the subdir
+        // is a stale config, not a real mailbox.
+        let s = probe_mailbox_status(None, Some(tmp.to_str().unwrap()), None);
+        assert!(!s.configured);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mailbox_status_cwd_fallback_when_env_unset() {
+        let tmp = tmp_dir("cwd-mb");
+        std::fs::create_dir_all(tmp.join("mailbox").join("inbox")).unwrap();
+        let s = probe_mailbox_status(None, None, Some(tmp.as_path()));
+        assert!(s.configured);
+        assert_eq!(s.source.as_deref(), Some("cwd"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mailbox_status_prefers_mailbox_env_over_shared_and_cwd() {
+        let mb = tmp_dir("mb-pref");
+        let shared = tmp_dir("shared-also");
+        std::fs::create_dir_all(shared.join("mailbox")).unwrap();
+        let cwd = tmp_dir("cwd-also");
+        std::fs::create_dir_all(cwd.join("mailbox").join("inbox")).unwrap();
+        let s = probe_mailbox_status(
+            Some(mb.to_str().unwrap()),
+            Some(shared.to_str().unwrap()),
+            Some(cwd.as_path()),
+        );
+        assert_eq!(s.source.as_deref(), Some("TWAPP_MAILBOX_DIR"));
+        let _ = std::fs::remove_dir_all(&mb);
+        let _ = std::fs::remove_dir_all(&shared);
+        let _ = std::fs::remove_dir_all(&cwd);
     }
 
     #[test]
