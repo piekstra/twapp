@@ -631,20 +631,8 @@ pub fn find_session_dir(name: Option<&str>) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::test_env;
     use std::fs;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    // Serialize every test that mutates TWAPP_MAILBOX_DIR. `cargo test` runs
-    // tests in parallel within a binary, and process-wide env is shared
-    // state — without this lock, `mailbox_creates_fallback_when_nothing_configured`
-    // and `mailbox_inherits_env_var` race and intermittently see each other's
-    // env mutation.
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-    }
 
     fn unique_tmp(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()))
@@ -831,7 +819,7 @@ mod tests {
 
     #[test]
     fn mailbox_creates_fallback_when_nothing_configured() {
-        let _guard = env_lock();
+        let _guard = test_env::lock();
         let work_dir = unique_tmp("twapp-coord-mbx-fallback");
         fs::create_dir_all(&work_dir).unwrap();
         let prev = std::env::var("TWAPP_MAILBOX_DIR").ok();
@@ -851,7 +839,7 @@ mod tests {
 
     #[test]
     fn mailbox_inherits_env_var_when_set() {
-        let _guard = env_lock();
+        let _guard = test_env::lock();
         let work_dir = unique_tmp("twapp-coord-mbx-inherit");
         fs::create_dir_all(&work_dir).unwrap();
         let inherited = unique_tmp("twapp-coord-mbx-inherit-env");
@@ -876,7 +864,7 @@ mod tests {
 
     #[test]
     fn mailbox_reuses_existing_local_mailbox() {
-        let _guard = env_lock();
+        let _guard = test_env::lock();
         let work_dir = unique_tmp("twapp-coord-mbx-reuse");
         fs::create_dir_all(work_dir.join("mailbox").join("inbox")).unwrap();
         let prev = std::env::var("TWAPP_MAILBOX_DIR").ok();

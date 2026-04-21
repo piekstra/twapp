@@ -321,24 +321,33 @@ kill -TERM "$(pgrep -f 'twapp --name my-feature-fix')"
 
 ### Example B — Spawn a long-running reviewer that polls for PR reviews
 
+Reviewers are a natural fit for **channels** (design §2.3) — a
+coordinator dispatches review requests to `channel:reviewers` rather
+than a specific handle, and any online reviewer picks them up. The
+reviewer declares its subscription via its presence `claims`.
+
 ```bash
 # 1. Briefing with an explicit "runs until stopped" loop.
 cat > /tmp/briefings/my-reviewer.md <<'EOF'
 # my-reviewer — review open PRs on example-repo until stopped
 
-Loop: every 90s, `gh pr list --repo example-org/example-repo --state open`.
+Loop: every 90s,
+  1. `twapp msg presence heartbeat --task "reviewing" --claims channel:reviewers`
+  2. `twapp msg fetch --channel reviewers --for my-reviewer` — scoop pending asks.
+  3. `gh pr list --repo example-org/example-repo --state open`.
 For each unreviewed PR, run `gh pr view`, post a review via `gh pr review`,
-then write a summary line to `/tmp/agent-mailbox/inbox/<iso>-my-reviewer-review.md`.
+then `twapp msg send channel:reviewers --from my-reviewer "reviewed PR-<n>"`
+so peers and the coordinator see progress.
 
 No time limit. Run until the caller sends SIGTERM.
 
 ## Protocol
 
-- Handle: `my-reviewer`
+- Handle: `my-reviewer`.
+- Subscribes to `channel:reviewers` (see `claims` in presence heartbeat above).
 - Hello within 2 min.
-- After every review, post a one-line note to the mailbox so the caller can
-  see progress.
-- On SIGTERM, post an offboard message before exiting.
+- After every review, post a one-line note to `channel:reviewers`.
+- On SIGTERM, post an offboard message and `twapp msg presence clear`.
 EOF
 
 # 2. No worktree needed (reviewer only reads + uses `gh`). Any cwd with
