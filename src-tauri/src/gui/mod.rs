@@ -1,3 +1,4 @@
+pub mod agent_actions;
 pub mod config;
 pub mod coordinator;
 pub mod files;
@@ -129,6 +130,10 @@ pub fn run(args: GuiArgs) {
             msg::send_message,
             msg::fetch_messages,
             fleet::list_fleet,
+            agent_actions::focus_agent_window,
+            agent_actions::stop_agent,
+            agent_actions::list_agent_prs,
+            agent_actions::fetch_agent_activity,
             coordinator::launch_coordinator,
             coordinator::claim_coordinator,
             coordinator::list_claimable_sessions,
