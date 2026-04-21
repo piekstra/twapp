@@ -275,6 +275,60 @@ The reviewer answers "is this code correct and safe to run?" The coordinator ans
 
 Workers have self-merge authority (§5); this governance pass is the coordinator's counterweight. If the spot-check fails, post a block-message to the worker's mailbox before they merge — they will see it on their next poll.
 
+## 6.5. Reap sweep — proactively stopping scope-complete agents
+
+Run on **every status check** — any time the coordinator reports current state to the user, and whenever noticing an idle lull. Also run after any PR merge and on a direct user ask about agent status. Without a standing sweep, zombie `twapp` hosts pile up: PRs merge, `/loop`s keep polling, nothing offboards.
+
+### Procedure
+
+1. List running twapp hosts:
+
+   ```bash
+   ps -eo pid,pcpu,etime,command | grep "twapp --name"
+   ```
+
+2. For each running agent, resolve its scope:
+   - Does it have an open PR?
+   - Is it a long-running role (reviewer, log-watcher, auditor)?
+   - Is it the coordinator itself?
+
+3. Cross-reference against open PRs and the handle's declared stop condition:
+
+   ```bash
+   gh pr list --repo <repo> --state open
+   ```
+
+   Reread the briefing's `## Protocol` for its stop shape.
+
+4. **Reap only when ALL of these hold:**
+   - The agent's PR has merged or closed, AND
+   - The agent has either posted an offboard message OR its `/loop` has clearly gone idle (no mailbox posts in > `poll_interval × 3`, CPU 0.0%), AND
+   - It is not a long-running reviewer / log-watcher / auditor whose stop condition is "stay alive until user says stop" (see §13 for archetype lifespans).
+
+5. Reap via the standard coordinator cleanup in §7 ("Coordinator cleanup post-offboard"):
+
+   ```bash
+   twapp stop --name <handle>
+   git worktree remove <worktree-path>
+   ```
+
+6. Optional — post a one-line audit broadcast for visibility. Not required:
+
+   ```
+   from: coordinator / to: all / re: reaped <handle> — scope complete.
+   ```
+
+### When in doubt, ask the agent
+
+Mailbox the handle — `to: <handle> / re: are you done?` — and let it confirm via offboard rather than force-stopping. A polite round-trip costs one poll interval and avoids killing a worker mid-push.
+
+### Common mistakes
+
+- **Reaping an agent whose PR is still open.** 0% CPU almost always means the `/loop` is sleeping between polls, not that the agent is dormant — check PR state first.
+- **Reaping a long-running reviewer / log-watcher** because its queue is momentarily empty. These roles stay alive until the user issues `re: stop`.
+- **Killing the coordinator itself.**
+- **Forgetting the worktree cleanup.** `twapp stop` without `git worktree remove` leaves orphan worktrees that confuse future `git worktree list` output.
+
 ## 7. Stop signals and offboard protocol
 
 Two shapes for ending a worker's `/loop`.
