@@ -9,6 +9,7 @@ pub mod pty;
 pub mod sessions;
 pub mod shell_env;
 pub mod tickets;
+pub mod title;
 pub mod types;
 
 pub use tickets::{extract_adf_text, truncate_str};
@@ -34,11 +35,22 @@ pub fn run(args: GuiArgs) {
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
     let monitor_state = Arc::new(Mutex::new(MonitorState::default()));
 
-    let title = if args.name == "twapp" {
-        "twapp".to_string()
-    } else {
-        format!("twapp - {}", args.name)
-    };
+    // Pull role + provenance from the session file (if any) so the OS
+    // window title can advertise co-lab sessions at a glance. A missing
+    // or unparseable file silently falls back to the plain title.
+    let (session_role, session_provenance) = args
+        .cwd
+        .as_ref()
+        .and_then(|cwd| {
+            crate::cli::session::read_session(&std::path::PathBuf::from(cwd)).ok()
+        })
+        .map(|s| (s.role, s.provenance))
+        .unwrap_or((None, None));
+    let title = title::format_window_title(
+        &args.name,
+        session_role.as_deref(),
+        session_provenance.as_deref(),
+    );
 
     // Clone cwd for the file watcher thread
     let watcher_cwd = args.cwd.clone();
