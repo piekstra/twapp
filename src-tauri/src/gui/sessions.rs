@@ -140,10 +140,7 @@ fn launcher_session_from_data(
         forked_from,
         role: session_data.role.clone(),
         provenance: session_data.provenance.clone(),
-        // Stub: `colab_group` field on SessionData is landing in the parallel
-        // `twapp-session-colab-group` PR. Until then, propagate None so the
-        // launcher treats every session as non-grouped (current behavior).
-        colab_group: None,
+        colab_group: session_data.colab_group.clone(),
     }
 }
 
@@ -1767,5 +1764,64 @@ mod fork_inheritance_tests {
         assert_eq!(colab.as_deref(), Some("feature-x"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod launcher_propagation_tests {
+    use super::launcher_session_from_data;
+    use crate::cli::session::{AgentProvider, SessionData};
+
+    fn base_session() -> SessionData {
+        SessionData {
+            session_id: "sid".into(),
+            name: "parent".into(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: "/tmp/parent".into(),
+            created: "2026-04-21T00:00:00Z".into(),
+            last_resumed: None,
+            provider: None,
+            codex_session_id: None,
+            codex_cwd: None,
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+            role: None,
+            provenance: None,
+            colab_group: None,
+        }
+    }
+
+    #[test]
+    fn propagates_role_provenance_colab_group_into_launcher_session() {
+        let mut s = base_session();
+        s.role = Some("coordinator".into());
+        s.provenance = Some("spawned".into());
+        s.colab_group = Some("feature-x".into());
+
+        let ls = launcher_session_from_data(
+            &s,
+            std::path::Path::new("/tmp/parent"),
+            AgentProvider::Claude,
+        );
+
+        assert_eq!(ls.role.as_deref(), Some("coordinator"));
+        assert_eq!(ls.provenance.as_deref(), Some("spawned"));
+        assert_eq!(ls.colab_group.as_deref(), Some("feature-x"));
+    }
+
+    #[test]
+    fn propagates_none_when_session_data_has_no_colab_group() {
+        let ls = launcher_session_from_data(
+            &base_session(),
+            std::path::Path::new("/tmp/parent"),
+            AgentProvider::Claude,
+        );
+        assert_eq!(ls.role, None);
+        assert_eq!(ls.provenance, None);
+        assert_eq!(ls.colab_group, None);
     }
 }
