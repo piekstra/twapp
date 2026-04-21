@@ -114,6 +114,7 @@ pub fn run(args: GuiArgs) {
             monitor::list_monitor_logs,
             files::reveal_in_finder,
             msg::send_message,
+            msg::fetch_messages,
             coordinator::launch_coordinator,
             coordinator::claim_coordinator,
             coordinator::list_claimable_sessions,
