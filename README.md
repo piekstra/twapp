@@ -421,6 +421,28 @@ expand/collapse. Collapsed state is remembered across app restarts. If
 you're not running a co-lab, the launcher reverts to its flat list — no
 empty headers, no regression in the single-session UX.
 
+### Identifying a co-lab session at a glance
+
+Inside the launcher, any session that qualifies as co-lab — either its
+`role` is set, or its provenance is `spawned` — gets a neutral `CO-LAB`
+chip in the badge row next to its name. The chip's tooltip surfaces the
+specific role when one is present (`Co-lab session — role: reviewer`)
+and falls back to "Co-lab session (spawned by another session)"
+otherwise. Sessions with `role: "coordinator"` trade the neutral chip
+for a stronger `COORDINATOR` tag in the launcher's accent color, so the
+orchestrator of the fleet is findable in one scan. Plain user-created
+sessions (no role, no spawned provenance) render exactly as before — no
+chip, no tag.
+
+The same metadata shapes the OS window title so Mission Control and
+Alt-Tab stay readable without opening each window: `twapp - co-lab - <name>`
+for spawned sessions without a role, `twapp - co-lab:<role> - <name>` for
+the co-lab role archetypes (`coordinator`, `implementer`, `reviewer`,
+`auditor`, `log-watcher`, `architect`, `qa`, `area-owner`, `designer`),
+and the unchanged `twapp - <name>` for plain user sessions. The formatter
+lives in [`src-tauri/src/gui/title.rs`](src-tauri/src/gui/title.rs) with a
+unit test per branch.
+
 ### Spawning a worker agent
 
 twapp works well as a terminal wrapper for *interactive* sessions, but

@@ -1,6 +1,9 @@
 # Design: Agent-aware UI — provenance, roles, coordinator dashboard
 
-Status: **draft**
+Status: **draft** — §3.1 (provenance) and §3.2 (role badge) are
+**partially landed** by the co-lab identifier-chrome PR
+(`feat(ui): co-lab window title prefix + coordinator tag in sessions
+list`). See the in-section notes and §3.6 for the shipped shape.
 Author: design pass grounded in one audit of the current Tauri UI; no
 implementation in this PR.
 Scope: a proposed shape for how the twapp UI evolves once the messaging
@@ -205,6 +208,15 @@ users never render it.
 
 ### 3.1 Instance provenance visual
 
+> **Partially landed** (colab-ui-chrome PR): the launcher now renders a
+> neutral `CO-LAB` chip in `launcher-session-meta` when the session has
+> a non-empty `role` **or** `provenance == "spawned"`. The richer
+> 12-px glyph prefix (◦ / ▸) described below is still aspirational —
+> the shipped chip intentionally rides on the existing badge row to
+> keep the scope small. See also §3.2 (COORDINATOR tag) and the new
+> OS-window-title prefix `twapp - co-lab[:<role>] - <name>`
+> centralized in `src-tauri/src/gui/title.rs`.
+
 **Shape:** a 12-px **icon prefix** immediately before the session name,
 both in the launcher list and in the session window's `sidebar-title`:
 
@@ -233,6 +245,15 @@ absent — single-session users migrate silently with an
 `◦` prefix.
 
 ### 3.2 Role badge
+
+> **Partially landed** (colab-ui-chrome PR): the coordinator variant
+> ships as a prominent `COORDINATOR` tag in the same
+> `launcher-session-meta` row, and the OS window title for
+> coordinator sessions becomes `twapp - co-lab:coordinator - <name>`
+> (other co-lab archetypes also get `co-lab:<role>` titles). The
+> kebab-case-token chip set (`[coord] [impl] [rev] ...`) for
+> non-coordinator roles is deferred; the shipped chrome uses a single
+> neutral `CO-LAB` chip plus the tooltip `role: <role>` for now.
 
 **Shape:** a compact right-aligned chip next to the session name,
 inside the same `launcher-session-meta` row as other badges. Short
