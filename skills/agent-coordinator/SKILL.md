@@ -278,6 +278,13 @@ twapp msg presence list --stale
 twapp msg presence get worker-a
 ```
 
+If the coordinator is running inside a twapp window (role `coordinator`
+in `.twapp-session.json`), the same view is surfaced live in the
+sidebar's **Fleet** pane — one row per active handle with status dot,
+unread / urgent counts, and last-heartbeat age, refreshed every 5s.
+Click a row to raise that worker's twapp window. The CLI forms above
+remain the source of truth for scripting and terminals.
+
 Three liveness states the coordinator reasons about:
 
 - **processing / idle** — heartbeat within `5 × poll_interval_sec`. Alive.

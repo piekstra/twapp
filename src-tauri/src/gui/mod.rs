@@ -1,6 +1,7 @@
 pub mod config;
 pub mod coordinator;
 pub mod files;
+pub mod fleet;
 pub mod monitor;
 pub mod msg;
 pub mod notes;
@@ -127,6 +128,7 @@ pub fn run(args: GuiArgs) {
             files::reveal_in_finder,
             msg::send_message,
             msg::fetch_messages,
+            fleet::list_fleet,
             coordinator::launch_coordinator,
             coordinator::claim_coordinator,
             coordinator::list_claimable_sessions,

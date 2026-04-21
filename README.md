@@ -443,6 +443,37 @@ and the unchanged `twapp - <name>` for plain user sessions. The formatter
 lives in [`src-tauri/src/gui/title.rs`](src-tauri/src/gui/title.rs) with a
 unit test per branch.
 
+### Coordinator fleet pane
+
+A session whose `.twapp-session.json` declares `role: "coordinator"`
+renders a **Fleet** panel in its sidebar, above the notes / prompts
+stack. The pane polls the `list_fleet` Tauri command every 5 seconds and
+lists one row per handle with a live `<mailbox>/presence/<handle>.json`:
+
+- Status dot — green fill for `processing`, hollow for `idle`, muted for
+  `dormant` (derived from `last_heartbeat` aged past `5 × poll_interval_sec`
+  per the messaging design's dormancy rule).
+- Handle and role chip, with a provenance glyph (◦ user-created, ▸
+  agent-spawned) drawn from the session's on-disk metadata.
+- Counts: urgent-lane tally (merging `inbox/urgent/<handle>/` and
+  `inbox/urgent/all/`) in red, plus the unread count of
+  `inbox/direct/<handle>/`.
+- Last-heartbeat age as "30s ago" / "4m ago" with the full RFC3339
+  timestamp on hover.
+- Current task line (truncated to ~80 chars) from the presence file's
+  `current_task`.
+
+Rows sort urgent-first, then by unread desc, then by freshest heartbeat.
+Clicking a row raises that handle's twapp window via the same
+`launch_session` focus path the launcher uses. When the coordinator's
+session has a `colab_group`, the pane is scoped to that group; a
+coordinator without a group sees every active handle in the shared
+mailbox. Non-coordinator sessions never render the pane (single-session
+and worker UX are byte-unchanged). The backend lives in
+[`src-tauri/src/gui/fleet.rs`](src-tauri/src/gui/fleet.rs) and the React
+side in [`src/components/FleetPane.tsx`](src/components/FleetPane.tsx),
+both with unit tests.
+
 ### Spawning a worker agent
 
 twapp works well as a terminal wrapper for *interactive* sessions, but
