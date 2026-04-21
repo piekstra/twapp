@@ -575,12 +575,13 @@ back. See
 [`docs/designs/agent-messaging.md`](docs/designs/agent-messaging.md) for
 the full model. Today's CLI covers **PR-1** (scaffolding), **PR-2**
 (threading), **PR-3** (directory split + read cursors), **PR-4**
-(priority lane), and **PR-7** (archive rotation) of that design. Sends
-land under a per-recipient layout (`inbox/broadcast/`,
-`inbox/direct/<handle>/`, `inbox/channel/<name>/`); every send also
-drops a grace-period symlink at the flat `inbox/<filename>.md` path so
-un-upgraded readers doing `ls inbox/` keep working. Presence and
-first-class channel subscriptions still land in later PRs.
+(priority lane), **PR-5** (presence / heartbeat), and **PR-7** (archive
+rotation) of that design. Sends land under a per-recipient layout
+(`inbox/broadcast/`, `inbox/direct/<handle>/`, `inbox/channel/<name>/`);
+every send also drops a grace-period symlink at the flat
+`inbox/<filename>.md` path so un-upgraded readers doing `ls inbox/`
+keep working. First-class channel subscriptions still land in a later
+PR.
 
 #### Configure the mailbox
 
@@ -736,6 +737,73 @@ twapp msg ack 01JS4M7Q8W --note "rebasing now"
 ```
 
 `--mark-read` is opt-in; a plain `fetch` never advances the cursor.
+
+#### Presence + heartbeats (PR-5)
+
+`twapp msg presence heartbeat` writes `<mailbox>/presence/<handle>.json`,
+overwritten in place each call. The coordinator (and any curious peer)
+can see who's alive, what they're doing, and how long it's been since
+their last tick without opening their inbox. Design §2.6.
+
+```json
+{
+  "handle": "implementer-a",
+  "status": "processing",
+  "last_heartbeat": "2026-04-21T12:00:00Z",
+  "current_task": "rebasing onto main",
+  "inbox_cursor": "20260420T202845Z-9f2c1a",
+  "poll_interval_sec": 90,
+  "claims": ["channel:reviewers-standby"]
+}
+```
+
+```bash
+# Basic heartbeat — defaults handle to the current session name, status
+# to processing, poll_interval_sec to 90 on the first call (preserved on
+# subsequent calls if --interval is omitted).
+twapp msg presence heartbeat
+
+# Update just the status line; other fields are preserved.
+twapp msg presence heartbeat --task "rebasing onto main"
+twapp msg presence heartbeat --status idle --task "waiting on review"
+
+# Multi-field refresh.
+twapp msg presence heartbeat \
+  --status processing \
+  --task "writing tests" \
+  --interval 90 \
+  --claims channel:reviewers-standby,channel:announcements
+
+# Fleet view — every handle with a presence file.
+twapp msg presence list
+twapp msg presence list --format json | jq
+
+# Who's dormant? Shows only handles whose last_heartbeat is older than
+# 5 × poll_interval_sec.
+twapp msg presence list --stale
+
+# Single-handle lookup.
+twapp msg presence get implementer-a
+
+# On offboard, clear your file so peers don't see you as dormant.
+twapp msg presence clear
+```
+
+Three liveness states:
+
+- **processing / idle** — presence file exists and `last_heartbeat` is
+  within `5 × poll_interval_sec`. Alive.
+- **dormant** — presence file exists but `last_heartbeat` is past the
+  threshold. Surfaced by `presence list --stale`. A busy worker deep in
+  a write cycle can legitimately go dormant; senders use it as a hint,
+  not a verdict.
+- **dead** — no presence file at all. Means "never started or fully
+  offboarded". `presence list` omits dead handles entirely.
+
+Agents are expected to heartbeat on their /loop cadence (today, manually;
+a follow-up PR will wire heartbeats into the /loop skill itself). The
+`spawn-agent` and `agent-coordinator` skill docs call this out in the
+worker protocol.
 
 #### Migrating the inbox layout
 
