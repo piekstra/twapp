@@ -1009,9 +1009,14 @@ mod tests {
         );
         assert_eq!(exit, 0);
 
-        let entries: Vec<_> = std::fs::read_dir(g.inbox()).unwrap().flatten().collect();
-        assert_eq!(entries.len(), 1, "expected 1 broadcast");
-        let parsed = parse_message_file(&entries[0].path()).unwrap();
+        // The broadcast lands in inbox/broadcast/<filename>.md under the
+        // PR-3 split layout, with a grace-period symlink at inbox/<filename>.
+        let bcast_entries: Vec<_> = std::fs::read_dir(g.inbox().join("broadcast"))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(bcast_entries.len(), 1, "expected 1 broadcast");
+        let parsed = parse_message_file(&bcast_entries[0].path()).unwrap();
         assert_eq!(parsed.fm.from, "reviewer-a");
         assert_eq!(parsed.fm.to, vec!["all"]);
         assert_eq!(
@@ -1033,11 +1038,15 @@ mod tests {
             Some("shipped".to_string()),
         );
         assert_eq!(exit, 0);
-        let entries: Vec<_> = std::fs::read_dir(g.inbox()).unwrap().flatten().collect();
-        // The cmd_release path emits exactly one broadcast; claims done
-        // via try_claim skip the broadcast.
-        assert_eq!(entries.len(), 1, "expected 1 broadcast");
-        let parsed = parse_message_file(&entries[0].path()).unwrap();
+        // PR-3 split layout: broadcasts live under inbox/broadcast/.
+        // cmd_release emits exactly one broadcast; claims done via
+        // try_claim skip the broadcast.
+        let bcast_entries: Vec<_> = std::fs::read_dir(g.inbox().join("broadcast"))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(bcast_entries.len(), 1, "expected 1 broadcast");
+        let parsed = parse_message_file(&bcast_entries[0].path()).unwrap();
         assert_eq!(parsed.fm.subject.as_deref(), Some("release lane PR-91"));
         assert!(parsed.body.contains("released PR-91"));
     }
@@ -1069,9 +1078,12 @@ mod tests {
             FetchFormat::Pretty,
         );
         assert_eq!(exit, 0);
-        let entries: Vec<_> = std::fs::read_dir(g.inbox()).unwrap().flatten().collect();
-        assert_eq!(entries.len(), 1);
-        let parsed = parse_message_file(&entries[0].path()).unwrap();
+        let bcast_entries: Vec<_> = std::fs::read_dir(g.inbox().join("broadcast"))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(bcast_entries.len(), 1);
+        let parsed = parse_message_file(&bcast_entries[0].path()).unwrap();
         assert_eq!(parsed.fm.subject.as_deref(), Some("reclaim lane lane-z"));
         assert!(parsed.body.contains("reclaimed lane-z from stale owner ghost"));
     }

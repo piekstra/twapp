@@ -6,6 +6,8 @@ pub mod monitor;
 pub mod msg;
 pub mod msg_archive;
 pub mod msg_claim;
+pub mod msg_cursors;
+pub mod msg_migrate;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
@@ -529,6 +531,11 @@ pub fn run(cmd: Commands) -> i32 {
                 }
             },
             MsgCommands::Thread { thread_id, format } => msg::cmd_thread(thread_id, format),
+            MsgCommands::Ack { msg_id, from, note } => msg_cursors::cmd_ack(msg_id, from, note),
+            MsgCommands::Migrate {
+                dry_run,
+                drop_legacy,
+            } => msg_migrate::cmd_migrate(dry_run, drop_legacy),
         },
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
