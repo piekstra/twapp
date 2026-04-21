@@ -137,6 +137,9 @@ export interface LauncherSession {
   message_count: number | null;
   imported: boolean;
   forked_from: string | null;
+  role: string | null;
+  provenance: string | null;
+  colab_group: string | null;
 }
 
 export interface LauncherResponse {
