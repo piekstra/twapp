@@ -79,6 +79,10 @@ fn validate(args: &SendArgs) -> Result<(), String> {
 }
 
 fn twapp_binary() -> std::path::PathBuf {
+    // Contract: the Tauri GUI binary dispatches the CLI via subcommand (see
+    // `src-tauri/src/lib.rs`), so `current_exe()` is the same `twapp` binary
+    // that exposes `msg send` / `msg broadcast`. If the GUI is ever split out
+    // into its own binary, point this at a resolved `twapp` in PATH instead.
     std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("twapp"))
 }
 
@@ -278,10 +282,21 @@ mod tests {
         path
     }
 
+    fn unique_tmp(tag: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!("twapp-send-{}-{}-{}", tag, std::process::id(), nanos));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        tmp
+    }
+
     #[test]
     fn fake_cli_success_returns_id() {
-        let tmp = std::env::temp_dir().join(format!("twapp-send-ok-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        let tmp = unique_tmp("ok");
         let bin = write_fake_bin(
             &tmp,
             "fake-twapp-ok",
@@ -290,12 +305,12 @@ mod tests {
         let argv = build_argv(&base());
         let id = run_with_fake_bin(&bin, argv, "hello").expect("should succeed");
         assert_eq!(id, "FAKEID42");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn fake_cli_error_surfaces_stderr() {
-        let tmp = std::env::temp_dir().join(format!("twapp-send-err-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        let tmp = unique_tmp("err");
         let bin = write_fake_bin(
             &tmp,
             "fake-twapp-err",
@@ -304,5 +319,6 @@ mod tests {
         let argv = build_argv(&base());
         let err = run_with_fake_bin(&bin, argv, "hello").expect_err("should fail");
         assert!(err.contains("mailbox not found"), "expected stderr in error, got: {}", err);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -4331,6 +4331,14 @@ a.file-link {
   cursor: not-allowed;
 }
 
+.actions-menu-shortcut {
+  float: right;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 12px;
+  letter-spacing: 0.02em;
+}
+
 .composer-toast {
   position: fixed;
   bottom: 24px;

@@ -131,6 +131,7 @@ function App() {
   // Message composer modal
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerToast, setComposerToast] = useState<string | null>(null);
+  const composerToastTimer = useRef<number | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
   // Session settings popover
@@ -2256,7 +2257,7 @@ function App() {
                       Fork Session...
                     </button>
                     <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setComposerOpen(true); }}>
-                      Send Message...
+                      Send Message... <span className="actions-menu-shortcut">⌘⇧M</span>
                     </button>
                     <div className="actions-menu-separator" />
                     <button
@@ -2950,8 +2951,14 @@ function App() {
         open={composerOpen}
         onClose={() => setComposerOpen(false)}
         onSent={(id) => {
+          if (composerToastTimer.current !== null) {
+            window.clearTimeout(composerToastTimer.current);
+          }
           setComposerToast(id);
-          window.setTimeout(() => setComposerToast(null), 4000);
+          composerToastTimer.current = window.setTimeout(() => {
+            setComposerToast(null);
+            composerToastTimer.current = null;
+          }, 4000);
         }}
       />
 
