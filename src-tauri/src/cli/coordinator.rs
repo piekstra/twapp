@@ -44,6 +44,11 @@ pub enum CoordinatorCommands {
         /// auto-inherit the same group by default). Empty string rejected.
         #[arg(long = "colab-group")]
         colab_group: Option<String>,
+        /// Model name passed through to the spawned claude CLI (`--model <name>`).
+        /// twapp does not validate the name — unset uses the claude CLI default.
+        /// Mirrors `twapp work --model` from PR #46.
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Flip an existing session's role to `coordinator` by rewriting its
     /// `.twapp-session.json`. Defaults to the current directory's session.
@@ -72,7 +77,8 @@ pub fn run(cmd: CoordinatorCommands) -> i32 {
             cwd,
             shared_dir,
             colab_group,
-        } => cmd_launch(briefing, name, cwd, shared_dir, colab_group),
+            model,
+        } => cmd_launch(briefing, name, cwd, shared_dir, colab_group, model),
         CoordinatorCommands::Claim {
             name,
             force,
@@ -83,76 +89,103 @@ pub fn run(cmd: CoordinatorCommands) -> i32 {
 
 // --- launch -----------------------------------------------------------------
 
+/// Outcome of `launch_core`, distinguishing the two specific error shapes the
+/// CLI exit codes care about (rc=2 for "user/config conflict", rc=1 for
+/// everything else) while keeping the library-friendly `Result<String, String>`
+/// surface the Tauri command uses.
+pub enum LaunchOutcome {
+    Ok(String),
+    ConflictErr(String),
+    Err(String),
+}
+
 fn cmd_launch(
     briefing: Option<String>,
     name: Option<String>,
     cwd: Option<String>,
     shared_dir: Option<String>,
     colab_group_arg: Option<String>,
+    model: Option<String>,
 ) -> i32 {
+    match launch_core(briefing, name, cwd, shared_dir, colab_group_arg, model) {
+        LaunchOutcome::Ok(name) => {
+            println!("Launching coordinator \"{}\"...", name);
+            0
+        }
+        LaunchOutcome::ConflictErr(e) => {
+            eprintln!("{}", e);
+            2
+        }
+        LaunchOutcome::Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+/// Library-friendly coordinator launch. Performs the full spawn (mailbox
+/// resolution, briefing materialization, session file write, GUI launch via
+/// macOS `open`) and returns the launched session name on success. Callers
+/// map `LaunchOutcome` to their own error surface (CLI → exit codes, Tauri →
+/// `Result<String, String>`). No stdout/stderr writes — leaves surfacing to
+/// the caller so GUI callers don't get spurious terminal noise.
+pub fn launch_core(
+    briefing: Option<String>,
+    name: Option<String>,
+    cwd: Option<String>,
+    shared_dir: Option<String>,
+    colab_group_arg: Option<String>,
+    model: Option<String>,
+) -> LaunchOutcome {
     let session_name = name.unwrap_or_else(|| DEFAULT_NAME.to_string());
 
     let colab_group = match resolve_launch_colab_group(colab_group_arg, &session_name) {
         Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
+        Err(e) => return LaunchOutcome::Err(e),
     };
 
     let work_dir = match resolve_work_dir(&session_name, cwd.as_deref()) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
+        Err(e) => return LaunchOutcome::Err(e),
     };
 
     if session_already_exists(&work_dir) {
-        eprintln!(
-            "Error: a session named \"{}\" already exists at {}.",
+        let msg = format!(
+            "Error: a session named \"{}\" already exists at {}.\n  - To take over that session as coordinator: twapp coordinator claim --name {}\n  - To replace it:                              twapp stop --name {} && remove the directory",
             session_name,
-            work_dir.display()
+            work_dir.display(),
+            session_name,
+            session_name,
         );
-        eprintln!(
-            "  - To take over that session as coordinator: twapp coordinator claim --name {}",
-            session_name
-        );
-        eprintln!("  - To replace it:                              twapp stop --name {} && remove the directory", session_name);
-        return 2;
+        return LaunchOutcome::ConflictErr(msg);
     }
 
     if let Err(e) = std::fs::create_dir_all(&work_dir) {
-        eprintln!("Error creating coordinator directory {}: {}", work_dir.display(), e);
-        return 1;
+        return LaunchOutcome::Err(format!(
+            "creating coordinator directory {}: {}",
+            work_dir.display(),
+            e
+        ));
     }
 
     let briefing_path = match resolve_briefing_path(briefing.as_deref(), &work_dir) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 2;
-        }
+        Err(e) => return LaunchOutcome::ConflictErr(format!("Error: {}", e)),
     };
 
     let mailbox = match resolve_mailbox(shared_dir.as_deref(), &work_dir) {
         Ok(m) => m,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
+        Err(e) => return LaunchOutcome::Err(e),
     };
-    eprintln!("Using mailbox: {}", mailbox.display());
 
     if let Err(e) = app_bundle::check_gui_installed() {
-        eprintln!("{}", e);
-        return 1;
+        return LaunchOutcome::Err(e);
     }
 
     // Build the --run command: export TWAPP_MAILBOX_DIR and invoke claude
     // with the briefing. Keeps the shared-dir plumbing in the command string
     // so the PTY shell sees it regardless of how macOS `open` inherits env.
-    let run_command = build_run_command(&briefing_path, &mailbox);
+    let run_command = build_run_command(&briefing_path, &mailbox, model.as_deref());
 
     // provenance=spawned: although a human types `twapp coordinator launch`,
     // the resulting session is bootstrapped from a briefing file — same
@@ -174,28 +207,19 @@ fn cmd_launch(
         Some(colab_group),
     ) {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
+        Err(e) => return LaunchOutcome::Err(e),
     };
 
     let instance_app = match app_bundle::prepare_instance_app(&result.name, &result.color) {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error preparing app instance: {}", e);
-            return 1;
-        }
+        Err(e) => return LaunchOutcome::Err(format!("preparing app instance: {}", e)),
     };
 
-    println!("Launching coordinator \"{}\"...", result.name);
-
     if let Err(e) = app_bundle::launch_gui(&instance_app, &result.app_args) {
-        eprintln!("Error: {}", e);
-        return 1;
+        return LaunchOutcome::Err(e);
     }
 
-    0
+    LaunchOutcome::Ok(result.name)
 }
 
 /// Resolve the working directory for a new coordinator session.
@@ -321,13 +345,24 @@ pub fn resolve_mailbox(
     Ok(fallback)
 }
 
-fn build_run_command(briefing_path: &Path, mailbox_dir: &Path) -> String {
+pub(crate) fn build_run_command(
+    briefing_path: &Path,
+    mailbox_dir: &Path,
+    model: Option<&str>,
+) -> String {
     let briefing = briefing_path.to_string_lossy();
     let mailbox = mailbox_dir.to_string_lossy();
     let prompt = format!("Read {} and execute.", briefing);
+    let model_flag = match model {
+        Some(m) if !m.is_empty() => {
+            format!(" --model '{}'", session::shell_escape_single(m))
+        }
+        _ => String::new(),
+    };
     format!(
-        "TWAPP_MAILBOX_DIR='{}' claude --dangerously-skip-permissions '{}'",
+        "TWAPP_MAILBOX_DIR='{}' claude --dangerously-skip-permissions{} '{}'",
         session::shell_escape_single(&mailbox),
+        model_flag,
         session::shell_escape_single(&prompt),
     )
 }
@@ -351,6 +386,26 @@ fn cmd_claim(name: Option<String>, force: bool, colab_group: Option<String>) -> 
         }
     };
     claim_at(&target_dir, force, colab_group.as_deref())
+}
+
+/// Library-friendly claim: resolves the target directory by name (or current
+/// working directory) and flips the role in place. Returns the directory path
+/// that was claimed on success, a human-readable error on failure. Used by
+/// the GUI's Tauri command so it doesn't have to parse eprintln output.
+pub fn claim_core(
+    name: Option<String>,
+    force: bool,
+    colab_group: Option<String>,
+) -> Result<String, String> {
+    let colab_group = match colab_group {
+        Some(raw) if raw.trim().is_empty() => {
+            return Err("--colab-group cannot be empty.".to_string());
+        }
+        Some(raw) => Some(raw.trim().to_string()),
+        None => None,
+    };
+    let target_dir = find_session_dir(name.as_deref())?;
+    claim_at_result(&target_dir, force, colab_group.as_deref())
 }
 
 /// Flip `.twapp-session.json:role` to coordinator at a specific directory.
@@ -452,6 +507,64 @@ pub(crate) fn claim_at(
         );
     }
     0
+}
+
+/// Result-returning variant of `claim_at` — used by `claim_core`. Returns the
+/// claimed directory on success. `claim_at` itself is preserved (prints + rc)
+/// because existing tests call it.
+fn claim_at_result(
+    target_dir: &Path,
+    force: bool,
+    colab_group: Option<&str>,
+) -> Result<String, String> {
+    let session_file = target_dir.join(".twapp-session.json");
+    let content = std::fs::read_to_string(&session_file)
+        .map_err(|e| format!("reading {}: {}", session_file.display(), e))?;
+    let mut data: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("parsing {}: {}", session_file.display(), e))?;
+
+    let obj = data
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", session_file.display()))?;
+
+    let already_coordinator = matches!(
+        obj.get("role").and_then(|v| v.as_str()),
+        Some(r) if r == COORDINATOR_ROLE
+    );
+
+    match obj.get("role").and_then(|v| v.as_str()) {
+        Some(existing) if existing == COORDINATOR_ROLE => {}
+        Some(existing) if !force => {
+            return Err(format!(
+                "session at {} already has role=\"{}\". Pass force=true to overwrite.",
+                target_dir.display(),
+                existing
+            ));
+        }
+        _ => {}
+    }
+
+    // Already-coordinator + no colab_group change → no-op success.
+    if already_coordinator && colab_group.is_none() {
+        return Ok(target_dir.to_string_lossy().to_string());
+    }
+
+    obj.insert(
+        "role".to_string(),
+        Value::String(COORDINATOR_ROLE.to_string()),
+    );
+    if let Some(group) = colab_group {
+        obj.insert(
+            "colab_group".to_string(),
+            Value::String(group.to_string()),
+        );
+    }
+    let serialized = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("serializing session file: {}", e))?;
+    std::fs::write(&session_file, serialized)
+        .map_err(|e| format!("writing {}: {}", session_file.display(), e))?;
+
+    Ok(target_dir.to_string_lossy().to_string())
 }
 
 /// Resolve the `colab_group` value used by `twapp coordinator launch`.
@@ -782,83 +895,95 @@ mod tests {
         let _ = fs::remove_dir_all(&work_dir);
     }
 
-    // ---- coordinator_launch_defaults_colab_group_to_name -----------------
-
+    // ---- build_run_command_injects_model_when_set -------------------------
+    //
+    // When `--model <name>` is passed, the constructed PTY command must contain
+    // a `--model 'name'` flag before the briefing prompt argument so the
+    // spawned claude CLI picks it up. When model is None/empty the flag must
+    // be absent — callers who leave model unset expect the claude CLI default.
+    // Empty-string and None must produce byte-identical output (reviewer nit
+    // from PR #55 review: pin the equivalence).
     #[test]
-    fn coordinator_launch_defaults_colab_group_to_name() {
-        // Absent --colab-group, launch uses the session name as the default
-        // group so workers spawned inside the coordinator's session land in
-        // the same bucket without per-spawn ceremony.
-        let resolved = resolve_launch_colab_group(None, "feature-x").unwrap();
-        assert_eq!(resolved, "feature-x");
+    fn build_run_command_injects_model_when_set() {
+        let briefing = PathBuf::from("/tmp/briefing.md");
+        let mailbox = PathBuf::from("/tmp/mbx");
 
-        // The literal DEFAULT_NAME case — `twapp coordinator launch` with no
-        // flags — should produce `colab_group = "coordinator"`.
-        let resolved = resolve_launch_colab_group(None, DEFAULT_NAME).unwrap();
-        assert_eq!(resolved, DEFAULT_NAME);
+        let with_model = build_run_command(&briefing, &mailbox, Some("claude-opus-4-7"));
+        assert!(
+            with_model.contains("--model 'claude-opus-4-7'"),
+            "expected --model flag in command, got: {}",
+            with_model
+        );
+        assert!(
+            with_model.contains("TWAPP_MAILBOX_DIR='/tmp/mbx'"),
+            "mailbox env var must still be present: {}",
+            with_model
+        );
+
+        let without_model = build_run_command(&briefing, &mailbox, None);
+        assert!(
+            !without_model.contains("--model"),
+            "expected no --model flag when model is None, got: {}",
+            without_model
+        );
+
+        let empty_model = build_run_command(&briefing, &mailbox, Some(""));
+        assert!(
+            !empty_model.contains("--model"),
+            "empty model string must be treated as unset, got: {}",
+            empty_model
+        );
+        assert_eq!(
+            empty_model, without_model,
+            "empty-string model and None model must produce identical output"
+        );
     }
 
-    // ---- coordinator_launch_colab_group_override -------------------------
+    // ---- claim_core tests --------------------------------------------------
 
     #[test]
-    fn coordinator_launch_colab_group_override() {
-        // Explicit flag beats the --name-derived default, and the value is
-        // trimmed so a trailing newline from shell expansion doesn't poison
-        // the group key used for grouping.
-        let resolved =
-            resolve_launch_colab_group(Some("  custom-group  ".to_string()), "coordinator")
-                .unwrap();
-        assert_eq!(resolved, "custom-group");
-
-        // Empty / whitespace-only explicit flag is rejected — we don't silently
-        // fall back to --name when the caller explicitly asked for "no group".
-        let err = resolve_launch_colab_group(Some("   ".to_string()), "coordinator").unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-    }
-
-    // ---- coordinator_claim_with_colab_group_sets_field -------------------
-
-    #[test]
-    fn coordinator_claim_with_colab_group_sets_field() {
-        let work_dir = unique_tmp("twapp-coord-claim-colab");
+    fn claim_core_flips_role_at_target_dir() {
+        let work_dir = unique_tmp("twapp-coord-claim-core-flip");
         write_session(&work_dir, "some-worker", None);
 
-        let rc = claim_at(&work_dir, false, Some("feature-x"));
+        let claimed =
+            claim_at_result(&work_dir, false, None).expect("claim_core should succeed");
 
-        assert_eq!(rc, 0, "claim --colab-group should succeed");
+        assert_eq!(PathBuf::from(claimed), work_dir);
         assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
-
-        let raw: Value = serde_json::from_str(
-            &fs::read_to_string(work_dir.join(".twapp-session.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            raw.get("colab_group").and_then(|v| v.as_str()),
-            Some("feature-x"),
-            "claim should stamp colab_group on the session file"
-        );
 
         let _ = fs::remove_dir_all(&work_dir);
     }
 
     #[test]
-    fn coordinator_claim_updates_colab_group_on_existing_coordinator() {
-        // Already role=coordinator + new --colab-group → colab_group gets set
-        // and the call does not early-exit with "nothing to do".
-        let work_dir = unique_tmp("twapp-coord-claim-update");
-        write_session(&work_dir, "coordinator", Some(COORDINATOR_ROLE));
+    fn claim_core_errors_on_non_coord_role_without_force() {
+        let work_dir = unique_tmp("twapp-coord-claim-core-refuse");
+        write_session(&work_dir, "worker", Some("implementer"));
 
-        let rc = claim_at(&work_dir, false, Some("new-group"));
-        assert_eq!(rc, 0);
+        let err = claim_at_result(&work_dir, false, None)
+            .err()
+            .expect("claim_core should refuse");
+        assert!(err.contains("implementer"), "unexpected error: {}", err);
+        assert_eq!(read_role(&work_dir).as_deref(), Some("implementer"));
 
-        let raw: Value = serde_json::from_str(
-            &fs::read_to_string(work_dir.join(".twapp-session.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            raw.get("colab_group").and_then(|v| v.as_str()),
-            Some("new-group")
-        );
+        // With force=true it succeeds.
+        let claimed =
+            claim_at_result(&work_dir, true, None).expect("force should succeed");
+        assert_eq!(PathBuf::from(claimed), work_dir);
+        assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
+
+        let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    #[test]
+    fn claim_core_is_idempotent_when_already_coordinator() {
+        let work_dir = unique_tmp("twapp-coord-claim-core-idem");
+        write_session(&work_dir, "worker", Some(COORDINATOR_ROLE));
+
+        let claimed = claim_at_result(&work_dir, false, None)
+            .expect("already-coord should be no-op success");
+        assert_eq!(PathBuf::from(claimed), work_dir);
+        assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
 
         let _ = fs::remove_dir_all(&work_dir);
     }
