@@ -404,6 +404,23 @@ A typical co-lab flow:
 
 The rest of this section covers each piece of that flow.
 
+### The launcher groups co-lab sessions
+
+The top-level twapp launcher splits the sessions list into sections so a
+running co-lab doesn't drown out your own work: **My sessions** at the top
+(sessions you started yourself — no `colab_group`, not spawned), one
+collapsible **Co-lab: `<group>`** section per active coordination with the
+coordinator pinned at the top of its group and workers sorted by recent
+activity underneath, and a final **Orphan co-lab sessions** section that
+surfaces any `--from-file` spawns that didn't pick up a `colab_group` tag
+(legacy or misconfigured). Each section shows a count badge, search
+auto-expands any section with a match, the existing Recent / A-Z sort
+toggle applies within each section, and a subtle color-coded left border
+keeps members of the same co-lab visually tied together across group
+expand/collapse. Collapsed state is remembered across app restarts. If
+you're not running a co-lab, the launcher reverts to its flat list — no
+empty headers, no regression in the single-session UX.
+
 ### Spawning a worker agent
 
 twapp works well as a terminal wrapper for *interactive* sessions, but

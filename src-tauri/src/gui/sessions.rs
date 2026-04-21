@@ -135,6 +135,12 @@ fn launcher_session_from_data(
         message_count,
         imported,
         forked_from,
+        role: session_data.role.clone(),
+        provenance: session_data.provenance.clone(),
+        // Stub: `colab_group` field on SessionData is landing in the parallel
+        // `twapp-session-colab-group` PR. Until then, propagate None so the
+        // launcher treats every session as non-grouped (current behavior).
+        colab_group: None,
     }
 }
 
