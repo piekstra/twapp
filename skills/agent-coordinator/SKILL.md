@@ -189,6 +189,33 @@ The flat `archive/` fills up over time. Coordinators may run `twapp msg archive 
 - `to: <handle>` — directed (only that agent archives; others ignore).
 - `cc: <handle>` — optional courtesy copy.
 
+### Priority lanes (urgent / blocker)
+
+When a coordinator message is time-sensitive (redirect mid-write-cycle,
+stop-work order, stale-merge nudge), send it on the priority lane so
+the recipient surfaces it on its next poll without scanning the whole
+inbox:
+
+```bash
+# "Read this on your next poll; it may change your plan."
+twapp msg send worker-a --priority urgent --subject "scope change" "<body>"
+
+# "Stop current work and handle this before anything else."
+twapp msg send worker-a --priority blocker --subject "rewind PR" "<body>"
+```
+
+`twapp msg send --priority {urgent|blocker}` drops a symlink under
+`inbox/urgent/<recipient>/` alongside the canonical file. Recipients
+running `twapp msg fetch --priority blocker` at the top of a long
+write cycle see blockers before anything else. `--priority urgent`
+returns both urgent and blocker (the whole urgent lane); `--priority
+blocker` is exact.
+
+> Do **not** encode priority in the filename by renaming the receiver to
+> `<handle>-URGENT` / `<handle>-REWORK` — that idiom is deprecated. Use
+> `--priority urgent` (or `blocker`) instead; it's the only channel
+> `twapp msg fetch --priority` knows how to find.
+
 ### Example message
 
 ```
