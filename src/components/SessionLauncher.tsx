@@ -9,6 +9,7 @@ import {
   partitionSessions,
   colabGroupBorderColor,
 } from "../utils/sessionSections";
+import { isColabSession } from "../utils/colab";
 import { buildClaimArgs, buildLaunchArgs } from "../utils/coordinator";
 import type {
   LauncherSession,
@@ -1176,6 +1177,7 @@ function SessionLauncher({
 
   const renderSession = (session: LauncherSession, borderOverride?: string) => {
     const isCoordinator = session.role === "coordinator";
+    const isColab = isColabSession(session);
     // Border precedence: explicit override (co-lab group hue) > session color
     // > transparent. Coordinator within a group gets a thicker visual tier via
     // a class — colab-ui-chrome's chip lives on a separate badge in the meta
@@ -1220,9 +1222,24 @@ function SessionLauncher({
           </div>
           <div className="launcher-session-meta">
             <span className="launcher-imported-badge">{session.provider}</span>
+            {isColab && !isCoordinator && (
+              <span
+                className="launcher-colab-chip"
+                title={
+                  session.role
+                    ? `Co-lab session — role: ${session.role}`
+                    : "Co-lab session (spawned by another session)"
+                }
+              >
+                CO-LAB
+              </span>
+            )}
             {isCoordinator && (
-              <span className="launcher-role-badge launcher-role-coordinator" title="Coordinator for this co-lab group">
-                Coordinator
+              <span
+                className="launcher-role-badge launcher-role-coordinator"
+                title="Coordinator for this co-lab group"
+              >
+                COORDINATOR
               </span>
             )}
             {session.forked_from && (

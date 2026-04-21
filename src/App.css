@@ -3362,9 +3362,28 @@ a.file-link {
   color: var(--text-muted);
 }
 
+/* Coordinator tag — deliberately stronger than the neutral CO-LAB chip so
+   the orchestrating session stands out in a fleet. Shares the palette
+   with `launcher-session-coordinator` (subtle card chrome). */
 .launcher-role-coordinator {
-  background: rgba(80, 120, 220, 0.15);
+  background: rgba(80, 120, 220, 0.18);
   color: var(--accent, #4a7de8);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+/* Neutral co-lab chip — appears on any session with a role or spawned
+   provenance. Kept intentionally quiet so user sessions remain the
+   visual default; coordinator tag takes over when role=coordinator. */
+.launcher-colab-chip {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(100, 120, 150, 0.12);
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
 .launcher-spinner {
