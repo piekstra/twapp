@@ -727,6 +727,18 @@ collapses after the queue has been empty for a minute. Click a row to
 open a read-only message view. Blockers get the strongest red accent,
 urgents a muted one. Single-session users with no handle see no panel.
 
+#### Per-agent quick actions (context menu)
+
+Right-clicking a fleet-pane row (and later any co-lab row) opens a
+context menu with the most common coordinator actions: raise the
+agent's window, send a direct / urgent / blocker message (opens the
+composer prefilled), view recent mailbox activity, view their PR
+activity via `gh pr list --author <handle>`, and stop the agent via
+`twapp stop --name <handle>`. The stop flow ships with an explicit
+confirmation dialog and an optional SIGKILL escalation checkbox; it's
+hidden when the row targets the coordinator or the user's own session.
+See `docs/designs/agent-aware-ui.md` §3.5 for the full spec.
+
 #### Reading legacy (bare) files
 
 `fetch` accepts both the new fenced-frontmatter shape and the older bare

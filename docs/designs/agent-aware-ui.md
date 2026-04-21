@@ -404,6 +404,11 @@ The button is hidden (never rendered) when:
 
 ### 3.5 Quick actions from the dashboard
 
+> **Landed** (ui-quick-actions PR): the `AgentContextMenu` component +
+> supporting Tauri commands (`focus_agent_window`, `stop_agent`,
+> `list_agent_prs`, `fetch_agent_activity`) ship this shape. The fleet-pane
+> PR wires the menu to the per-agent rows it introduces.
+
 Right-click on any fleet-pane row opens a context menu. Keyboard: `⌘K`
 with a row focused. Items:
 
