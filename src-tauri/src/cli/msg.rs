@@ -214,6 +214,20 @@ pub enum MsgCommands {
         #[command(subcommand)]
         command: super::msg_archive::ArchiveCommands,
     },
+    /// List every message in a thread in chronological order.
+    ///
+    /// Matches both messages whose `thread:` equals `<thread-id>` and the
+    /// root message whose `id:` equals `<thread-id>` (thread roots carry no
+    /// `thread:` field on their own). Prints a short one-line-per-message
+    /// summary by default; `--format json` dumps the full parsed messages.
+    #[command(after_help = "Examples:\n  twapp msg thread 01JS4K2AAA\n  twapp msg thread 01JS4K2AAA --format json")]
+    Thread {
+        /// Thread id (root message id).
+        thread_id: String,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = FetchFormat::Pretty)]
+        format: FetchFormat,
+    },
 }
 
 // --- Mailbox discovery ------------------------------------------------------
@@ -1128,6 +1142,68 @@ pub fn cmd_fetch(
             0
         }
     }
+}
+
+/// List every message with `thread == <thread_id>` (plus the thread root
+/// whose `id == <thread_id>` — roots omit `thread:` on themselves) in
+/// chronological order. `--format json` dumps the full parsed messages;
+/// default output is a one-line-per-message summary.
+pub fn cmd_thread(thread_id: String, format: FetchFormat) -> i32 {
+    let inbox = match inbox_dir() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+    let msgs = list_thread(&inbox, &thread_id);
+    match format {
+        FetchFormat::Json => match serde_json::to_string_pretty(&msgs) {
+            Ok(s) => {
+                println!("{}", s);
+                0
+            }
+            Err(e) => {
+                eprintln!("Error serializing: {}", e);
+                1
+            }
+        },
+        FetchFormat::Pretty => {
+            if msgs.is_empty() {
+                println!("(no messages in thread {})", thread_id);
+                return 0;
+            }
+            println!("thread {} ({} message{})", thread_id, msgs.len(), if msgs.len() == 1 { "" } else { "s" });
+            for m in &msgs {
+                print_thread_summary(m);
+            }
+            0
+        }
+    }
+}
+
+/// Collect every parsed message belonging to `thread_id`, chronologically.
+/// A message belongs to a thread when its `thread:` equals the id *or* its
+/// own `id:` equals the id (the root case, since roots do not set `thread:`
+/// on themselves by design §2.4).
+pub fn list_thread(inbox: &Path, thread_id: &str) -> Vec<ParsedMessage> {
+    let mut msgs = list_messages(inbox);
+    msgs.retain(|m| {
+        m.fm.id == thread_id || m.fm.thread.as_deref() == Some(thread_id)
+    });
+    msgs
+}
+
+fn print_thread_summary(m: &ParsedMessage) {
+    let subj = m.fm.subject.as_deref().unwrap_or("(no subject)");
+    println!(
+        "  {}  {}  from={}  priority={}  subject={}",
+        m.fm.ts,
+        m.fm.id,
+        m.fm.from,
+        m.fm.priority.as_str(),
+        subj,
+    );
 }
 
 fn print_pretty(m: &ParsedMessage) {
@@ -2099,5 +2175,122 @@ new\n";
         );
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].body.trim(), "merge freeze");
+    }
+
+    // ---- PR-2: threading (reply-to + twapp msg thread) -------------------
+
+    /// `cmd_send`'s reply-to path, reused by the PR-2 tests without going
+    /// through the process-wide env + session plumbing of the real CLI.
+    fn send_reply(
+        inbox: &Path,
+        parent_id: &str,
+        from: &str,
+        body: &str,
+    ) -> Result<SentMessage, String> {
+        let parent = find_by_id(inbox, parent_id)
+            .ok_or_else(|| format!("--reply-to id {} not found", parent_id))?;
+        let thread_id = parent.thread.clone().unwrap_or(parent.id.clone());
+        write_message(
+            inbox,
+            SendArgs {
+                to: parent.to.clone(),
+                from: from.to_string(),
+                priority: MsgPriority::Routine,
+                subject: parent.subject.clone(),
+                thread: Some(thread_id),
+                in_reply_to: Some(parent.id.clone()),
+                cc: Vec::new(),
+                body: body.to_string(),
+            },
+        )
+    }
+
+    #[test]
+    fn reply_to_inherits_thread_from_parent() {
+        // Parent is already a reply — it has an explicit thread id distinct
+        // from its own id. The child must inherit that thread id, not the
+        // parent's own id.
+        let g = MailboxGuard::new();
+        let root = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "root");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let mid = send_reply(&g.inbox(), &root.fm.id, "reviewer", "mid").unwrap();
+        assert_eq!(mid.fm.thread.as_deref(), Some(root.fm.id.as_str()));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let leaf = send_reply(&g.inbox(), &mid.fm.id, "implementer-a", "leaf").unwrap();
+        // Leaf inherits root thread id from mid — not mid's own id.
+        assert_eq!(leaf.fm.thread.as_deref(), Some(root.fm.id.as_str()));
+        assert_eq!(leaf.fm.in_reply_to.as_deref(), Some(mid.fm.id.as_str()));
+    }
+
+    #[test]
+    fn reply_to_new_thread_uses_parent_id_as_root() {
+        // Parent has no thread — it's a fresh root. The reply's thread id
+        // must therefore be the parent's own id.
+        let g = MailboxGuard::new();
+        let root = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "root");
+        assert!(root.fm.thread.is_none(), "root should not carry own thread id");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let reply = send_reply(&g.inbox(), &root.fm.id, "reviewer", "reply").unwrap();
+        assert_eq!(reply.fm.thread.as_deref(), Some(root.fm.id.as_str()));
+        assert_eq!(reply.fm.in_reply_to.as_deref(), Some(root.fm.id.as_str()));
+    }
+
+    #[test]
+    fn reply_to_nonexistent_parent_errors() {
+        let g = MailboxGuard::new();
+        let err = match send_reply(&g.inbox(), "NOSUCHIDXXXXXXXX", "a", "x") {
+            Ok(_) => panic!("reply to nonexistent parent should have errored"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("NOSUCHIDXXXXXXXX"),
+            "error should name the missing id: {}",
+            err
+        );
+        assert!(
+            err.to_ascii_lowercase().contains("not found"),
+            "error should say not found: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn thread_lists_in_chronological_order() {
+        let g = MailboxGuard::new();
+        let root = send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "r");
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let r1 = send_reply(&g.inbox(), &root.fm.id, "reviewer", "one").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let r2 = send_reply(&g.inbox(), &r1.fm.id, "implementer-a", "two").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // An unrelated message in the mailbox must not leak into the thread.
+        let _unrelated = send(&g.inbox(), vec!["qa"], MsgPriority::Routine, "off-topic");
+
+        let thread = list_thread(&g.inbox(), &root.fm.id);
+        assert_eq!(thread.len(), 3, "got ids: {:?}", thread.iter().map(|m| &m.fm.id).collect::<Vec<_>>());
+        assert_eq!(thread[0].fm.id, root.fm.id);
+        assert_eq!(thread[1].fm.id, r1.fm.id);
+        assert_eq!(thread[2].fm.id, r2.fm.id);
+        // Timestamps are strictly non-decreasing.
+        assert!(thread[0].fm.ts <= thread[1].fm.ts);
+        assert!(thread[1].fm.ts <= thread[2].fm.ts);
+    }
+
+    #[test]
+    fn thread_returns_empty_on_unknown_id_without_crash() {
+        let g = MailboxGuard::new();
+        send(&g.inbox(), vec!["reviewer"], MsgPriority::Routine, "hi");
+        let thread = list_thread(&g.inbox(), "NOSUCHTHREADID");
+        assert!(thread.is_empty());
+
+        // Also tolerate an empty inbox.
+        let empty_mailbox = std::env::temp_dir().join(format!(
+            "twapp-msg-empty-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(empty_mailbox.join("inbox")).unwrap();
+        let thread = list_thread(&empty_mailbox.join("inbox"), "ANY");
+        assert!(thread.is_empty());
+        let _ = std::fs::remove_dir_all(&empty_mailbox);
     }
 }
