@@ -5,6 +5,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
 import { maskProviderSessionId } from "../utils/session";
+import {
+  partitionSessions,
+  colabGroupBorderColor,
+} from "../utils/sessionSections";
 import type {
   LauncherSession,
   LauncherResponse,
@@ -80,6 +84,34 @@ function SessionLauncher({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Launcher co-lab group collapse state (persisted per section id via localStorage)
+  const collapsedStorageKey = "twapp:launcher:collapsed-sections";
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(collapsedStorageKey);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? new Set(parsed.filter((v) => typeof v === "string")) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(collapsedStorageKey, JSON.stringify(Array.from(collapsedSections)));
+    } catch {
+      // Quota / private mode — collapse state just becomes session-local, no user-visible error.
+    }
+  }, [collapsedSections]);
+  const toggleSectionCollapsed = (id: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // Import sessions state
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
@@ -262,10 +294,20 @@ function SessionLauncher({
     );
   }, [sessions, searchQuery, showImported]);
 
-  const groupedSessions = useMemo(() => {
+  const sections = useMemo(
+    () => partitionSessions(filteredSessions, sortMode),
+    [filteredSessions, sortMode],
+  );
+
+  // The flat "My sessions" list keeps its existing bucketing (Today / This Week /
+  // Older or A-Z) so single-session users see no regression. Co-lab and orphan
+  // sections are rendered flat — a group already carries its own context.
+  const mineBuckets = useMemo(() => {
+    const mine = sections.find((s) => s.kind === "mine")?.sessions ?? [];
+
     if (sortMode === "alpha") {
-      const sorted = [...filteredSessions].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      const sorted = [...mine].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
       );
       const groups = new Map<string, LauncherSession[]>();
       for (const s of sorted) {
@@ -277,7 +319,6 @@ function SessionLauncher({
       return Array.from(groups, ([label, sessions]) => ({ label, sessions }));
     }
 
-    // Default: recent (time buckets)
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
@@ -292,7 +333,7 @@ function SessionLauncher({
       { label: "Older", sessions: [] },
     ];
 
-    for (const s of filteredSessions) {
+    for (const s of mine) {
       const t = s.last_active ? new Date(s.last_active).getTime() : 0;
       if (t >= startOfToday.getTime()) buckets[0].sessions.push(s);
       else if (t >= startOfYesterday.getTime()) buckets[1].sessions.push(s);
@@ -302,7 +343,24 @@ function SessionLauncher({
     }
 
     return buckets.filter((b) => b.sessions.length > 0);
-  }, [filteredSessions, sortMode]);
+  }, [sections, sortMode]);
+
+  // If the user has no co-lab sessions at all, preserve the lean flat-list UX:
+  // hide the "My sessions" header and just render the existing time/alpha
+  // buckets directly.
+  const hasColabSections = sections.some((s) => s.kind === "colab" || s.kind === "orphans");
+
+  // Search auto-expands any section whose members match, so results aren't
+  // hidden behind a collapsed header.
+  const searching = searchQuery.trim().length > 0;
+  const effectiveCollapsed = useMemo(() => {
+    if (!searching) return collapsedSections;
+    const filtered = new Set(collapsedSections);
+    for (const section of sections) {
+      if (section.sessions.length > 0) filtered.delete(section.id);
+    }
+    return filtered;
+  }, [collapsedSections, sections, searching]);
 
   const handleLaunch = async (session: LauncherSession) => {
     setLaunching(session.session_id);
@@ -1013,6 +1071,117 @@ function SessionLauncher({
     </div>
   );
 
+  const renderSession = (session: LauncherSession, borderOverride?: string) => {
+    const isCoordinator = session.role === "coordinator";
+    // Border precedence: explicit override (co-lab group hue) > session color
+    // > transparent. Coordinator within a group gets a thicker visual tier via
+    // a class — colab-ui-chrome's chip lives on a separate badge in the meta
+    // row, so they don't conflict.
+    const borderColor = borderOverride || session.color || "transparent";
+    const classes = [
+      "launcher-session",
+      session.is_running ? "running" : "",
+      launching === session.session_id ? "launching" : "",
+      isCoordinator ? "launcher-session-coordinator" : "",
+    ].filter(Boolean).join(" ");
+    return (
+      <div
+        key={session.session_id}
+        className={classes}
+        onClick={() => handleLaunch(session)}
+        style={{ borderLeftColor: borderColor }}
+      >
+        <div className="launcher-session-main">
+          <div className="launcher-session-name">
+            {renamingSessionId === session.session_id ? (
+              <input
+                className="launcher-rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleRenameConfirm(session);
+                  if (e.key === "Escape") setRenamingSessionId(null);
+                }}
+                onBlur={() => handleRenameConfirm(session)}
+                onClick={(e) => e.stopPropagation()}
+                autoFocus
+              />
+            ) : (
+              <>
+                {session.name}
+                {session.is_running && (
+                  <span className="launcher-running-badge">Running</span>
+                )}
+              </>
+            )}
+          </div>
+          <div className="launcher-session-meta">
+            <span className="launcher-imported-badge">{session.provider}</span>
+            {isCoordinator && (
+              <span className="launcher-role-badge launcher-role-coordinator" title="Coordinator for this co-lab group">
+                Coordinator
+              </span>
+            )}
+            {session.forked_from && (
+              <span className="launcher-forked-badge" title={`Forked from ${session.forked_from.slice(0, 12)}`}>Forked</span>
+            )}
+            {session.imported && (
+              <span className="launcher-imported-badge">Imported</span>
+            )}
+            {session.ticket_key && (
+              <span className="launcher-ticket">{session.ticket_key}</span>
+            )}
+            {session.needs_migration && (
+              <span className="launcher-forked-badge" title={`Will migrate existing ${session.provider === "codex" ? "Claude" : "Codex"} context into ${session.provider} on next launch`}>
+                Migrate on Open
+              </span>
+            )}
+            <span className="launcher-path">{shortenPath(session.directory, homeDir)}</span>
+          </div>
+        </div>
+        <div className="launcher-session-right">
+          <span className="launcher-time">
+            {formatRelativeTime(session.last_active)}
+          </span>
+          {session.provider_session_id && (
+            <button
+              className="launcher-session-id"
+              type="button"
+              onClick={(e) => handleCopyProviderSessionId(e, session.provider_session_id!)}
+              aria-label={`Copy ${session.provider} session id ${session.provider_session_id}`}
+              title={`Copy ${session.provider} session ID`}
+            >
+              {maskProviderSessionId(session.provider_session_id)}
+            </button>
+          )}
+          {session.message_count != null && (
+            <span className="launcher-messages">
+              {session.message_count} msgs
+            </span>
+          )}
+          <button
+            className="launcher-session-action"
+            title="Rename session"
+            onClick={(e) => handleRenameClick(e, session)}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" />
+            </svg>
+          </button>
+          <button
+            className="launcher-session-action"
+            title="Delete session"
+            onClick={(e) => handleDeleteClick(e, session)}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 3h8M4.5 3V2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1M3 3v7a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V3" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="launcher">
       <div className="launcher-header">
@@ -1389,102 +1558,91 @@ function SessionLauncher({
             {searchQuery ? "No matching sessions" : "No sessions found"}
           </div>
         ) : (
-          groupedSessions.map((group) => (
-            <div key={group.label} className="launcher-group">
-              <div className="launcher-group-label">{group.label}</div>
-              {group.sessions.map((session) => (
-                <div
-                  key={session.session_id}
-                  className={`launcher-session${session.is_running ? " running" : ""}${launching === session.session_id ? " launching" : ""}`}
-                  onClick={() => handleLaunch(session)}
-                  style={{ borderLeftColor: session.color || "transparent" }}
-                >
-                  <div className="launcher-session-main">
-                    <div className="launcher-session-name">
-                      {renamingSessionId === session.session_id ? (
-                        <input
-                          className="launcher-rename-input"
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleRenameConfirm(session);
-                            if (e.key === "Escape") setRenamingSessionId(null);
-                          }}
-                          onBlur={() => handleRenameConfirm(session)}
-                          onClick={(e) => e.stopPropagation()}
-                          autoFocus
-                        />
-                      ) : (
-                        <>
-                          {session.name}
-                          {session.is_running && (
-                            <span className="launcher-running-badge">Running</span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    <div className="launcher-session-meta">
-                      <span className="launcher-imported-badge">{session.provider}</span>
-                      {session.forked_from && (
-                        <span className="launcher-forked-badge" title={`Forked from ${session.forked_from.slice(0, 12)}`}>Forked</span>
-                      )}
-                      {session.imported && (
-                        <span className="launcher-imported-badge">Imported</span>
-                      )}
-                      {session.ticket_key && (
-                        <span className="launcher-ticket">{session.ticket_key}</span>
-                      )}
-                      {session.needs_migration && (
-                        <span className="launcher-forked-badge" title={`Will migrate existing ${session.provider === "codex" ? "Claude" : "Codex"} context into ${session.provider} on next launch`}>
-                          Migrate on Open
-                        </span>
-                      )}
-                      <span className="launcher-path">{shortenPath(session.directory, homeDir)}</span>
-                    </div>
+          <>
+            {/* "My sessions" section. When no co-lab sessions exist anywhere,
+                we drop the section header and fall back to the original flat
+                time/alpha buckets — preserves the lean UX for single-session
+                users. */}
+            {(() => {
+              const mineSection = sections.find((s) => s.kind === "mine");
+              const mineCount = mineSection?.sessions.length ?? 0;
+              const mineCollapsed = effectiveCollapsed.has("mine");
+              if (!hasColabSections) {
+                return mineBuckets.map((bucket) => (
+                  <div key={bucket.label} className="launcher-group">
+                    <div className="launcher-group-label">{bucket.label}</div>
+                    {bucket.sessions.map((s) => renderSession(s))}
                   </div>
-                  <div className="launcher-session-right">
-                    <span className="launcher-time">
-                      {formatRelativeTime(session.last_active)}
+                ));
+              }
+              return (
+                <div className="launcher-section launcher-section-mine">
+                  <button
+                    type="button"
+                    className={`launcher-section-header${mineCollapsed ? " collapsed" : ""}`}
+                    onClick={() => toggleSectionCollapsed("mine")}
+                    aria-expanded={!mineCollapsed}
+                  >
+                    <span className="launcher-section-chevron" aria-hidden="true">
+                      {mineCollapsed ? "▸" : "▾"}
                     </span>
-                    {session.provider_session_id && (
-                      <button
-                        className="launcher-session-id"
-                        type="button"
-                        onClick={(e) => handleCopyProviderSessionId(e, session.provider_session_id!)}
-                        aria-label={`Copy ${session.provider} session id ${session.provider_session_id}`}
-                        title={`Copy ${session.provider} session ID`}
-                      >
-                        {maskProviderSessionId(session.provider_session_id)}
-                      </button>
-                    )}
-                    {session.message_count != null && (
-                      <span className="launcher-messages">
-                        {session.message_count} msgs
-                      </span>
-                    )}
-                    <button
-                      className="launcher-session-action"
-                      title="Rename session"
-                      onClick={(e) => handleRenameClick(e, session)}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M8.5 1.5l2 2L4 10H2v-2L8.5 1.5z" />
-                      </svg>
-                    </button>
-                    <button
-                      className="launcher-session-action"
-                      title="Delete session"
-                      onClick={(e) => handleDeleteClick(e, session)}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M2 3h8M4.5 3V2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1M3 3v7a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V3" />
-                      </svg>
-                    </button>
-                  </div>
+                    <span className="launcher-section-title">My sessions</span>
+                    <span className="launcher-section-count">{mineCount}</span>
+                  </button>
+                  {!mineCollapsed &&
+                    mineBuckets.map((bucket) => (
+                      <div key={bucket.label} className="launcher-group">
+                        <div className="launcher-group-label">{bucket.label}</div>
+                        {bucket.sessions.map((s) => renderSession(s))}
+                      </div>
+                    ))}
                 </div>
-              ))}
-            </div>
-          ))
+              );
+            })()}
+            {sections
+              .filter((s) => s.kind !== "mine")
+              .map((section) => {
+                const collapsed = effectiveCollapsed.has(section.id);
+                const borderColor =
+                  section.kind === "colab" && section.groupName
+                    ? colabGroupBorderColor(section.groupName)
+                    : undefined;
+                return (
+                  <div
+                    key={section.id}
+                    className={`launcher-section launcher-section-${section.kind}`}
+                    style={borderColor ? { ["--colab-group-border" as string]: borderColor } : undefined}
+                  >
+                    <button
+                      type="button"
+                      className={`launcher-section-header${collapsed ? " collapsed" : ""}`}
+                      onClick={() => toggleSectionCollapsed(section.id)}
+                      aria-expanded={!collapsed}
+                    >
+                      <span className="launcher-section-chevron" aria-hidden="true">
+                        {collapsed ? "▸" : "▾"}
+                      </span>
+                      <span
+                        className="launcher-section-title"
+                        style={
+                          borderColor
+                            ? { borderLeft: `3px solid ${borderColor}`, paddingLeft: 8 }
+                            : undefined
+                        }
+                      >
+                        {section.label}
+                      </span>
+                      <span className="launcher-section-count">{section.sessions.length}</span>
+                    </button>
+                    {!collapsed && (
+                      <div className="launcher-section-body">
+                        {section.sessions.map((s) => renderSession(s, borderColor))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </>
         )}
       </div>
       )}

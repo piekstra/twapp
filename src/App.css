@@ -3287,6 +3287,86 @@ a.file-link {
   padding-top: 4px;
 }
 
+.launcher-section {
+  margin-bottom: 8px;
+}
+
+.launcher-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 10px 14px 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+}
+
+.launcher-section-header:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.launcher-section-chevron {
+  font-size: 10px;
+  width: 12px;
+  color: var(--text-muted);
+}
+
+.launcher-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.launcher-section-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+  border-radius: 10px;
+  padding: 1px 8px;
+  margin-left: auto;
+}
+
+.launcher-section-header.collapsed .launcher-section-chevron {
+  transform: translateY(-1px);
+}
+
+.launcher-section-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Coordinator card gets a subtle chrome step-up within a co-lab group.
+   Kept gentle so colab-ui-chrome's chip treatment can still own the
+   role-specific visual language without a double-accent. */
+.launcher-session-coordinator {
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.04),
+    transparent 40%
+  );
+}
+
+.launcher-role-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--hover-bg, rgba(0, 0, 0, 0.08));
+  color: var(--text-muted);
+}
+
+.launcher-role-coordinator {
+  background: rgba(80, 120, 220, 0.15);
+  color: var(--accent, #4a7de8);
+}
+
 .launcher-spinner {
   width: 24px;
   height: 24px;

@@ -157,6 +157,9 @@ pub struct LauncherSession {
     pub message_count: Option<u32>,
     pub imported: bool,
     pub forked_from: Option<String>,
+    pub role: Option<String>,
+    pub provenance: Option<String>,
+    pub colab_group: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
