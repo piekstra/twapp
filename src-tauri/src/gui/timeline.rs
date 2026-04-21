@@ -131,12 +131,17 @@ impl TimelineEvent {
         }
     }
 
-    fn dead(ts: String, handle: String, age_sec: i64) -> Self {
+    fn dead(ts: String, handle: String) -> Self {
         Self {
+            // Intentionally omits age — the age is implicit in `ts` vs
+            // `now()` and the UI computes it from `ts`. Including it here
+            // would make the description drift between polls, breaking the
+            // `(ts, handle, kind, description)` dedup key in `mergeEvents`
+            // on pagination boundaries.
+            description: format!("{} has not heartbeat past the dead threshold", handle),
             ts,
-            handle: handle.clone(),
+            handle,
             kind: "dead".to_string(),
-            description: format!("{} has not heartbeat in {}s (past dead threshold)", handle, age_sec),
             lane_id: None,
         }
     }
@@ -375,6 +380,14 @@ pub fn normalize_compact_ts(ts: &str) -> Option<String> {
     ))
 }
 
+/// Recursively walk `.md` files, skipping symlinks (to avoid double-counting
+/// via legacy/urgent shims) and the non-broadcast subtrees that can appear
+/// under `archive/<YYYY-MM-DD>/` post-rotation (PR-7). Inbox-side direct /
+/// urgent / channel dirs are outside the caller's `root` already, but an
+/// `archive/<date>/direct/<handle>/` subtree is co-located with
+/// `archive/<date>/broadcast/` and would otherwise be parsed only to be
+/// discarded by the `to: [all]` filter — a measurable scan cost on a long-
+/// lived mailbox. We skip by directory name at any depth.
 fn walk_md_files(root: &Path, visit: &mut dyn FnMut(&Path)) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
@@ -385,11 +398,14 @@ fn walk_md_files(root: &Path, visit: &mut dyn FnMut(&Path)) {
             continue;
         };
         if ft.is_symlink() {
-            // Skip symlinks — we'll see the canonical file through its
-            // real directory, and legacy shims point into the split layout.
             continue;
         }
         if ft.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if matches!(name, "direct" | "urgent" | "channel" | "cursors") {
+                    continue;
+                }
+            }
             walk_md_files(&path, visit);
         } else if ft.is_file() {
             visit(&path);
@@ -419,7 +435,7 @@ pub fn scan_dead_events(
             // Unparseable heartbeat — treat as dead, use now() so the
             // event is surfaced without inventing a fake ts.
             let now_rfc = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            out.push(TimelineEvent::dead(now_rfc, p.handle.clone(), 0));
+            out.push(TimelineEvent::dead(now_rfc, p.handle.clone()));
             continue;
         };
         let age = (now - hb).num_seconds();
@@ -431,7 +447,6 @@ pub fn scan_dead_events(
             out.push(TimelineEvent::dead(
                 p.last_heartbeat.clone(),
                 p.handle.clone(),
-                age,
             ));
         }
     }
@@ -882,6 +897,70 @@ mod tests {
         );
         assert_eq!(events_page2.len(), 1);
         assert_eq!(events_page2[0].handle, "oldest");
+    }
+
+    #[test]
+    fn assemble_sort_tiebreaks_equal_ts_by_handle_ascending() {
+        let now = chrono::Utc::now();
+        let since = now - chrono::Duration::days(7);
+        let same_ts = rfc(30);
+        let events = assemble_events(
+            vec![
+                TimelineEvent::spawn(same_ts.clone(), "charlie".to_string(), String::new()),
+                TimelineEvent::spawn(same_ts.clone(), "alpha".to_string(), String::new()),
+                TimelineEvent::spawn(same_ts.clone(), "bravo".to_string(), String::new()),
+            ],
+            vec![],
+            vec![],
+            vec![],
+            since,
+            None,
+            None,
+            100,
+        );
+        let handles: Vec<_> = events.iter().map(|e| e.handle.as_str()).collect();
+        assert_eq!(handles, vec!["alpha", "bravo", "charlie"]);
+    }
+
+    #[test]
+    fn offboard_scanner_skips_direct_urgent_channel_under_archive() {
+        let mailbox = tmp_mailbox();
+        // Place an "offboard" message in the direct/ subtree that walk_md_files
+        // must skip — only `to: [all]` broadcasts should surface.
+        let direct = mailbox
+            .join("archive")
+            .join("2026-04-20")
+            .join("direct")
+            .join("coordinator");
+        std::fs::create_dir_all(&direct).unwrap();
+        let direct_content = "---\n\
+            id: DIRECTOFFBRD\n\
+            from: trickster\n\
+            to: [coordinator]\n\
+            priority: routine\n\
+            subject: \"offboard — direct\"\n\
+            ts: 20260420T120000Z\n\
+            ---\n\n\
+            offboard body\n";
+        std::fs::write(
+            direct.join("20260420T120000Z-DIRECT.md"),
+            direct_content,
+        )
+        .unwrap();
+        // Also drop a legit broadcast offboard so we know the scanner ran.
+        write_broadcast(
+            &mailbox,
+            "20260420T130000Z",
+            "legit",
+            "offboard — scope delivered",
+            "",
+        );
+
+        let since = chrono::Utc::now() - chrono::Duration::days(365);
+        let events = scan_offboard_events(&mailbox, since);
+        let handles: Vec<_> = events.iter().map(|e| e.handle.as_str()).collect();
+        assert_eq!(handles, vec!["legit"], "direct-subtree offboard must be skipped");
+        let _ = std::fs::remove_dir_all(&mailbox);
     }
 
     #[test]
