@@ -474,6 +474,31 @@ and worker UX are byte-unchanged). The backend lives in
 side in [`src/components/FleetPane.tsx`](src/components/FleetPane.tsx),
 both with unit tests.
 
+### Spawn / teardown timeline
+
+Directly below the fleet pane, coordinator sessions see a **Timeline**
+panel that lists spawn, claim, reclaim, release, offboard, and dead
+events for the co-lab, newest-first. Polls the `list_timeline_events`
+Tauri command every 30 seconds and defaults to the last 7 days; a
+*Load more* button extends the window 7 days further back per click.
+A free-text filter narrows rows to handles matching a substring.
+
+Events are aggregated from:
+
+- **Spawn** — `SessionData.created` for each `.twapp-session.json`
+  under the global work directory (scoped by `colab_group` when set).
+- **Claim / reclaim / release** — `<mailbox>/claims/<lane-id>/owner.json`
+  and `released.json`, plus the `.released-<ts>/` archived dirs from
+  repeat claims. Structural records from the lane-claim primitive
+  (§1.4 of [`worker-coordination.md`](docs/designs/worker-coordination.md)).
+- **Offboard** — `to: [all]` broadcasts whose subject or body contains
+  "offboard" (case-insensitive).
+- **Dead** — presence handles whose `last_heartbeat` is older than
+  `15 × poll_interval_sec` (3× the dormant threshold).
+
+Backend: [`src-tauri/src/gui/timeline.rs`](src-tauri/src/gui/timeline.rs).
+Frontend: [`src/components/TimelinePane.tsx`](src/components/TimelinePane.tsx).
+
 ### Spawning a worker agent
 
 twapp works well as a terminal wrapper for *interactive* sessions, but
