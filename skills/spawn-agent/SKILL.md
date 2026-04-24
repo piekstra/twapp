@@ -55,18 +55,21 @@ Notes:
 
 ## Briefing requirements
 
-A worker briefing is a literal contract — the worker will follow what's written and improvise where the briefing is silent. Any required step you leave out becomes a coin-flip on whether the worker invents something safe. To take that coin-flip off the table, every briefing for an implementer (any `--from-file` spawn with `--role implementer`) MUST contain the following four sections, alongside whatever role-specific content the work needs:
+A worker briefing is a literal contract — the worker will follow what's written and improvise where the briefing is silent. Any required step you leave out becomes a coin-flip on whether the worker invents something safe. To take that coin-flip off the table, every briefing for an implementer (any `--from-file` spawn with `--role implementer`) MUST contain the following five sections, alongside whatever role-specific content the work needs:
 
 - **Setup** — the exact bash commands the worker runs to prepare its working environment. For any briefing that touches a git repo, this MUST include a `git worktree add -b <branch> <new-worktree-path> <base-ref>` step that creates a fresh worktree OUTSIDE any shared, live, or coordinator-owned worktree. The worker's edits, commits, and pushes happen inside that new worktree — never the spawning session's cwd, never a shared `_live` / `_staging` worktree, never a peer's worktree.
 - **Do-not-touch** — an explicit list of paths the worker must not modify. At minimum, name any live / production worktree of the repo by absolute path, plus any sibling worker's worktree currently in flight. Anything the briefing doesn't explicitly authorize is implicitly out of scope; listing the dangerous paths converts the worst-case trampling failure from "unlikely" to "unreachable".
 - **PR pattern** — the branch name convention (`<scope>/<short-name>`), the commit message convention (conventional commits — `feat(...)`, `fix(...)`, `chore(...)`, `docs(...)`), and the `gh pr create` invocation shape the worker should follow.
 - **Acceptance criteria** — a concrete, self-checkable checklist the reviewer and the coordinator can both use to verify the PR delivers what the briefing asked for.
+- **Completion check** — explicit agent-self-verification that the PR is actually open on the remote and a completion mailbox is posted. Without this, agents can finish the code work and silently stall before opening the PR. See [`docs/briefing-template.md`](../../docs/briefing-template.md) for the standard checklist.
 
-### Why these four are mandatory
+### Why these five are mandatory
 
-A real incident shaped this rule. A coordinator spawned several implementers in parallel against a repo whose live working copy was the user's active worktree. The briefings did not include an explicit Setup section, so some workers defaulted to operating in the spawning session's cwd — which happened to be the live worktree. They stashed the user's uncommitted edits, left the live tree checked out on a feature branch, and trampled each other's in-progress work. None of the workers disobeyed instructions; the briefings were silent on where to work. Codifying Setup + Do-not-touch makes that silence impossible.
+A real incident shaped the first four. A coordinator spawned several implementers in parallel against a repo whose live working copy was the user's active worktree. The briefings did not include an explicit Setup section, so some workers defaulted to operating in the spawning session's cwd — which happened to be the live worktree. They stashed the user's uncommitted edits, left the live tree checked out on a feature branch, and trampled each other's in-progress work. None of the workers disobeyed instructions; the briefings were silent on where to work. Codifying Setup + Do-not-touch makes that silence impossible.
 
-A copy-paste template that ships these four sections out of the box lives at [`docs/briefing-template.md`](../../docs/briefing-template.md). Coordinators should start from it rather than improvising. See [`agent-coordinator`](../agent-coordinator/SKILL.md#coordinator-obligations-when-writing-implementer-briefings) for the coordinator-side obligations (verification before spawn, distinct paths for parallel implementers, calling out the live worktree). A worked-out minimum-viable briefing appears at the bottom of this file under [Minimum-viable briefing example](#minimum-viable-briefing-example).
+Completion check closes a different failure mode. Agents are optimized to satisfy primary acceptance criteria and exit. Without explicit PR-lifecycle checkpoints in the acceptance list, an agent can reasonably conclude "tests pass + code is committed = done" and stop, missing the push + PR-open + notify steps. The coordinator then has to discover the stall manually hours later. Completion check turns those steps from narrative into verifiable acceptance items — the agent runs the two-command self-verify, posts the `-done.md` mailbox, and only then exits.
+
+A copy-paste template that ships these five sections out of the box lives at [`docs/briefing-template.md`](../../docs/briefing-template.md). Coordinators should start from it rather than improvising. See [`agent-coordinator`](../agent-coordinator/SKILL.md#coordinator-obligations-when-writing-implementer-briefings) for the coordinator-side obligations (verification before spawn, distinct paths for parallel implementers, calling out the live worktree, stale-branch scans in the review loop). A worked-out minimum-viable briefing appears at the bottom of this file under [Minimum-viable briefing example](#minimum-viable-briefing-example).
 
 ## Role + provenance
 
@@ -467,10 +470,20 @@ cd /path/to/<repo>_example-fix
 - [ ] <self-checkable item>
 - [ ] Existing test suite passes (e.g. `cargo test --lib`).
 
+## Completion check — DO NOT SKIP
+Before stopping:
+```bash
+git push -u origin example-scope/example-fix
+gh pr view example-scope/example-fix --json number,url
+```
+Then post `<shared-dir>/mailbox/inbox/<ISO-Z>-<handle>-done.md` with PR
+number + URL, branch, and acceptance-criteria status. Not done until both
+the PR exists on the remote and the `-done.md` file is posted.
+
 ## PR pattern
 - Branch: `example-scope/example-fix`
 - Commit: `fix(example-scope): one-line subject` (conventional commits)
 - Open with `gh pr create --title "fix(example-scope): subject" --body "$(cat <<'EOF' … EOF)"`
 ````
 
-The four mandatory sections are **Setup**, **Do-not-touch**, **PR pattern**, and **Acceptance criteria**. Add **Why**, **What to ship**, and **Out of scope** in every real briefing — they're not enforced here because the failure mode they prevent (scope drift) is gentler than the one the four mandatory sections prevent (worktree trampling).
+The five mandatory sections are **Setup**, **Do-not-touch**, **PR pattern**, **Acceptance criteria**, and **Completion check**. Add **Why**, **What to ship**, and **Out of scope** in every real briefing — they're not enforced here because the failure mode they prevent (scope drift) is gentler than the ones the five mandatory sections prevent (worktree trampling and silent PR-open stalls).

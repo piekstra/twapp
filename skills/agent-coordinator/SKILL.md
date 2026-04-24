@@ -133,6 +133,15 @@ and a link to any relevant upstream data, audit, or prior PR.>
 ## Acceptance criteria
 <Unambiguous checklist the worker can self-verify before declaring done.>
 
+## Completion check — DO NOT SKIP
+<Two-command self-verify (`git push -u origin <branch>` +
+`gh pr view <branch> --json number,url`) plus a
+`<shared-dir>/mailbox/inbox/<ISO-Z>-<handle>-done.md` post. Agent is not
+done until `gh pr view` returns a real PR number AND the `-done.md` file
+exists. See [`docs/briefing-template.md`](../../docs/briefing-template.md)
+for the standard block and [`spawn-agent`'s briefing-requirements](../spawn-agent/SKILL.md#briefing-requirements)
+for the rationale.>
+
 ## Out of scope
 <Explicit carve-outs to prevent drift into adjacent concerns.>
 
@@ -167,6 +176,7 @@ Why each section earns its place:
 
 - **Why / Context** — anchors the worker to the motivation so it judges trade-offs instead of following the letter.
 - **What to ship / Acceptance criteria** — the part the worker self-verifies against; skimping here is where scope drifts.
+- **Completion check** — turns PR-open + notify from narrative into a verifiable acceptance item. Without it, agents finish the code work, commit, and stop without pushing or opening the PR — a silent stall the coordinator only discovers by chance.
 - **Out of scope** — load-bearing. Prevents the common failure mode of a worker "helpfully" rewriting adjacent code.
 - **Protocol** — the handshake contract. Without it you cannot distinguish a slow worker from a dead one.
 - **Coordinate with** — prevents collisions on shared files. Cheap to write, expensive to omit.
@@ -202,9 +212,9 @@ Budget note: un-pinned spawns inherit the user's global default. For a batch of 
 
 ### Coordinator obligations when writing implementer briefings
 
-The [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill defines four mandatory briefing sections every implementer needs — **Setup**, **Do-not-touch**, **PR pattern**, and **Acceptance criteria** — and the rationale incident behind them. The coordinator owns whether those sections actually appear before the spawn:
+The [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill defines five mandatory briefing sections every implementer needs — **Setup**, **Do-not-touch**, **PR pattern**, **Acceptance criteria**, and **Completion check** — and the rationale incidents behind them. The coordinator owns whether those sections actually appear before the spawn:
 
-- **Verify before you spawn.** Before invoking `twapp work --from-file <briefing>` for any `--role implementer`, scan the briefing and confirm all four mandatory sections are present and non-empty. A grep, a quick visual pass, or both — but skipping this once will eventually cost you a trampled worktree. The §2 template above plus the [`docs/briefing-template.md`](../../docs/briefing-template.md) starter both already include the four sections; the failure mode is briefings that drift from the template, not briefings that start from it.
+- **Verify before you spawn.** Before invoking `twapp work --from-file <briefing>` for any `--role implementer`, scan the briefing and confirm all five mandatory sections are present and non-empty. A grep, a quick visual pass, or both — but skipping this once will eventually cost you a trampled worktree or a silent PR-open stall. The §2 template above plus the [`docs/briefing-template.md`](../../docs/briefing-template.md) starter both already include the five sections; the failure mode is briefings that drift from the template, not briefings that start from it.
 - **Distinct worktree path + branch per parallel implementer.** When two or more implementers are in flight on the same repo at the same time, every briefing MUST name a distinct `git worktree add` path and a distinct branch in its Setup section. Two implementers sharing a worktree fight over `.twapp-*.json` files and stomp each other's commits; two implementers sharing a branch race-condition the push. Stamp the worktree path and branch from the worker's handle (e.g. `<repo>_<handle>` and `<scope>/<handle>`) so the uniqueness falls out of the naming convention.
 - **Always call out the live worktree.** If the target repo has a live / production / staging / `_live` worktree the user runs out of, name it by absolute path in the Do-not-touch section of every implementer briefing — even when the briefing has no obvious reason to touch it. The worker may search for files broadly, follow a tool to a fuzzy match, or improvise a setup command that lands there. An explicit do-not-touch line short-circuits all of those failure paths up front.
 
@@ -601,6 +611,15 @@ status, before merging:
       flight): *"have you seen anything unusual since the previous
       merge?"* Unexplained recent weirdness is a reason to pause, not to
       accelerate.
+- [ ] **Stale-branch scan (automated, coordinator-side):** every
+      monitoring cycle, for each active-agent's known branch, check
+      `git ls-remote origin <branch>` AND `gh pr list --head <branch>`.
+      Branch exists + commits-ahead-of-main AND no open PR = stall. Kick
+      or force-stop+respawn. Catches the failure mode the per-briefing
+      [Completion check](../spawn-agent/SKILL.md#briefing-requirements)
+      is meant to prevent — an agent that finished its code work but
+      never opened the PR — when that agent's self-verify slipped
+      anyway.
 
 If the checklist surfaces a concern, block the merge and mailbox the
 implementer with the specific input case the PR would reject — not a
