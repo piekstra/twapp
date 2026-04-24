@@ -97,14 +97,41 @@ git push -u origin <your-branch>            # push if not already
 gh pr view <your-branch> --json number,url  # confirm PR exists with a number
 ```
 
-Then post `<shared-dir>/mailbox/inbox/<ISO-Z>-<your-name>-done.md` with:
-- PR number + URL
-- Branch name
-- Acceptance-criteria checklist status
+Then write the completion signal on **two channels** — primary and
+secondary. The primary is load-bearing; the secondary is best-effort.
+See [`docs/playbooks/completion-signals.md`](playbooks/completion-signals.md)
+for the rationale.
+
+**Primary (always works): `DONE.md` in your worktree.**
+
+Write `<your-worktree>/DONE.md` with:
+- PR URL
+- `mergeStateStatus` (from `gh pr view --json mergeStateStatus`)
+- Commit SHA
+- Acceptance-criteria checklist with ticks
+- One-line test summary
+
+The worktree is a path you have permission to write to by
+construction, so this write cannot fail on permissions. The
+coordinator scans for `DONE.md` on every monitoring cycle as the
+load-bearing completion signal.
+
+**Secondary (best-effort): completion mailbox post.**
+
+Also attempt to post `<shared-dir>/mailbox/inbox/<ISO-Z>-<your-name>-done.md`
+with the same content. If the write succeeds, good — the message
+shows up in the normal mailbox flow. If it prompts for permission or
+fails silently (the shared mailbox path often sits outside the
+worker's permitted write scope, even with
+`--dangerously-skip-permissions`), skip it and move on. Do not let
+the secondary mechanism's failure prevent the primary from being
+written.
 
 Agent is NOT done until BOTH:
 - `gh pr view` returns a real PR number, AND
-- the `-done.md` mailbox file exists.
+- `<your-worktree>/DONE.md` exists.
+
+The mailbox post is a courtesy. The `DONE.md` is the contract.
 
 ## Out of scope
 

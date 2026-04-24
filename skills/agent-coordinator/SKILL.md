@@ -183,6 +183,14 @@ Why each section earns its place:
 - **Worktree** — copy-paste beats improvisation; workers that improvise their worktree path get lost.
 - **Domain facts** — how you avoid the class of bug where an agent silently misinterprets units, multipliers, field semantics, or ownership boundaries.
 
+### Why idle-finishing happens
+
+Workers are optimized to satisfy primary acceptance criteria and exit. Without explicit completion-lifecycle checkpoints, post-code-work steps — pushing the branch, opening the PR, writing a completion-signal file — are treated as narrative wrap-up rather than required acceptance items, and a partial failure in that sequence can leave the agent stopped with no signal anyone can see. The Completion check section turns those steps into verifiable acceptance items; the **two-channel `DONE.md` + mailbox** pattern in [`docs/playbooks/completion-signals.md`](../../docs/playbooks/completion-signals.md) makes the signal work even when the shared mailbox path sits outside the agent's permission scope (the `DONE.md` in the worker's own worktree is always writable by construction).
+
+### Agents don't proactively poll shared channels
+
+A running worker only checks the channels its briefing tells it to check, on the cadence its briefing specifies. If the coordinator needs to change a running agent's instructions mid-run, a directed mailbox message is unreliable unless the worker's briefing explicitly sets up a poll loop that reads it. For one-off mid-run updates the priority lane (§3 Priority lanes) is more reliable than a regular `to: <handle>` post; for substantial scope changes, the cleanest pattern is to stop the agent and respawn it with an updated briefing plus the previous session id (`twapp work --session-id <id>`), so context continuity is preserved even though the briefing changed.
+
 ### Headless operation — worker contract
 
 **Headless operation.** Every worker invokes `/loop` after its hello and operates autonomously. Never end a turn waiting for user input. If stuck, mailbox the coordinator. The coordinator decides when to escalate to the user.
@@ -219,6 +227,8 @@ The [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill defines
 - **Always call out the live worktree.** If the target repo has a live / production / staging / `_live` worktree the user runs out of, name it by absolute path in the Do-not-touch section of every implementer briefing — even when the briefing has no obvious reason to touch it. The worker may search for files broadly, follow a tool to a fuzzy match, or improvise a setup command that lands there. An explicit do-not-touch line short-circuits all of those failure paths up front.
 
 The [`docs/briefing-template.md`](../../docs/briefing-template.md) file is the canonical starting point. Copy it, fill it in, run the three checks above, then spawn. If the template gains a new required field, edit the template *and* the [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill so future briefings inherit it; do not patch a missing field into only the briefing in front of you.
+
+For the rationale behind the worktree-per-implementer rule and the cleanup-on-merge step — including the specific failure modes (stashed edits, branch-state trampling, `.twapp-*.json` fights, push collisions) it converts from "unlikely" to "unreachable" — see [`docs/playbooks/worktree-discipline.md`](../../docs/playbooks/worktree-discipline.md).
 
 ## 3. Mailbox protocol
 
@@ -620,11 +630,27 @@ status, before merging:
       is meant to prevent — an agent that finished its code work but
       never opened the PR — when that agent's self-verify slipped
       anyway.
+- [ ] **Safety-critical scoping.** If the diff adds a new feature gated
+      by a flag, ask whether a non-feature caller of the same function
+      could be affected by the flag. If yes — even hypothetically, even
+      if no such caller exists today — require the implementer to
+      thread the flag as an explicit parameter rather than reading it
+      from shared state, so the compiler enforces the scoping. See
+      [`docs/playbooks/safety-critical-scoping.md`](../../docs/playbooks/safety-critical-scoping.md)
+      for the worked pattern.
 
 If the checklist surfaces a concern, block the merge and mailbox the
 implementer with the specific input case the PR would reject — not a
 vague "please add more tests". Implementers correct fastest when handed a
 concrete failing example they can turn into a test.
+
+The four anti-patterns this checklist is built around — tolerant→strict
+rewrites, fix-too-aggressive scope, tests covering documented cases
+rather than real ones, and silent-failure paths downstream — have their
+own field guide with worked examples in
+[`docs/playbooks/review-red-flags.md`](../../docs/playbooks/review-red-flags.md).
+Reach for it when a checklist item is firing and you want a more
+concrete pattern to point the implementer at.
 
 Review quality on this pass is bounded by the coordinator's own model
 tier — holding the diff, the briefing, and the sibling-PR state

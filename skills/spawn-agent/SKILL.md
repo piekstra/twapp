@@ -487,3 +487,27 @@ the PR exists on the remote and the `-done.md` file is posted.
 ````
 
 The five mandatory sections are **Setup**, **Do-not-touch**, **PR pattern**, **Acceptance criteria**, and **Completion check**. Add **Why**, **What to ship**, and **Out of scope** in every real briefing — they're not enforced here because the failure mode they prevent (scope drift) is gentler than the ones the five mandatory sections prevent (worktree trampling and silent PR-open stalls).
+
+## Further reading
+
+The patterns above are the minimum a working spawn needs. Once you've
+spawned a few workers, four short field guides cover the recurring
+operational issues coordinators hit in practice:
+
+- [`docs/playbooks/completion-signals.md`](../../docs/playbooks/completion-signals.md) —
+  the two-channel `DONE.md` + mailbox completion signal, and why the
+  mailbox-only version isn't load-bearing on its own.
+- [`docs/playbooks/review-red-flags.md`](../../docs/playbooks/review-red-flags.md) —
+  four anti-patterns a coordinator catches before merge:
+  tolerant→strict rewrites, fix too aggressive, narrow tests, and
+  silent-failure paths downstream.
+- [`docs/playbooks/worktree-discipline.md`](../../docs/playbooks/worktree-discipline.md) —
+  why every implementer gets a dedicated worktree and what breaks
+  when two workers share one.
+- [`docs/playbooks/safety-critical-scoping.md`](../../docs/playbooks/safety-critical-scoping.md) —
+  thread feature flags as parameters rather than reading them from
+  shared state, so the compiler enforces scoping for safety-critical
+  adjacent paths.
+
+Pair these with the canonical starter at
+[`docs/briefing-template.md`](../../docs/briefing-template.md).
