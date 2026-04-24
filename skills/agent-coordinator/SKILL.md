@@ -82,6 +82,40 @@ intact. Refuses to stomp on an existing non-coordinator role without
 group on the same session at claim time; omit it to leave the current
 group untouched.
 
+## 1c. Coordinator model tier
+
+Run the coordinator on the **highest-tier model its provider offers.** For
+Claude that is opus; for other providers, the equivalent top tier. A
+coordinator's work is long-horizon (spans hours), multi-track (10+ agents
+in flight is routine), and quality-bounded by review judgment — the §6
+pre-merge governance spot-check and the §6.1 holistic-PR-review pass both
+degrade measurably on smaller models, because they require holding an
+implementer's full diff, the briefing it came from, and the current state
+of sibling PRs in working memory at once. Running the coordinator on
+sonnet (let alone haiku) saves a little inference cost and then loses much
+more to missed reviews, surprise conflicts, and scope drift that slips past.
+
+When spawning a coordinator explicitly, pin the tier:
+
+```bash
+twapp coordinator launch --model opus
+```
+
+Pin it explicitly rather than relying on the provider's default. A user
+switching their global default to sonnet mid-session should not silently
+downgrade the supervision loop. Similarly, do not downgrade a live
+coordinator to a smaller model to save budget — the false economy shows
+up as review misses on the PRs the coordinator is merging and as zombie
+hosts the reap sweep (§6.5) forgets to clean up.
+
+Worker tiering is a separate decision — covered under
+[Model selection when spawning workers](#model-selection-when-spawning-workers).
+When a coordinator spawns workers at mixed tiers, pair that with the
+[model-prefix naming convention](../spawn-agent/SKILL.md#model-prefix-in-spawn-names)
+so the coordinator can see which agents are running on which tier at a
+glance in `twapp sessions`, the Dock, and the launcher — critical for
+triage when many workers are live.
+
 ## 2. Briefing structure
 
 Each worker receives a markdown file on disk and reads it via the `spawn-agent` file-reference pattern. A complete briefing has these sections:
@@ -512,6 +546,76 @@ This pass is cheap in the common case. Skip it only for trivial docs / typo / fo
 The reviewer answers "is this code correct and safe to run?" The coordinator answers "is this repo in a state where this PR can merge now without creating downstream work?" Reviewers specialize in code; they cannot reliably track cross-PR state, stale-merge timers, agent push reliability, or repo-specific policy — that context lives with the coordinator. Conflating the two either bottlenecks the reviewer or lets governance silently get skipped.
 
 Workers have self-merge authority (§5); this governance pass is the coordinator's counterweight. If the spot-check fails, post a block-message to the worker's mailbox before they merge — they will see it on their next poll.
+
+## 6.1. Reviewing implementer PRs holistically
+
+An implementer operates with blinders on — it reads a narrow briefing,
+writes narrow tests, and a clean CI run only confirms "the cases the
+briefing considered still work". It does **not** confirm the change is
+safe against the full production input distribution. A PR that rewrites
+tolerant, forgiving logic into stricter, exhaustive logic can pass every
+test in the suite and still silently reject inputs the old code accepted,
+with the breakage surfacing far downstream as a sort that went
+lexicographic, a color that stopped applying, or a label that vanished.
+
+This pass runs **in addition to** the §6 governance spot-check — §6 asks
+"is the repo in a state to merge?", the reviewer asks "is the code
+correct?", and this pass asks **"what real inputs used to work that this
+rewrite now rejects?"** None of the others cover that question reliably;
+the coordinator is the last reviewer with enough cross-PR context to
+catch it. Run the checklist on every implementer PR regardless of CI
+status, before merging:
+
+- [ ] **Subsumption.** Does the new code accept every input the old code
+      accepted? If the diff rewrites tolerant parsing / matching logic
+      (e.g. `next()?` taking the first N tokens) into stricter logic
+      (e.g. an exhaustive `[a, b, c]` match that rejects longer inputs),
+      name which inputs now get rejected and confirm those inputs cannot
+      occur in production.
+- [ ] **Replay against recent reality.** Name 3-5 real production
+      strings / payloads / records you have seen recently. Mentally run
+      the new code against each. Any surprising rejection or different
+      output is the signal to pause.
+- [ ] **Test realism.** Are the tests sampling real data, or only the
+      canonical forms the briefing described? Narrow briefings produce
+      narrow tests almost by default — detect and fix this before merge,
+      not after.
+- [ ] **Silent-failure paths.** If the change rejects something the old
+      code accepted, what does the caller do with the rejection? A parser
+      returning `None` that propagates into a comparator / sort / label /
+      color chain will fail silently — lex sort instead of chronological,
+      wrong color, missing label — rather than raising. Follow the None
+      path at least one level out from the diff.
+- [ ] **Blast radius.** Is this on a hot path? Live-trading, live-render,
+      live-ordering, anything a user or downstream system reacts to in
+      real time? Raise the bar for the previous four checks accordingly;
+      a bug here surfaces to a human within minutes.
+- [ ] **Narrow test plan → augment before merge.** If the PR's test plan
+      is just "CI green, tests pass" with no inputs sourced from real
+      data, add at least one such test before merging. Spawn a tiny
+      follow-up implementer, mailbox the current one, or add the test
+      yourself from the coordinator's own worktree. Do not merge on
+      promises of future coverage.
+- [ ] **Ask an observer.** Before merging a high-blast-radius PR, ask the
+      user (or a human observer, or a `log-watcher` agent if one is in
+      flight): *"have you seen anything unusual since the previous
+      merge?"* Unexplained recent weirdness is a reason to pause, not to
+      accelerate.
+
+If the checklist surfaces a concern, block the merge and mailbox the
+implementer with the specific input case the PR would reject — not a
+vague "please add more tests". Implementers correct fastest when handed a
+concrete failing example they can turn into a test.
+
+Review quality on this pass is bounded by the coordinator's own model
+tier — holding the diff, the briefing, and the sibling-PR state
+simultaneously is the kind of long-context synthesis a smaller model will
+slip on. See [§1c Coordinator model tier](#1c-coordinator-model-tier)
+for why that is the opus-tier argument. And when triaging which PRs to
+scrutinize hardest, use the
+[model-prefix naming convention](../spawn-agent/SKILL.md#model-prefix-in-spawn-names)
+to spot opus-tier (safety-scoped) implementer work at a glance in the
+session list versus haiku-tier plumbing.
 
 ## 6.5. Reap sweep — proactively stopping scope-complete agents
 

@@ -140,6 +140,45 @@ The `opus`/`sonnet`/`haiku` aliases resolve to the latest model in that tier —
 
 The bundled list is a snapshot — run `ANTHROPIC_API_KEY=… twapp models refresh` to pull the current list into `~/.config/twapp/models.claude.json`. The cache takes precedence over the bundled default.
 
+## Model prefix in spawn names
+
+Prefix the `--name` you pass to `twapp work` with the worker's model tier:
+`<model>-<scope>`. Examples:
+
+- `sonnet-port-entry-markers`
+- `opus-g1-audit-db`
+- `haiku-cleanup-logs`
+
+Not enforced by the CLI — `twapp work` accepts any `--name`. It is purely a
+display convention. But `twapp sessions`, the Dock, and the launcher UI all
+render the session name verbatim, and a coordinator triaging 10+ workers
+reads those names far more often than it reads `.twapp-session.json` for
+each one. Without the prefix, `port-force-submit` and `port-company-names`
+look the same visual weight even when the first is on opus (a safety-scoped
+hazard the coordinator should review especially carefully) and the second
+is on sonnet (a trivial cherry-pick). With the prefix, the tier — and
+therefore the cost and risk — is legible at a glance:
+
+```
+Name                         Role              Directory
+opus-port-force-submit       [impl] spawned    /path/to/worktree
+sonnet-port-company-names    [impl] spawned    /path/to/other
+haiku-cleanup-logs           [impl] spawned    /path/to/third
+```
+
+Apply to every new implementer spawn. The
+[briefing template](../../docs/briefing-template.md) uses the convention in
+its `spawn_name` example, so briefings copied from the template inherit it
+automatically. Retroactively renaming already-running agents is out of
+scope — the convention is for fresh spawns.
+
+For the broader argument — why model tier matters to a coordinator in the
+first place — see
+[agent-coordinator's "Coordinator model tier"](../agent-coordinator/SKILL.md#1c-coordinator-model-tier)
+(the coordinator itself runs on opus) and
+[§6.1 Reviewing implementer PRs holistically](../agent-coordinator/SKILL.md#61-reviewing-implementer-prs-holistically)
+(why the holistic pre-merge review needs tier information visible).
+
 ## Worktree permission pre-approval
 
 A freshly spawned Claude instance reads `.claude/settings.local.json` from its working directory at startup. If that file isn't there, the first tool call blocks on an interactive permission prompt — which is a disaster for a background worker because nobody is there to answer.
@@ -399,7 +438,7 @@ id: example-feature-fix
 role: implementer
 priority: medium
 model: sonnet
-spawn_name: example-fix
+spawn_name: sonnet-example-fix  # prefix with the model tier — see "Model prefix in spawn names"
 repo: <owner>/<repo>
 ---
 
