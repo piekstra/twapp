@@ -166,6 +166,16 @@ Pass `--model` at spawn time; the flag is pass-through to the provider CLI and t
 
 Budget note: un-pinned spawns inherit the user's global default. For a batch of workers of mixed scope, pin each one explicitly so a default swap (e.g. user switching to opus while debugging) doesn't silently re-cost the whole batch.
 
+### Coordinator obligations when writing implementer briefings
+
+The [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill defines four mandatory briefing sections every implementer needs — **Setup**, **Do-not-touch**, **PR pattern**, and **Acceptance criteria** — and the rationale incident behind them. The coordinator owns whether those sections actually appear before the spawn:
+
+- **Verify before you spawn.** Before invoking `twapp work --from-file <briefing>` for any `--role implementer`, scan the briefing and confirm all four mandatory sections are present and non-empty. A grep, a quick visual pass, or both — but skipping this once will eventually cost you a trampled worktree. The §2 template above plus the [`docs/briefing-template.md`](../../docs/briefing-template.md) starter both already include the four sections; the failure mode is briefings that drift from the template, not briefings that start from it.
+- **Distinct worktree path + branch per parallel implementer.** When two or more implementers are in flight on the same repo at the same time, every briefing MUST name a distinct `git worktree add` path and a distinct branch in its Setup section. Two implementers sharing a worktree fight over `.twapp-*.json` files and stomp each other's commits; two implementers sharing a branch race-condition the push. Stamp the worktree path and branch from the worker's handle (e.g. `<repo>_<handle>` and `<scope>/<handle>`) so the uniqueness falls out of the naming convention.
+- **Always call out the live worktree.** If the target repo has a live / production / staging / `_live` worktree the user runs out of, name it by absolute path in the Do-not-touch section of every implementer briefing — even when the briefing has no obvious reason to touch it. The worker may search for files broadly, follow a tool to a fuzzy match, or improvise a setup command that lands there. An explicit do-not-touch line short-circuits all of those failure paths up front.
+
+The [`docs/briefing-template.md`](../../docs/briefing-template.md) file is the canonical starting point. Copy it, fill it in, run the three checks above, then spawn. If the template gains a new required field, edit the template *and* the [`spawn-agent`](../spawn-agent/SKILL.md#briefing-requirements) skill so future briefings inherit it; do not patch a missing field into only the briefing in front of you.
+
 ## 3. Mailbox protocol
 
 A plain-directory mailbox is the coordination bus. No database, no service — just files you can `ls`, `grep`, and `mv`.
