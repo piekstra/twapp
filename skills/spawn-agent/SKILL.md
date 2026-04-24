@@ -53,6 +53,21 @@ Notes:
 - The `Read <path> and execute.` wrapper is deliberately short — every character is literal text the shell must carry intact to Claude. Keep what's in the markdown file.
 - Treat the briefing file as the contract. Put acceptance criteria, protocol, and a handle name in it. Don't try to squeeze those into `--run`.
 
+## Briefing requirements
+
+A worker briefing is a literal contract — the worker will follow what's written and improvise where the briefing is silent. Any required step you leave out becomes a coin-flip on whether the worker invents something safe. To take that coin-flip off the table, every briefing for an implementer (any `--from-file` spawn with `--role implementer`) MUST contain the following four sections, alongside whatever role-specific content the work needs:
+
+- **Setup** — the exact bash commands the worker runs to prepare its working environment. For any briefing that touches a git repo, this MUST include a `git worktree add -b <branch> <new-worktree-path> <base-ref>` step that creates a fresh worktree OUTSIDE any shared, live, or coordinator-owned worktree. The worker's edits, commits, and pushes happen inside that new worktree — never the spawning session's cwd, never a shared `_live` / `_staging` worktree, never a peer's worktree.
+- **Do-not-touch** — an explicit list of paths the worker must not modify. At minimum, name any live / production worktree of the repo by absolute path, plus any sibling worker's worktree currently in flight. Anything the briefing doesn't explicitly authorize is implicitly out of scope; listing the dangerous paths converts the worst-case trampling failure from "unlikely" to "unreachable".
+- **PR pattern** — the branch name convention (`<scope>/<short-name>`), the commit message convention (conventional commits — `feat(...)`, `fix(...)`, `chore(...)`, `docs(...)`), and the `gh pr create` invocation shape the worker should follow.
+- **Acceptance criteria** — a concrete, self-checkable checklist the reviewer and the coordinator can both use to verify the PR delivers what the briefing asked for.
+
+### Why these four are mandatory
+
+A real incident shaped this rule. A coordinator spawned several implementers in parallel against a repo whose live working copy was the user's active worktree. The briefings did not include an explicit Setup section, so some workers defaulted to operating in the spawning session's cwd — which happened to be the live worktree. They stashed the user's uncommitted edits, left the live tree checked out on a feature branch, and trampled each other's in-progress work. None of the workers disobeyed instructions; the briefings were silent on where to work. Codifying Setup + Do-not-touch makes that silence impossible.
+
+A copy-paste template that ships these four sections out of the box lives at [`docs/briefing-template.md`](../../docs/briefing-template.md). Coordinators should start from it rather than improvising. See [`agent-coordinator`](../agent-coordinator/SKILL.md#coordinator-obligations-when-writing-implementer-briefings) for the coordinator-side obligations (verification before spawn, distinct paths for parallel implementers, calling out the live worktree). A worked-out minimum-viable briefing appears at the bottom of this file under [Minimum-viable briefing example](#minimum-viable-briefing-example).
+
 ## Role + provenance
 
 Tag each spawned session with its **role** and mark it as **agent-spawned** so later UI, dashboards, and sessions-list output can distinguish workers from the human-driven session you're typing into.
@@ -373,3 +388,50 @@ kill -TERM "$(pgrep -f 'twapp --name my-reviewer')"
 ```
 
 Replace `my-*` / `example-*` with your own names. Neither example assumes a particular project, language, or toolchain.
+
+## Minimum-viable briefing example
+
+The shape every implementer briefing has to satisfy. Use this as a sanity check; for a full copy-paste starter, use [`docs/briefing-template.md`](../../docs/briefing-template.md). All paths are placeholders — `<repo-root>` is the canonical checkout, `<repo>_<short-name>` is the per-worker worktree, `<repo>_live` is the user's live worktree.
+
+````markdown
+---
+id: example-feature-fix
+role: implementer
+priority: medium
+model: sonnet
+spawn_name: example-fix
+repo: <owner>/<repo>
+---
+
+# example-feature-fix — short description
+
+## Why
+<1–2 paragraphs: user-facing problem and how we know it's a problem.>
+
+## Setup
+```bash
+cd /path/to/<repo-root>
+git fetch origin
+git worktree add -b example-scope/example-fix /path/to/<repo>_example-fix origin/main
+cd /path/to/<repo>_example-fix
+```
+
+## Do-not-touch
+- /path/to/<repo>_live/         — user's live working worktree
+- /path/to/<repo>_other-worker/ — sibling implementer in flight
+- Any file this briefing does not explicitly name
+
+## What to ship
+<concrete deliverable with code anchors>
+
+## Acceptance criteria
+- [ ] <self-checkable item>
+- [ ] Existing test suite passes (e.g. `cargo test --lib`).
+
+## PR pattern
+- Branch: `example-scope/example-fix`
+- Commit: `fix(example-scope): one-line subject` (conventional commits)
+- Open with `gh pr create --title "fix(example-scope): subject" --body "$(cat <<'EOF' … EOF)"`
+````
+
+The four mandatory sections are **Setup**, **Do-not-touch**, **PR pattern**, and **Acceptance criteria**. Add **Why**, **What to ship**, and **Out of scope** in every real briefing — they're not enforced here because the failure mode they prevent (scope drift) is gentler than the one the four mandatory sections prevent (worktree trampling).
