@@ -6,10 +6,12 @@ is required for an implementer briefing — see the [`spawn-agent`](../skills/sp
 skill for why each one earns its place, and the [`agent-coordinator`](../skills/agent-coordinator/SKILL.md#coordinator-obligations-when-writing-implementer-briefings)
 skill for the coordinator-side checks to run before spawning.
 
-The four sections that are load-bearing for safety — the ones whose absence
-caused real worktree-trampling incidents — are **Setup**, **Do-not-touch**,
-**PR pattern**, and **Acceptance criteria**. Do not delete them, even if
-the work feels too small to need them.
+The five sections that are load-bearing — **Setup**, **Do-not-touch**,
+**PR pattern**, **Acceptance criteria**, and **Completion check** — each
+close a distinct real failure mode. The first four were codified after a
+worktree-trampling incident; **Completion check** was added after multiple
+agents silently stalled after their last commit without opening their PR.
+Do not delete them, even if the work feels too small to need them.
 
 ```text
 <repo-root>      = the canonical checkout of the target repo
@@ -86,6 +88,24 @@ pointing at existing code.>
 - [ ] Existing test suite passes (e.g. `cargo test --lib`,
       `npx tsc --noEmit` if any frontend file was touched).
 
+## Completion check — DO NOT SKIP
+
+Before stopping, run:
+
+```bash
+git push -u origin <your-branch>            # push if not already
+gh pr view <your-branch> --json number,url  # confirm PR exists with a number
+```
+
+Then post `<shared-dir>/mailbox/inbox/<ISO-Z>-<your-name>-done.md` with:
+- PR number + URL
+- Branch name
+- Acceptance-criteria checklist status
+
+Agent is NOT done until BOTH:
+- `gh pr view` returns a real PR number, AND
+- the `-done.md` mailbox file exists.
+
 ## Out of scope
 
 - <Things the worker MUST NOT expand into.>
@@ -126,8 +146,8 @@ pointing at existing code.>
 Before invoking `twapp work --from-file <briefing> --role implementer`,
 the coordinator MUST confirm:
 
-1. The four mandatory sections (**Setup**, **Do-not-touch**, **PR pattern**,
-   **Acceptance criteria**) are present and non-empty.
+1. The five mandatory sections (**Setup**, **Do-not-touch**, **PR pattern**,
+   **Acceptance criteria**, **Completion check**) are present and non-empty.
 2. The Setup section's `git worktree add` path is unique among all
    currently in-flight implementers on the same repo, and the branch name
    does not collide with another in-flight branch.
