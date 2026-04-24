@@ -30,7 +30,7 @@ id: <kebab-case-id>
 role: implementer
 priority: low | medium | high | critical
 model: sonnet | haiku | opus
-spawn_name: <short-name>
+spawn_name: <model>-<scope>  # e.g. sonnet-scope-here — prefix with the model tier so `twapp sessions` / Dock / launcher show tier at a glance (see spawn-agent's "Model prefix in spawn names")
 repo: <owner>/<repo>
 ---
 
