@@ -43,3 +43,16 @@ export function isColabSession(session: {
 export function isCoordinatorSession(session: Pick<LauncherSession, "role">): boolean {
   return session.role === "coordinator";
 }
+
+/**
+ * Whether a session can send mailbox messages. The mailbox is only
+ * meaningful for sessions that have a labeled co-lab role — plain
+ * non-co-lab sessions (`role` is null / "" / "-") have no inbox of
+ * their own and shouldn't see the Send Message UI. The check is
+ * intentionally permissive on the upper bound: any future role we add
+ * (beyond the current archetypes) implies mailbox participation, so
+ * "truthy and not the placeholder dash" is the right gate.
+ */
+export function canSendMessage(role: string | null | undefined): boolean {
+  return !!role && role !== "-";
+}
