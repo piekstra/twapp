@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isColabSession, isCoordinatorSession, COLAB_ROLE_ARCHETYPES } from "./colab";
+import { isColabSession, isCoordinatorSession, canSendMessage, COLAB_ROLE_ARCHETYPES } from "./colab";
 
 describe("isColabSession", () => {
   it("plain user session with no role and no provenance is not co-lab", () => {
@@ -42,5 +42,26 @@ describe("isCoordinatorSession", () => {
 
   it("null / missing role is not coordinator", () => {
     expect(isCoordinatorSession({ role: null })).toBe(false);
+  });
+});
+
+describe("canSendMessage", () => {
+  it("rejects null / undefined / empty / placeholder dash — sessions with no mailbox", () => {
+    expect(canSendMessage(null)).toBe(false);
+    expect(canSendMessage(undefined)).toBe(false);
+    expect(canSendMessage("")).toBe(false);
+    expect(canSendMessage("-")).toBe(false);
+  });
+
+  it("accepts the current co-lab role archetypes", () => {
+    expect(canSendMessage("coordinator")).toBe(true);
+    expect(canSendMessage("implementer")).toBe(true);
+    expect(canSendMessage("reviewer")).toBe(true);
+  });
+
+  it("accepts forward-compat roles we haven't named yet", () => {
+    // The gate is intentionally permissive on the upper bound — any
+    // labeled role we add later implies mailbox participation.
+    expect(canSendMessage("log-watcher")).toBe(true);
   });
 });

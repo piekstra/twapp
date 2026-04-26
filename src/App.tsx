@@ -23,6 +23,7 @@ import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikel
 import { remarkAutolinkFilePaths } from "./utils/markdown";
 import { buildResumeCommand } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
+import { canSendMessage } from "./utils/colab";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
 import PromptSections from "./components/PromptSections";
 import type { EditingPromptState } from "./components/PromptSections";
@@ -571,16 +572,6 @@ function App() {
         setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: config.name } : t));
       }
 
-      // Role + colab_group drive the coordinator fleet pane. Silent on failure —
-      // a missing/unparseable session file just means "no fleet pane here".
-      invoke<Record<string, unknown> | null>("get_session_info").then((data) => {
-        if (!data) return;
-        const role = typeof data.role === "string" ? data.role : null;
-        const group = typeof data.colab_group === "string" ? data.colab_group : null;
-        setSessionRole(role);
-        setSessionColabGroup(group);
-      }).catch(() => {});
-
       // Launcher mode — don't spawn shell or initialize terminal peripherals
       if (!config.command && !config.session_id) {
         return;
@@ -665,6 +656,34 @@ function App() {
       term.dispose();
       terminalInstance.current = null;
       fitAddon.current = null;
+    };
+  }, []);
+
+  // Poll session-info so live edits to `.twapp-session.json` (notably
+  // `twapp coordinator claim` flipping `role` from null → "coordinator")
+  // propagate to the running window without a reload. The file is tiny
+  // (~200 bytes) and `role` changes are rare, so a 2s poll is cheap.
+  // Silent on failure — a missing/unparseable session file just means
+  // "no fleet pane here" and the next tick will retry.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await invoke<Record<string, unknown> | null>("get_session_info");
+        if (cancelled) return;
+        const nextRole = data && typeof data.role === "string" ? data.role : null;
+        const nextGroup = data && typeof data.colab_group === "string" ? data.colab_group : null;
+        setSessionRole((prev) => (prev !== nextRole ? nextRole : prev));
+        setSessionColabGroup((prev) => (prev !== nextGroup ? nextGroup : prev));
+      } catch {
+        /* ignore; next tick will retry */
+      }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
@@ -2274,9 +2293,11 @@ function App() {
                     <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setShowForkDialog(true); }}>
                       Fork Session...
                     </button>
-                    <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setComposerOpen(true); }}>
-                      Send Message... <span className="actions-menu-shortcut">⌘⇧M</span>
-                    </button>
+                    {canSendMessage(sessionRole) && (
+                      <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setComposerOpen(true); }}>
+                        Send Message... <span className="actions-menu-shortcut">⌘⇧M</span>
+                      </button>
+                    )}
                     <div className="actions-menu-separator" />
                     <button
                       className="actions-menu-item"
