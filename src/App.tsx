@@ -21,7 +21,7 @@ import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
 import { remarkAutolinkFilePaths } from "./utils/markdown";
-import { buildResumeCommand } from "./utils/session";
+import { buildResumeCommand, buildSessionFieldsArgs } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
 import { canSendMessage } from "./utils/colab";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
@@ -1188,19 +1188,17 @@ function App() {
     setSessionFieldsSaving(true);
     setSessionFieldsError(null);
     try {
-      const args: Record<string, string> = { directory: appConfig.cwd };
-      if (sessionFields.name !== sessionFieldsOriginal?.name) args.name = sessionFields.name;
-      if (sessionFields.session_id !== sessionFieldsOriginal?.session_id) args.session_id = sessionFields.session_id;
-      if (sessionFields.claude_cwd !== sessionFieldsOriginal?.claude_cwd) args.claude_cwd = sessionFields.claude_cwd;
-      if (sessionFields.ticket_key !== sessionFieldsOriginal?.ticket_key) args.ticket_key = sessionFields.ticket_key;
+      // camelCase keys are required: Tauri maps them onto the snake_case Rust
+      // params. snake_case keys are silently dropped and never reach disk.
+      const args = buildSessionFieldsArgs(appConfig.cwd, sessionFields, sessionFieldsOriginal);
       await invoke("update_session_fields", args);
       // Update local state
       if (args.name !== undefined) {
         setAppConfig((prev) => prev ? { ...prev, name: args.name } : prev);
         setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: args.name } : t));
       }
-      if (args.session_id !== undefined) {
-        setAppConfig((prev) => prev ? { ...prev, session_id: args.session_id } : prev);
+      if (args.sessionId !== undefined) {
+        setAppConfig((prev) => prev ? { ...prev, session_id: args.sessionId } : prev);
       }
       setSessionFieldsOriginal({ ...sessionFields });
       // A session_id change writes a `manual_edit` audit entry — refresh.
