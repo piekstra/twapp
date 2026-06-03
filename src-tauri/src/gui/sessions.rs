@@ -797,11 +797,13 @@ pub async fn rename_session(directory: String, new_name: String) -> Result<(), S
             let _ = std::fs::rename(&old_prompts, &new_prompts);
         }
 
-        // Remove old instance bundle (recreated on next launch)
+        // Remove old instance bundle (recreated on next launch) and its
+        // restore-args sidecar so a restart can't revive the old-named window.
         let home = dirs::home_dir().unwrap_or_default();
         let old_app = home
             .join(".config/twapp/instances")
             .join(format!("{}.app", old_safe));
+        crate::cli::app_bundle::remove_instance_args(&old_app);
         if old_app.exists() {
             let _ = std::fs::remove_dir_all(&old_app);
         }
@@ -947,11 +949,12 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
         })();
     }
 
-    // 3. Clean up instance .app bundle
+    // 3. Clean up instance .app bundle and its restore-args sidecar
     let safe_name = sanitize_instance_name(&session_data.name);
     let instance_app = home
         .join(".config/twapp/instances")
         .join(format!("{}.app", safe_name));
+    crate::cli::app_bundle::remove_instance_args(&instance_app);
     if instance_app.exists() {
         let _ = std::fs::remove_dir_all(&instance_app);
     }
