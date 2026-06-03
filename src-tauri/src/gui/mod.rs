@@ -31,7 +31,78 @@ fn get_app_config(config: tauri::State<'_, GuiArgs>) -> GuiArgs {
     config.inner().clone()
 }
 
+/// Recover a session window's launch args after a macOS restart.
+///
+/// A freshly launched session window always carries its session identity in
+/// argv. Bare `GuiArgs` means either the real launcher (master bundle, opened
+/// from Spotlight) or a restart relaunching a session-window bundle with no
+/// argv. Only the latter runs from a per-instance bundle under `instances/`,
+/// so that is our cue to restore the args saved at launch — re-parsed through
+/// the same clap parser a fresh launch uses, keeping the two in lockstep.
+///
+/// The saved args are only a starting point: they reliably carry the `cwd`,
+/// but a session's id/name/provider can change in the GUI after launch (the
+/// canonical record is `.twapp-session.json`, not the frozen launch args). So
+/// we overlay that file before returning, ensuring restored windows reflect
+/// the latest edits rather than whatever was true the moment they launched.
+fn restore_args_if_relaunched(args: GuiArgs) -> GuiArgs {
+    let bare = args.cwd.is_none() && args.command.is_none() && args.session_id.is_none();
+    if !bare {
+        return args;
+    }
+    let Some(saved) = crate::cli::app_bundle::current_instance_args() else {
+        return args;
+    };
+    let mut argv = vec!["twapp".to_string()];
+    argv.extend(saved);
+    let mut restored = match <crate::Cli as clap::Parser>::try_parse_from(&argv) {
+        Ok(cli) => cli.gui,
+        Err(_) => return args,
+    };
+    refresh_from_session_file(&mut restored);
+    restored
+}
+
+/// Overlay the live `.twapp-session.json` onto restored launch args so
+/// post-launch GUI edits survive a restart: a manually-changed or
+/// later-captured session id, a rename, a provider switch. The frozen
+/// `--command` is kept only when no provider session id is known yet (e.g. a
+/// brand-new session caught mid-capture) — otherwise we adopt the freshest id
+/// and let the frontend rebuild the resume command from it.
+fn refresh_from_session_file(args: &mut GuiArgs) {
+    let Some(cwd) = args.cwd.clone() else {
+        return;
+    };
+    let Ok(session) = crate::cli::session::read_session(&std::path::PathBuf::from(&cwd)) else {
+        return;
+    };
+
+    let provider = session.provider.unwrap_or(args.provider);
+    args.provider = provider;
+    if !session.name.is_empty() {
+        args.name = session.name.clone();
+    }
+    if !session.color.is_empty() {
+        args.color = Some(session.color.clone());
+    }
+    if let Some(chrome) = session.use_chrome {
+        args.chrome = chrome;
+    }
+    if let Some(override_theme) = session.override_terminal_theme {
+        args.override_terminal_theme = override_theme;
+    }
+
+    if let Some(id) = session.display_session_id(provider) {
+        args.session_id = Some(id);
+        // Clear the snapshot command so the frontend rebuilds `claude --resume
+        // <id>` (or the codex equivalent) from the id we just adopted.
+        args.command = None;
+    }
+}
+
 pub fn run(args: GuiArgs) {
+    let args = restore_args_if_relaunched(args);
+
     // Discover user's PATH from login shell (GUI apps inherit minimal PATH)
     shell_env::init_path();
 
@@ -299,4 +370,107 @@ pub fn run(args: GuiArgs) {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::cli::session::{write_session, SessionData};
+
+    fn unique_dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("twapp-restore-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn session_with(session_id: &str, name: &str) -> SessionData {
+        SessionData {
+            session_id: session_id.into(),
+            name: name.into(),
+            color: String::new(),
+            ticket_key: None,
+            claude_cwd: String::new(),
+            created: String::new(),
+            last_resumed: None,
+            provider: None,
+            codex_session_id: None,
+            codex_cwd: None,
+            forked_from: None,
+            imported: None,
+            imported_from: None,
+            use_chrome: None,
+            override_terminal_theme: None,
+            role: None,
+            provenance: None,
+            colab_group: None,
+        }
+    }
+
+    fn args_for(dir: &std::path::Path, extra: &[&str]) -> GuiArgs {
+        let mut argv = vec![
+            "twapp".to_string(),
+            "--cwd".to_string(),
+            dir.to_string_lossy().to_string(),
+        ];
+        argv.extend(extra.iter().map(|s| s.to_string()));
+        <crate::Cli as clap::Parser>::try_parse_from(&argv)
+            .unwrap()
+            .gui
+    }
+
+    // The headline fix: a session id edited (or captured) in the GUI after
+    // launch lives in `.twapp-session.json`, so a restart must adopt it over
+    // the stale launch-time id and rebuild the resume command.
+    #[test]
+    fn adopts_edited_session_id_and_rebuilds_command() {
+        let dir = unique_dir();
+        write_session(&dir, &session_with("new-id", "Renamed")).unwrap();
+        let mut args = args_for(
+            &dir,
+            &[
+                "--session-id",
+                "old-id",
+                "--command",
+                "claude --resume old-id",
+                "--name",
+                "Old",
+            ],
+        );
+
+        refresh_from_session_file(&mut args);
+
+        assert_eq!(args.session_id.as_deref(), Some("new-id"));
+        assert_eq!(args.command, None, "command cleared so frontend rebuilds resume");
+        assert_eq!(args.name, "Renamed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A brand-new session caught before its id is captured has no provider id
+    // in the file yet, so we must keep the frozen launch command as a fallback.
+    #[test]
+    fn keeps_frozen_command_when_no_session_id_yet() {
+        let dir = unique_dir();
+        write_session(&dir, &session_with("", "Fresh")).unwrap();
+        let mut args = args_for(&dir, &["--command", "claude"]);
+
+        refresh_from_session_file(&mut args);
+
+        assert_eq!(args.session_id, None);
+        assert_eq!(args.command.as_deref(), Some("claude"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_session_file_leaves_args_untouched() {
+        let dir = std::env::temp_dir().join(format!("twapp-restore-missing-{}", uuid::Uuid::new_v4()));
+        let mut args = args_for(
+            &dir,
+            &["--session-id", "keep-id", "--command", "claude --resume keep-id"],
+        );
+
+        refresh_from_session_file(&mut args);
+
+        assert_eq!(args.session_id.as_deref(), Some("keep-id"));
+        assert_eq!(args.command.as_deref(), Some("claude --resume keep-id"));
+    }
 }
