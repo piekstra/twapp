@@ -1,0 +1,11 @@
+name: implementation
+description: Reviews Rust changes for idiomatic implementation, correctness, and tests that prove the changed behavior.
+model_tier: medium
+effort: medium
+file_globs:
+  - "**/*.rs"
+  - "Cargo.toml"
+  - "Cargo.lock"
+applies_when:
+  - A change touches Rust implementation, CLI surface, dependencies, or behavior that should be proven by tests.
+needs_full_file_content: false
