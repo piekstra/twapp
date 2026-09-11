@@ -1239,8 +1239,17 @@ function App() {
         setAppConfig((prev) => prev ? { ...prev, name: args.name } : prev);
         setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: args.name } : t));
       }
-      if (args.sessionId !== undefined) {
-        setAppConfig((prev) => prev ? { ...prev, session_id: args.sessionId } : prev);
+      // Provider and session_id have to move together: Restart Terminal builds
+      // its resume command from both, and a new harness paired with the old
+      // one's conversation id resumes the wrong conversation.
+      if (args.sessionId !== undefined || args.provider !== undefined) {
+        setAppConfig((prev) => prev ? {
+          ...prev,
+          ...(args.provider !== undefined ? { provider: args.provider as AgentProvider } : {}),
+          ...(args.provider !== undefined || args.sessionId !== undefined
+            ? { session_id: (args.sessionId ?? sessionFields.session_id) || null }
+            : {}),
+        } : prev);
       }
       setSessionFieldsOriginal({ ...sessionFields });
       // A session_id change writes a `manual_edit` audit entry — refresh.

@@ -1748,7 +1748,6 @@ function SessionLauncher({
                   type="button"
                   role="radio"
                   aria-checked={newSessionProvider === provider}
-                  aria-pressed={newSessionProvider === provider}
                   className={`launcher-sort-btn${newSessionProvider === provider ? " active" : ""}`}
                   onClick={() => {
                     setNewSessionProvider(provider);

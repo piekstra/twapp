@@ -973,7 +973,8 @@ pub async fn update_session_fields(
         data.name = n.clone();
     }
     if let Some(ref sid) = session_id {
-        match data.last_provider() {
+        let target = data.last_provider();
+        match target {
             AgentProvider::Claude => data.session_id = sid.clone(),
             AgentProvider::Codex => {
                 data.codex_session_id = if sid.is_empty() {
@@ -989,6 +990,11 @@ pub async fn update_session_fields(
                     Some(sid.clone())
                 };
             }
+        }
+        // Typing a conversation ID in Session Config settles the migration the
+        // same way a captured one does, so the staged source must not survive it.
+        if data.native_session_id(target).is_some() {
+            data.migration_source_provider = None;
         }
     }
     if let Some(ref cwd) = claude_cwd {

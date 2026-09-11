@@ -171,11 +171,19 @@ impl SessionData {
     }
 
     pub fn needs_migration(&self, preferred: AgentProvider) -> bool {
-        self.native_session_id(preferred).is_none()
-            && self.migration_source(preferred).is_some()
+        self.migration_source(preferred).is_some()
     }
 
+    /// The harness whose context a migration should carry into `target`.
+    ///
+    /// A target that already owns a native conversation is resumed directly, so
+    /// it has no migration source even when another harness also holds a handle.
+    /// Without that guard every launch of a session with two handles would
+    /// re-inject the migration preamble into an intact conversation.
     pub fn migration_source(&self, target: AgentProvider) -> Option<AgentProvider> {
+        if self.native_session_id(target).is_some() {
+            return None;
+        }
         self.migration_source_provider
             .filter(|source| *source != target && self.native_session_id(*source).is_some())
             .or_else(|| {
@@ -299,16 +307,19 @@ pub fn build_antigravity_run_command(
     format!("agy{}{}", model_flag, conversation_flag)
 }
 
-pub fn find_antigravity_session_for_cwd(cwd: &str) -> Option<String> {
-    let path = dirs::home_dir()?
-        .join(".gemini/antigravity-cli/cache/last_conversations.json");
-    let content = std::fs::read_to_string(path).ok()?;
+fn find_antigravity_session_for_cwd_in(cache_path: &Path, cwd: &str) -> Option<String> {
+    let content = std::fs::read_to_string(cache_path).ok()?;
     let cache: serde_json::Value = serde_json::from_str(&content).ok()?;
     cache
         .get(cwd)
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+pub fn find_antigravity_session_for_cwd(cwd: &str) -> Option<String> {
+    let path = dirs::home_dir()?.join(".gemini/antigravity-cli/cache/last_conversations.json");
+    find_antigravity_session_for_cwd_in(&path, cwd)
 }
 
 #[cfg(test)]
@@ -905,6 +916,58 @@ mod tests {
             data.native_session_id(AgentProvider::Codex),
             Some("codex-456")
         );
+    }
+
+    #[test]
+    fn launching_a_harness_that_already_has_a_conversation_needs_no_migration() {
+        let mut data = base_session();
+        data.set_provider_session(
+            AgentProvider::Codex,
+            "codex-456".to_string(),
+            "/tmp/demo".to_string(),
+        );
+
+        // Both handles are present, so either harness resumes its own
+        // conversation and neither carries migration context.
+        assert_eq!(data.migration_source(AgentProvider::Claude), None);
+        assert_eq!(data.migration_source(AgentProvider::Codex), None);
+        assert!(!data.needs_migration(AgentProvider::Claude));
+        assert!(!data.needs_migration(AgentProvider::Codex));
+
+        // A third harness with no handle still migrates from one of them.
+        assert!(data
+            .migration_source(AgentProvider::Antigravity)
+            .is_some());
+    }
+
+    #[test]
+    fn antigravity_cache_lookup_matches_only_an_exact_cwd_with_a_value() {
+        let dir = std::env::temp_dir().join(format!("twapp-agy-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("last_conversations.json");
+        std::fs::write(
+            &cache,
+            r#"{"/tmp/demo": "conversation-123", "/tmp/empty": ""}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_antigravity_session_for_cwd_in(&cache, "/tmp/demo"),
+            Some("conversation-123".to_string())
+        );
+        assert_eq!(find_antigravity_session_for_cwd_in(&cache, "/tmp/empty"), None);
+        assert_eq!(find_antigravity_session_for_cwd_in(&cache, "/tmp/missing"), None);
+        assert_eq!(find_antigravity_session_for_cwd_in(&cache, "/tmp/dem"), None);
+
+        std::fs::write(&cache, "not json").unwrap();
+        assert_eq!(find_antigravity_session_for_cwd_in(&cache, "/tmp/demo"), None);
+
+        assert_eq!(
+            find_antigravity_session_for_cwd_in(&dir.join("absent.json"), "/tmp/demo"),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

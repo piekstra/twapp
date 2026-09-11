@@ -1379,13 +1379,24 @@ fn atty_stdin() -> bool {
     std::io::stdin().is_terminal()
 }
 
-fn select_provider_for_new_session(
+/// Outcome of the harness-selection rules for a new session.
+#[derive(Debug, PartialEq, Eq)]
+enum ProviderChoice {
+    Chosen(AgentProvider),
+    /// Several harnesses are configured and the caller must ask the user.
+    NeedsPrompt,
+}
+
+/// Decide which harness a new session uses, from data alone.
+///
+/// Split from the CLI shell so the rules are testable without a config file
+/// or a TTY; the caller owns the numbered prompt and the stdin read.
+fn resolve_new_session_provider(
+    configured: &[AgentProvider],
     explicit: Option<AgentProvider>,
     has_from_file: bool,
-) -> Result<AgentProvider, String> {
-    use std::io::{BufRead, Write};
-
-    let configured = config::get_configured_agent_providers();
+    interactive: bool,
+) -> Result<ProviderChoice, String> {
     if let Some(provider) = explicit {
         if !configured.contains(&provider) {
             return Err(format!(
@@ -1396,22 +1407,22 @@ fn select_provider_for_new_session(
         if has_from_file && provider != AgentProvider::Claude {
             return Err("--from-file currently requires the Claude harness".to_string());
         }
-        return Ok(provider);
+        return Ok(ProviderChoice::Chosen(provider));
     }
 
     // Agent-spawned briefing sessions predate multi-harness selection and
     // carry Claude-specific permission flags. Keep that automation stable.
     if has_from_file {
         if configured.contains(&AgentProvider::Claude) {
-            return Ok(AgentProvider::Claude);
+            return Ok(ProviderChoice::Chosen(AgentProvider::Claude));
         }
         return Err("--from-file requires Claude to be configured".to_string());
     }
 
     if configured.len() == 1 {
-        return Ok(configured[0]);
+        return Ok(ProviderChoice::Chosen(configured[0]));
     }
-    if !atty_stdin() {
+    if !interactive {
         return Err(format!(
             "multiple harnesses are configured ({}); pass --provider",
             configured
@@ -1420,6 +1431,20 @@ fn select_provider_for_new_session(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
+    }
+    Ok(ProviderChoice::NeedsPrompt)
+}
+
+fn select_provider_for_new_session(
+    explicit: Option<AgentProvider>,
+    has_from_file: bool,
+) -> Result<AgentProvider, String> {
+    use std::io::{BufRead, Write};
+
+    let configured = config::get_configured_agent_providers();
+    match resolve_new_session_provider(&configured, explicit, has_from_file, atty_stdin())? {
+        ProviderChoice::Chosen(provider) => return Ok(provider),
+        ProviderChoice::NeedsPrompt => {}
     }
 
     eprintln!("Choose an agent harness for this session:");
@@ -2930,5 +2955,56 @@ mod colab_group_tests {
     #[allow(dead_code)]
     fn _touch_create_session_core() {
         let _ = create_session_core;
+    }
+}
+
+#[cfg(test)]
+mod provider_selection_tests {
+    use super::*;
+
+    const CLAUDE: AgentProvider = AgentProvider::Claude;
+    const CODEX: AgentProvider = AgentProvider::Codex;
+    const AGY: AgentProvider = AgentProvider::Antigravity;
+
+    #[test]
+    fn explicit_provider_must_be_configured() {
+        assert!(resolve_new_session_provider(&[CLAUDE], Some(CODEX), false, true).is_err());
+        assert_eq!(
+            resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), false, true),
+            Ok(ProviderChoice::Chosen(CODEX))
+        );
+    }
+
+    #[test]
+    fn from_file_requires_claude() {
+        assert!(resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), true, true).is_err());
+        assert_eq!(
+            resolve_new_session_provider(&[CLAUDE, CODEX], None, true, true),
+            Ok(ProviderChoice::Chosen(CLAUDE))
+        );
+        assert!(resolve_new_session_provider(&[CODEX, AGY], None, true, true).is_err());
+    }
+
+    #[test]
+    fn a_single_configured_harness_is_chosen_without_prompting() {
+        assert_eq!(
+            resolve_new_session_provider(&[CODEX], None, false, true),
+            Ok(ProviderChoice::Chosen(CODEX))
+        );
+        assert_eq!(
+            resolve_new_session_provider(&[CODEX], None, false, false),
+            Ok(ProviderChoice::Chosen(CODEX))
+        );
+    }
+
+    #[test]
+    fn several_configured_harnesses_prompt_only_when_interactive() {
+        assert_eq!(
+            resolve_new_session_provider(&[CLAUDE, CODEX], None, false, true),
+            Ok(ProviderChoice::NeedsPrompt)
+        );
+        let error = resolve_new_session_provider(&[CLAUDE, CODEX], None, false, false).unwrap_err();
+        assert!(error.contains("--provider"), "{}", error);
+        assert!(error.contains("claude, codex"), "{}", error);
     }
 }
