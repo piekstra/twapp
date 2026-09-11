@@ -53,10 +53,15 @@ pub fn read_session_id(config: &GuiArgs) -> Option<String> {
                     .get("codex_session_id")
                     .and_then(|value| value.as_str())
                     .filter(|value| !value.is_empty());
+                let antigravity_id = v
+                    .get("antigravity_session_id")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty());
 
                 match config.provider {
-                    AgentProvider::Codex => codex_id.or(claude_id),
-                    AgentProvider::Claude => claude_id.or(codex_id),
+                    AgentProvider::Codex => codex_id.or(claude_id).or(antigravity_id),
+                    AgentProvider::Claude => claude_id.or(codex_id).or(antigravity_id),
+                    AgentProvider::Antigravity => antigravity_id.or(claude_id).or(codex_id),
                 }
                 .map(String::from)
             })
@@ -170,6 +175,7 @@ mod tests {
             session_id: None,
             provider: AgentProvider::Codex,
             capture_started_at: None,
+            capture_previous_session_id: None,
             chrome: false,
             override_terminal_theme: false,
         };

@@ -66,18 +66,21 @@ fn restore_args_if_relaunched(args: GuiArgs) -> GuiArgs {
 /// Overlay the live `.twapp-session.json` onto restored launch args so
 /// post-launch GUI edits survive a restart: a manually-changed or
 /// later-captured session id, a rename, a provider switch. The frozen
-/// `--command` is kept only when no provider session id is known yet (e.g. a
-/// brand-new session caught mid-capture) — otherwise we adopt the freshest id
-/// and let the frontend rebuild the resume command from it.
+/// `--command` is kept only when no provider session id is known and the
+/// provider has not changed (e.g. a brand-new session caught mid-capture).
+/// A staged migration rebuilds the target command and preload instead of
+/// reusing the source harness command.
 fn refresh_from_session_file(args: &mut GuiArgs) {
     let Some(cwd) = args.cwd.clone() else {
         return;
     };
-    let Ok(session) = crate::cli::session::read_session(&std::path::PathBuf::from(&cwd)) else {
+    let work_dir = std::path::PathBuf::from(&cwd);
+    let Ok(mut session) = crate::cli::session::read_session(&work_dir) else {
         return;
     };
 
     let provider = session.provider.unwrap_or(args.provider);
+    let provider_changed = provider != args.provider;
     args.provider = provider;
     if !session.name.is_empty() {
         args.name = session.name.clone();
@@ -97,6 +100,33 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
         // Clear the snapshot command so the frontend rebuilds `claude --resume
         // <id>` (or the codex equivalent) from the id we just adopted.
         args.command = None;
+    } else if provider_changed {
+        let migration_prompt = session
+            .migration_source(provider)
+            .map(|source| sessions::build_migration_prompt(&session, &work_dir, source, provider));
+        if let Ok((command, session_id)) = sessions::build_provider_command(
+            provider,
+            &session,
+            &work_dir,
+            migration_prompt.as_deref(),
+            false,
+        ) {
+            args.command = Some(command);
+            args.session_id = session_id.clone();
+            if provider == crate::cli::session::AgentProvider::Claude {
+                if let Some(session_id) = session_id {
+                    session.set_provider_session(provider, session_id, cwd.clone());
+                    let _ = crate::cli::session::write_session(&work_dir, &session);
+                }
+            } else {
+                args.capture_started_at = Some(chrono::Utc::now().to_rfc3339());
+                if provider == crate::cli::session::AgentProvider::Antigravity {
+                    args.prefill = migration_prompt;
+                    args.capture_previous_session_id =
+                        crate::cli::session::find_antigravity_session_for_cwd(&cwd);
+                }
+            }
+        }
     }
 }
 
@@ -167,8 +197,11 @@ pub fn run(args: GuiArgs) {
             sessions::launch_session,
             sessions::start_codex_session_capture,
             sessions::sync_codex_session_id,
+            sessions::start_antigravity_session_capture,
+            sessions::sync_antigravity_session_id,
             config::get_global_config,
             config::save_global_config,
+            config::discover_agent_harnesses,
             config::get_font_family_preference,
             config::get_session_color_preference,
             config::set_session_color_preference,
@@ -395,6 +428,9 @@ mod restore_tests {
             provider: None,
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
@@ -457,6 +493,35 @@ mod restore_tests {
 
         assert_eq!(args.session_id, None);
         assert_eq!(args.command.as_deref(), Some("claude"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn provider_switch_does_not_reuse_source_harness_command() {
+        let dir = unique_dir();
+        let mut session = session_with("claude-id", "Migrating");
+        session.select_provider(crate::cli::session::AgentProvider::Codex);
+        write_session(&dir, &session).unwrap();
+        let mut args = args_for(
+            &dir,
+            &[
+                "--provider",
+                "claude",
+                "--session-id",
+                "claude-id",
+                "--command",
+                "claude --resume claude-id",
+            ],
+        );
+
+        refresh_from_session_file(&mut args);
+
+        assert_eq!(args.provider, crate::cli::session::AgentProvider::Codex);
+        assert_eq!(args.session_id, None);
+        assert!(args.command.as_deref().is_some_and(|command| {
+            command.starts_with("codex -C") && command.contains("migrating from claude to codex")
+        }));
+        assert!(args.capture_started_at.is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,4 +1,6 @@
-export type SessionProvider = "claude" | "codex";
+import type { AgentProvider } from "../types";
+
+export type SessionProvider = AgentProvider;
 
 export function shellEscapeSingleQuoted(value: string): string {
   return value.replace(/'/g, "'\\''");
@@ -17,6 +19,14 @@ export function buildResumeCommand(
       return `codex resume '${safeSessionId}' -C '${safeCwd}'`;
     }
     return `codex -C '${safeCwd}'`;
+  }
+
+  if (provider === "antigravity") {
+    if (sessionId) {
+      const safeSessionId = shellEscapeSingleQuoted(sessionId);
+      return `agy --conversation '${safeSessionId}'`;
+    }
+    return "agy";
   }
 
   if (sessionId) {
@@ -39,6 +49,7 @@ export type SessionFieldValues = {
   session_id: string;
   claude_cwd: string;
   ticket_key: string;
+  provider: AgentProvider;
 };
 
 /**
@@ -61,5 +72,6 @@ export function buildSessionFieldsArgs(
   if (fields.session_id !== original?.session_id) args.sessionId = fields.session_id;
   if (fields.claude_cwd !== original?.claude_cwd) args.claudeCwd = fields.claude_cwd;
   if (fields.ticket_key !== original?.ticket_key) args.ticketKey = fields.ticket_key;
+  if (fields.provider !== original?.provider) args.provider = fields.provider;
   return args;
 }

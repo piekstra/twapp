@@ -1261,12 +1261,19 @@ twapp install-gui /tmp/twapp.app
 ```yaml
 theme: system          # light | dark | system
 session_color: random  # random | hex (e.g. "#ffe0e0")
-agent_provider: claude # claude | codex
 defaults:
   work_directory: ~/projects
   jira_project: PROJ
   github_repo: owner/repo
+  agent_providers:     # harnesses offered for each new session
+    - claude
+    - codex
+    - antigravity
 ```
+
+The launcher Settings page can search for supported harness CLIs on `PATH` and configure the installed ones. New GUI sessions show a harness picker. With multiple configured harnesses, `twapp work` prompts in an interactive terminal or accepts `--provider claude|codex|antigravity`.
+
+Each session remembers its active harness and keeps separate native conversation IDs for Claude, Codex, and Antigravity. Change the harness in Session Config, save, then close and reopen the window. If the target already has a conversation, twapp resumes it. Otherwise twapp starts it with migration context while retaining the source conversation, so switching back remains possible.
 
 ### File Storage
 

@@ -16,7 +16,7 @@ import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
-import type { AppConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
+import type { AgentProvider, AppConfig, GlobalConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
@@ -85,11 +85,13 @@ function App() {
   const [forkError, setForkError] = useState<string | null>(null);
 
   // Session config editing state
-  type SessionFieldValues = { name: string; session_id: string; claude_cwd: string; ticket_key: string };
+  type SessionFieldValues = { name: string; session_id: string; claude_cwd: string; ticket_key: string; provider: AgentProvider };
   const [sessionFields, setSessionFields] = useState<SessionFieldValues | null>(null);
   const [sessionFieldsOriginal, setSessionFieldsOriginal] = useState<SessionFieldValues | null>(null);
   const [sessionFieldsSaving, setSessionFieldsSaving] = useState(false);
   const [sessionFieldsError, setSessionFieldsError] = useState<string | null>(null);
+  const [configuredProviders, setConfiguredProviders] = useState<AgentProvider[]>(["claude"]);
+  const [sessionProviderIds, setSessionProviderIds] = useState<Partial<Record<AgentProvider, string>>>({});
 
   // Quick Prompts state
   const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
@@ -564,6 +566,22 @@ function App() {
             command: buildResumeCommand("codex", recoveredSessionId, config.cwd),
           };
         }
+      } else if (
+        config.provider === "antigravity" &&
+        !config.session_id &&
+        config.cwd &&
+        !config.capture_started_at
+      ) {
+        const recoveredSessionId = await invoke<string | null>("sync_antigravity_session_id", {
+          directory: config.cwd,
+        }).catch(() => null);
+        if (recoveredSessionId) {
+          config = {
+            ...config,
+            session_id: recoveredSessionId,
+            command: buildResumeCommand("antigravity", recoveredSessionId, config.cwd),
+          };
+        }
       }
 
       setAppConfig(config);
@@ -601,6 +619,16 @@ function App() {
           directory: config.cwd,
           startedAt: config.capture_started_at,
         }).catch(console.error);
+      } else if (
+        config.provider === "antigravity" &&
+        !config.session_id &&
+        config.cwd &&
+        config.capture_started_at
+      ) {
+        invoke("start_antigravity_session_capture", {
+          directory: config.cwd,
+          previousSessionId: config.capture_previous_session_id,
+        }).catch(console.error);
       }
 
       // Load persisted notes and prompts
@@ -629,7 +657,7 @@ function App() {
       }
     });
 
-    const unlistenProviderPromise = listen<{ provider: "claude" | "codex"; session_id: string }>(
+    const unlistenProviderPromise = listen<{ provider: AgentProvider; session_id: string }>(
       "session-provider-updated",
       (event) => {
         setAppConfig((prev) => prev ? {
@@ -1153,15 +1181,27 @@ function App() {
 
   const loadSessionFields = () => {
     setSessionFieldsError(null);
+    invoke<GlobalConfig>("get_global_config")
+      .then((config) => setConfiguredProviders(config.agent_providers))
+      .catch(() => setConfiguredProviders([appConfig?.provider || "claude"]));
     invoke<Record<string, unknown> | null>("get_session_info").then((data) => {
-      const providerSessionId = appConfig?.provider === "codex"
-        ? (data?.codex_session_id as string) || (data?.session_id as string) || appConfig?.session_id || ""
-        : (data?.session_id as string) || appConfig?.session_id || "";
+      const provider = (data?.provider as AgentProvider) || appConfig?.provider || "claude";
+      const providerSessionId = provider === "codex"
+        ? (data?.codex_session_id as string) || appConfig?.session_id || ""
+        : provider === "antigravity"
+          ? (data?.antigravity_session_id as string) || appConfig?.session_id || ""
+          : (data?.session_id as string) || appConfig?.session_id || "";
+      setSessionProviderIds({
+        claude: (data?.session_id as string) || "",
+        codex: (data?.codex_session_id as string) || "",
+        antigravity: (data?.antigravity_session_id as string) || "",
+      });
       const fields: SessionFieldValues = {
         name: (data?.name as string) || appConfig?.name || "",
         session_id: providerSessionId,
         claude_cwd: (data?.claude_cwd as string) || appConfig?.cwd || "",
         ticket_key: (data?.ticket_key as string) || "",
+        provider,
       };
       setSessionFields(fields);
       setSessionFieldsOriginal(fields);
@@ -1171,6 +1211,7 @@ function App() {
         session_id: appConfig?.session_id || "",
         claude_cwd: appConfig?.cwd || "",
         ticket_key: "",
+        provider: appConfig?.provider || "claude",
       };
       setSessionFields(fields);
       setSessionFieldsOriginal(fields);
@@ -1181,7 +1222,8 @@ function App() {
     (sessionFields.name !== sessionFieldsOriginal.name ||
      sessionFields.session_id !== sessionFieldsOriginal.session_id ||
      sessionFields.claude_cwd !== sessionFieldsOriginal.claude_cwd ||
-     sessionFields.ticket_key !== sessionFieldsOriginal.ticket_key);
+     sessionFields.ticket_key !== sessionFieldsOriginal.ticket_key ||
+     sessionFields.provider !== sessionFieldsOriginal.provider);
 
   const handleSaveSessionFields = async () => {
     if (!appConfig?.cwd || !sessionFields) return;
@@ -1220,6 +1262,13 @@ function App() {
       if (resolvedSessionId) {
         setAppConfig((prev) => prev ? { ...prev, session_id: resolvedSessionId } : prev);
       }
+    } else if (appConfig?.provider === "antigravity" && !resolvedSessionId && appConfig.cwd) {
+      resolvedSessionId = await invoke<string | null>("sync_antigravity_session_id", {
+        directory: appConfig.cwd,
+      }).catch(() => null);
+      if (resolvedSessionId) {
+        setAppConfig((prev) => prev ? { ...prev, session_id: resolvedSessionId } : prev);
+      }
     }
 
     await invoke("kill_pty");
@@ -1242,6 +1291,11 @@ function App() {
       await invoke("start_codex_session_capture", {
         directory: appConfig.cwd,
         startedAt: new Date().toISOString(),
+      }).catch(console.error);
+    } else if (appConfig?.provider === "antigravity" && !resolvedSessionId && appConfig?.cwd) {
+      await invoke("start_antigravity_session_capture", {
+        directory: appConfig.cwd,
+        previousSessionId: null,
       }).catch(console.error);
     }
   };
@@ -2745,9 +2799,35 @@ function App() {
               </div>
               {sessionFields && (
                 <div className="config-section">
+                  <div className="session-settings-field">
+                    <label className="session-settings-label">Harness</label>
+                    <select
+                      className="session-settings-input"
+                      value={sessionFields.provider}
+                      onChange={(event) => {
+                        const provider = event.target.value as AgentProvider;
+                        setSessionFields((previous) => previous ? {
+                          ...previous,
+                          provider,
+                          session_id: sessionProviderIds[provider] || "",
+                        } : previous);
+                      }}
+                    >
+                      {Array.from(new Set([...configuredProviders, sessionFields.provider])).map((provider) => (
+                        <option key={provider} value={provider}>
+                          {provider === "antigravity" ? "Antigravity" : provider === "codex" ? "Codex" : "Claude"}
+                        </option>
+                      ))}
+                    </select>
+                    {sessionFields.provider !== appConfig?.provider && (
+                      <div className="session-settings-note">
+                        Save, then close and reopen this window to switch harnesses. If no saved {sessionFields.provider} conversation exists, twapp will prepare a migration preload.
+                      </div>
+                    )}
+                  </div>
                   {([
                     ["name", "Name"],
-                    ["session_id", appConfig?.provider === "codex" ? "Codex Session ID" : "Session ID"],
+                    ["session_id", sessionFields.provider === "antigravity" ? "Antigravity Conversation ID" : sessionFields.provider === "codex" ? "Codex Session ID" : "Claude Session ID"],
                     ["claude_cwd", "Resume CWD"],
                     ["ticket_key", "Ticket"],
                   ] as const).map(([key, label]) => (

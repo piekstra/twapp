@@ -9,6 +9,36 @@ use super::permissions;
 pub enum AgentProvider {
     Claude,
     Codex,
+    Antigravity,
+}
+
+impl AgentProvider {
+    pub const ALL: [Self; 3] = [Self::Claude, Self::Codex, Self::Antigravity];
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::Antigravity => "Antigravity",
+        }
+    }
+
+    pub fn binaries(self) -> &'static [&'static str] {
+        match self {
+            Self::Claude => &["claude"],
+            Self::Codex => &["codex"],
+            Self::Antigravity => &["agy"],
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "antigravity" | "agy" => Some(Self::Antigravity),
+            _ => None,
+        }
+    }
 }
 
 impl Default for AgentProvider {
@@ -22,6 +52,7 @@ impl std::fmt::Display for AgentProvider {
         match self {
             Self::Claude => write!(f, "claude"),
             Self::Codex => write!(f, "codex"),
+            Self::Antigravity => write!(f, "antigravity"),
         }
     }
 }
@@ -44,6 +75,14 @@ pub struct SessionData {
     pub codex_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antigravity_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antigravity_cwd: Option<String>,
+    /// Source harness for a pending explicit migration. Cleared after the
+    /// target harness has a native conversation ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_source_provider: Option<AgentProvider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +120,8 @@ impl SessionData {
         self.provider.unwrap_or_else(|| {
             if self.session_id.is_empty() && self.codex_session_id.is_some() {
                 AgentProvider::Codex
+            } else if self.session_id.is_empty() && self.antigravity_session_id.is_some() {
+                AgentProvider::Antigravity
             } else {
                 AgentProvider::Claude
             }
@@ -97,6 +138,7 @@ impl SessionData {
                 }
             }
             AgentProvider::Codex => self.codex_session_id.as_deref(),
+            AgentProvider::Antigravity => self.antigravity_session_id.as_deref(),
         }
     }
 
@@ -114,6 +156,11 @@ impl SessionData {
                 .clone()
                 .filter(|cwd| !cwd.is_empty())
                 .unwrap_or_else(|| work_dir.to_string_lossy().to_string()),
+            AgentProvider::Antigravity => self
+                .antigravity_cwd
+                .clone()
+                .filter(|cwd| !cwd.is_empty())
+                .unwrap_or_else(|| work_dir.to_string_lossy().to_string()),
         }
     }
 
@@ -125,7 +172,27 @@ impl SessionData {
 
     pub fn needs_migration(&self, preferred: AgentProvider) -> bool {
         self.native_session_id(preferred).is_none()
-            && self.native_session_id(other_provider(preferred)).is_some()
+            && self.migration_source(preferred).is_some()
+    }
+
+    pub fn migration_source(&self, target: AgentProvider) -> Option<AgentProvider> {
+        self.migration_source_provider
+            .filter(|source| *source != target && self.native_session_id(*source).is_some())
+            .or_else(|| {
+                AgentProvider::ALL
+                    .into_iter()
+                    .find(|source| *source != target && self.native_session_id(*source).is_some())
+            })
+    }
+
+    pub fn select_provider(&mut self, provider: AgentProvider) {
+        let current = self.last_provider();
+        if provider != current && self.native_session_id(provider).is_none() {
+            self.migration_source_provider = Some(current);
+        } else {
+            self.migration_source_provider = None;
+        }
+        self.provider = Some(provider);
     }
 
     pub fn set_provider_session(
@@ -143,15 +210,13 @@ impl SessionData {
                 self.codex_session_id = Some(session_id);
                 self.codex_cwd = Some(cwd);
             }
+            AgentProvider::Antigravity => {
+                self.antigravity_session_id = Some(session_id);
+                self.antigravity_cwd = Some(cwd);
+            }
         }
         self.provider = Some(provider);
-    }
-}
-
-pub fn other_provider(provider: AgentProvider) -> AgentProvider {
-    match provider {
-        AgentProvider::Claude => AgentProvider::Codex,
-        AgentProvider::Codex => AgentProvider::Claude,
+        self.migration_source_provider = None;
     }
 }
 
@@ -217,6 +282,33 @@ pub fn build_codex_run_command(
         shell_escape_single(work_dir_str),
         prompt_arg
     )
+}
+
+pub fn build_antigravity_run_command(
+    session_id: Option<&str>,
+    model: Option<&str>,
+) -> String {
+    let model_flag = match model {
+        Some(m) if !m.is_empty() => format!(" --model '{}'", shell_escape_single(m)),
+        _ => String::new(),
+    };
+    let conversation_flag = session_id
+        .filter(|id| !id.is_empty())
+        .map(|id| format!(" --conversation '{}'", shell_escape_single(id)))
+        .unwrap_or_default();
+    format!("agy{}{}", model_flag, conversation_flag)
+}
+
+pub fn find_antigravity_session_for_cwd(cwd: &str) -> Option<String> {
+    let path = dirs::home_dir()?
+        .join(".gemini/antigravity-cli/cache/last_conversations.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    let cache: serde_json::Value = serde_json::from_str(&content).ok()?;
+    cache
+        .get(cwd)
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -579,6 +671,9 @@ mod tests {
             provider: Some(AgentProvider::Claude),
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
@@ -715,6 +810,9 @@ mod tests {
             provider: Some(AgentProvider::Claude),
             codex_session_id: Some("codex-456".to_string()),
             codex_cwd: Some("/tmp/demo".to_string()),
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
@@ -748,6 +846,9 @@ mod tests {
             provider: Some(AgentProvider::Claude),
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
@@ -763,6 +864,56 @@ mod tests {
 
         data.codex_session_id = Some("codex-456".to_string());
         assert!(!data.needs_migration(AgentProvider::Codex));
+    }
+
+    #[test]
+    fn provider_migration_preserves_each_native_session_handle() {
+        let mut data = base_session();
+
+        data.select_provider(AgentProvider::Codex);
+
+        assert_eq!(data.last_provider(), AgentProvider::Codex);
+        assert_eq!(
+            data.native_session_id(AgentProvider::Claude),
+            Some("claude-123")
+        );
+        assert_eq!(
+            data.migration_source(AgentProvider::Codex),
+            Some(AgentProvider::Claude)
+        );
+        assert!(data.needs_migration(AgentProvider::Codex));
+
+        data.set_provider_session(
+            AgentProvider::Codex,
+            "codex-456".to_string(),
+            "/tmp/demo".to_string(),
+        );
+
+        assert_eq!(
+            data.native_session_id(AgentProvider::Claude),
+            Some("claude-123")
+        );
+        assert_eq!(
+            data.native_session_id(AgentProvider::Codex),
+            Some("codex-456")
+        );
+        assert_eq!(data.migration_source_provider, None);
+
+        data.select_provider(AgentProvider::Claude);
+        assert!(!data.needs_migration(AgentProvider::Claude));
+        assert_eq!(
+            data.native_session_id(AgentProvider::Codex),
+            Some("codex-456")
+        );
+    }
+
+    #[test]
+    fn antigravity_resume_command_uses_conversation_id() {
+        assert_eq!(
+            build_antigravity_run_command(Some("conversation-123"), None),
+            "agy --conversation 'conversation-123'"
+        );
+        assert_eq!(build_antigravity_run_command(None, None), "agy");
     }
 
     #[test]

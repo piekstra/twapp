@@ -14,6 +14,7 @@ struct ConfigDefaults {
     jira_project: Option<String>,
     github_repo: Option<String>,
     agent_provider: Option<AgentProvider>,
+    agent_providers: Option<Vec<AgentProvider>>,
 }
 
 #[derive(Debug)]
@@ -22,6 +23,7 @@ pub struct GlobalConfig {
     pub jira_project: Option<String>,
     pub github_repo: Option<String>,
     pub agent_provider: AgentProvider,
+    pub agent_providers: Vec<AgentProvider>,
 }
 
 fn home_dir() -> PathBuf {
@@ -130,14 +132,51 @@ pub fn get_agent_provider_preference() -> AgentProvider {
     if let Ok(content) = std::fs::read_to_string(&path) {
         if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
             if let Some(provider) = yaml.get("agent_provider").and_then(|v| v.as_str()) {
-                return match provider {
-                    "codex" => AgentProvider::Codex,
-                    _ => AgentProvider::Claude,
-                };
+                return AgentProvider::parse(provider).unwrap_or(AgentProvider::Claude);
             }
         }
     }
     AgentProvider::Claude
+}
+
+pub fn get_configured_agent_providers() -> Vec<AgentProvider> {
+    GlobalConfig::load()
+        .map(|config| config.agent_providers)
+        .unwrap_or_else(|_| vec![AgentProvider::Claude])
+}
+
+pub fn find_agent_provider_binary(provider: AgentProvider) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        for binary in provider.binaries() {
+            let candidate = directory.join(binary);
+            if candidate
+                .metadata()
+                .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+            {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_agent_providers(
+    configured: Option<Vec<AgentProvider>>,
+    fallback: AgentProvider,
+) -> Vec<AgentProvider> {
+    let mut providers = Vec::new();
+    for provider in configured.unwrap_or_else(|| vec![fallback]) {
+        if !providers.contains(&provider) {
+            providers.push(provider);
+        }
+    }
+    if providers.is_empty() {
+        providers.push(fallback);
+    }
+    providers
 }
 
 pub fn set_agent_provider_preference(provider: AgentProvider) -> Result<(), String> {
@@ -355,6 +394,7 @@ pub fn save_global_config(
     jira_project: Option<String>,
     github_repo: Option<String>,
     agent_provider: Option<String>,
+    agent_providers: Option<Vec<String>>,
 ) -> Result<(), String> {
     let path = config_file();
     if let Some(parent) = path.parent() {
@@ -398,6 +438,22 @@ pub fn save_global_config(
                     serde_yaml::Value::String(provider),
                 );
             }
+            if let Some(providers) = agent_providers {
+                let parsed = providers
+                    .iter()
+                    .map(|provider| {
+                        AgentProvider::parse(provider)
+                            .ok_or_else(|| format!("Unknown agent harness: {}", provider))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if parsed.is_empty() {
+                    return Err("Configure at least one agent harness".to_string());
+                }
+                dmap.insert(
+                    serde_yaml::Value::String("agent_providers".to_string()),
+                    serde_yaml::to_value(parsed).map_err(|e| e.to_string())?,
+                );
+            }
         }
     }
 
@@ -415,6 +471,7 @@ impl GlobalConfig {
                 jira_project: None,
                 github_repo: None,
                 agent_provider: AgentProvider::Claude,
+                agent_providers: vec![AgentProvider::Claude],
             });
         }
 
@@ -428,6 +485,7 @@ impl GlobalConfig {
             jira_project: None,
             github_repo: None,
             agent_provider: None,
+            agent_providers: None,
         });
 
         let work_directory = defaults
@@ -435,11 +493,45 @@ impl GlobalConfig {
             .map(|p| expand_path(&p))
             .unwrap_or_else(|| home_dir().join("Dev"));
 
+        let agent_provider = defaults.agent_provider.unwrap_or(AgentProvider::Claude);
+        let agent_providers = normalize_agent_providers(defaults.agent_providers, agent_provider);
+
         Ok(Self {
             work_directory,
             jira_project: defaults.jira_project,
             github_repo: defaults.github_repo,
-            agent_provider: defaults.agent_provider.unwrap_or(AgentProvider::Claude),
+            agent_provider,
+            agent_providers,
         })
+    }
+}
+
+#[cfg(test)]
+mod agent_provider_tests {
+    use super::*;
+
+    #[test]
+    fn configured_harnesses_are_deduplicated_without_reordering() {
+        let providers = normalize_agent_providers(
+            Some(vec![
+                AgentProvider::Codex,
+                AgentProvider::Claude,
+                AgentProvider::Codex,
+            ]),
+            AgentProvider::Claude,
+        );
+
+        assert_eq!(
+            providers,
+            vec![AgentProvider::Codex, AgentProvider::Claude]
+        );
+    }
+
+    #[test]
+    fn empty_harness_config_falls_back_to_legacy_provider() {
+        assert_eq!(
+            normalize_agent_providers(Some(Vec::new()), AgentProvider::Codex),
+            vec![AgentProvider::Codex]
+        );
     }
 }

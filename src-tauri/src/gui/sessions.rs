@@ -5,8 +5,8 @@ use std::io::{BufRead, Seek, SeekFrom};
 use tauri::Emitter;
 
 use crate::cli::session::{
-    count_codex_conversation_messages, find_latest_codex_session_for_cwd, other_provider,
-    shell_escape_single, AgentProvider, SessionData,
+    count_codex_conversation_messages, find_antigravity_session_for_cwd,
+    find_latest_codex_session_for_cwd, shell_escape_single, AgentProvider, SessionData,
 };
 use crate::cli::session_attribution;
 
@@ -74,12 +74,6 @@ pub fn count_conversation_messages(session_id: &str, claude_cwd: &str) -> Option
     Some(count as u32)
 }
 
-fn configured_provider() -> AgentProvider {
-    crate::cli::config::GlobalConfig::load()
-        .map(|cfg| cfg.agent_provider)
-        .unwrap_or(AgentProvider::Claude)
-}
-
 fn count_messages_for_provider(
     session_data: &SessionData,
     provider: AgentProvider,
@@ -97,19 +91,17 @@ fn count_messages_for_provider(
         AgentProvider::Codex => session_data
             .native_session_id(AgentProvider::Codex)
             .and_then(count_codex_conversation_messages),
+        AgentProvider::Antigravity => None,
     }
 }
 
 fn launcher_session_from_data(
     session_data: &SessionData,
     directory: &std::path::Path,
-    preferred: AgentProvider,
 ) -> LauncherSession {
+    let preferred = session_data.last_provider();
     let is_running = check_instance_running(&session_data.name);
-    let message_count =
-        count_messages_for_provider(session_data, preferred, directory).or_else(|| {
-            count_messages_for_provider(session_data, other_provider(preferred), directory)
-        });
+    let message_count = count_messages_for_provider(session_data, preferred, directory);
     let last_active = session_data
         .last_resumed
         .clone()
@@ -122,6 +114,7 @@ fn launcher_session_from_data(
         session_id: session_data
             .native_session_id(AgentProvider::Claude)
             .or_else(|| session_data.native_session_id(AgentProvider::Codex))
+            .or_else(|| session_data.native_session_id(AgentProvider::Antigravity))
             .map(str::to_string)
             .unwrap_or(fallback_session_key),
         provider: preferred.to_string(),
@@ -217,7 +210,7 @@ fn recent_codex_prompts(session_id: &str) -> Vec<String> {
     prompts
 }
 
-fn build_migration_prompt(
+pub(super) fn build_migration_prompt(
     session_data: &SessionData,
     work_dir: &std::path::Path,
     source: AgentProvider,
@@ -272,6 +265,14 @@ fn build_migration_prompt(
                 }
             }
         }
+        AgentProvider::Antigravity => {
+            if let Some(source_id) = session_data.native_session_id(AgentProvider::Antigravity) {
+                sections.push(format!(
+                    "Antigravity source conversation: {}. Its conversation history remains available in Antigravity.",
+                    source_id
+                ));
+            }
+        }
     }
 
     sections.push(
@@ -282,7 +283,7 @@ fn build_migration_prompt(
     sections.join("\n\n")
 }
 
-fn build_provider_command(
+pub(super) fn build_provider_command(
     provider: AgentProvider,
     session_data: &SessionData,
     work_dir: &std::path::Path,
@@ -371,6 +372,27 @@ fn build_provider_command(
             };
             Ok(command)
         }
+        AgentProvider::Antigravity => {
+            if fork {
+                return Err(
+                    "Antigravity forks must be created inside the harness with /fork".to_string(),
+                );
+            }
+            let command = if let Some(current_id) =
+                session_data.native_session_id(AgentProvider::Antigravity)
+            {
+                (
+                    format!(
+                        "agy --conversation '{}'",
+                        shell_escape_single(current_id)
+                    ),
+                    Some(current_id.to_string()),
+                )
+            } else {
+                ("agy".to_string(), None)
+            };
+            Ok(command)
+        }
     }
 }
 
@@ -395,6 +417,34 @@ fn sync_codex_session_id_for_directory(
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
     crate::cli::session::write_session(&work_dir, &session_data)?;
 
+    Ok(Some(session_id))
+}
+
+fn sync_antigravity_session_id_for_directory(
+    directory: &str,
+    ignored_session_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let work_dir = std::path::PathBuf::from(directory);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+    if let Some(existing_id) = session_data.native_session_id(AgentProvider::Antigravity) {
+        return Ok(Some(existing_id.to_string()));
+    }
+
+    let antigravity_cwd = session_data.native_cwd(AgentProvider::Antigravity, &work_dir);
+    let Some(session_id) = find_antigravity_session_for_cwd(&antigravity_cwd) else {
+        return Ok(None);
+    };
+    if ignored_session_id == Some(session_id.as_str()) {
+        return Ok(None);
+    }
+
+    session_data.set_provider_session(
+        AgentProvider::Antigravity,
+        session_id.clone(),
+        antigravity_cwd,
+    );
+    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    crate::cli::session::write_session(&work_dir, &session_data)?;
     Ok(Some(session_id))
 }
 
@@ -430,10 +480,9 @@ pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize
                     if let Ok(data) =
                         serde_json::from_str::<crate::cli::session::SessionData>(&content)
                     {
-                        let preferred = configured_provider();
                         let _ = app.emit(
                             "launcher:session",
-                            launcher_session_from_data(&data, &path, preferred),
+                            launcher_session_from_data(&data, &path),
                         );
                     }
                 }
@@ -474,11 +523,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
 
     let mut results = Vec::new();
     for (data, dir) in sessions {
-        results.push(launcher_session_from_data(
-            &data,
-            &dir,
-            global_config.agent_provider,
-        ));
+        results.push(launcher_session_from_data(&data, &dir));
     }
 
     Ok(LauncherResponse {
@@ -491,7 +536,7 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
 pub async fn launch_session(_session_id: String, directory: String) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
-    let preferred = configured_provider();
+    let preferred = session_data.last_provider();
 
     // If already running, focus the existing window
     if check_instance_running(&session_data.name) {
@@ -532,16 +577,9 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
     session_data.provider = Some(preferred);
 
-    let migration_prompt = if session_data.needs_migration(preferred) {
-        Some(build_migration_prompt(
-            &session_data,
-            &work_dir,
-            other_provider(preferred),
-            preferred,
-        ))
-    } else {
-        None
-    };
+    let migration_prompt = session_data
+        .migration_source(preferred)
+        .map(|source| build_migration_prompt(&session_data, &work_dir, source, preferred));
     let (command, provider_session_id) = build_provider_command(
         preferred,
         &session_data,
@@ -558,8 +596,10 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
                 work_dir.to_string_lossy().to_string(),
             );
         }
-    } else if session_data.codex_cwd.is_none() {
+    } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
         session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
+    } else if preferred == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
+        session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
     }
 
     crate::cli::session::write_session(&work_dir, &session_data)?;
@@ -588,12 +628,25 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push(provider_session_id);
     }
     if preferred == AgentProvider::Codex
-        && session_data
-            .native_session_id(AgentProvider::Codex)
-            .is_none()
+        && session_data.native_session_id(AgentProvider::Codex).is_none()
     {
         app_args.push("--capture-started-at".to_string());
         app_args.push(chrono::Utc::now().to_rfc3339());
+    } else if preferred == AgentProvider::Antigravity
+        && session_data
+            .native_session_id(AgentProvider::Antigravity)
+            .is_none()
+    {
+        if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
+            app_args.push("--capture-previous-session-id".to_string());
+            app_args.push(previous_id);
+        }
+        app_args.push("--capture-started-at".to_string());
+        app_args.push(chrono::Utc::now().to_rfc3339());
+        if let Some(prompt) = migration_prompt {
+            app_args.push("--prefill".to_string());
+            app_args.push(prompt);
+        }
     }
     let ticket_file = work_dir.join(".twapp-ticket.json");
     if ticket_file.exists() {
@@ -617,14 +670,34 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
 pub async fn create_and_launch_session(
     ticket: Option<String>,
     name: Option<String>,
+    provider: String,
     github: bool,
     chrome: bool,
 ) -> Result<(), String> {
+    let provider = AgentProvider::parse(&provider)
+        .ok_or_else(|| format!("Unknown agent harness: {}", provider))?;
+    let configured = crate::cli::config::get_configured_agent_providers();
+    if !configured.contains(&provider) {
+        return Err(format!(
+            "{} is not configured in twapp",
+            provider.display_name()
+        ));
+    }
+    if crate::cli::config::find_agent_provider_binary(provider).is_none() {
+        return Err(format!(
+            "{} is configured but its command was not found on PATH",
+            provider.display_name()
+        ));
+    }
+    if chrome && provider != AgentProvider::Claude {
+        return Err("Chrome mode is only supported by the Claude harness".to_string());
+    }
     let result = crate::cli::create_session_core(
         ticket,
         name,
         None,
         None,
+        provider,
         github,
         None,
         None,
@@ -669,6 +742,40 @@ pub async fn start_codex_session_capture(
 #[tauri::command]
 pub async fn sync_codex_session_id(directory: String) -> Result<Option<String>, String> {
     sync_codex_session_id_for_directory(&directory, None)
+}
+
+#[tauri::command]
+pub async fn start_antigravity_session_capture(
+    app: tauri::AppHandle,
+    directory: String,
+    previous_session_id: Option<String>,
+) -> Result<(), String> {
+    std::thread::spawn(move || {
+        for attempt in 0..120 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            match sync_antigravity_session_id_for_directory(
+                &directory,
+                previous_session_id.as_deref(),
+            ) {
+                Ok(Some(session_id)) => {
+                    emit_provider_session_update(&app, "antigravity", &session_id);
+                    return;
+                }
+                Ok(None) => continue,
+                Err(_) => return,
+            }
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_antigravity_session_id(
+    directory: String,
+) -> Result<Option<String>, String> {
+    sync_antigravity_session_id_for_directory(&directory, None)
 }
 
 #[tauri::command]
@@ -842,26 +949,46 @@ pub async fn update_session_fields(
     session_id: Option<String>,
     claude_cwd: Option<String>,
     ticket_key: Option<String>,
+    provider: Option<String>,
 ) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut data = crate::cli::session::read_session(&work_dir)?;
     let prior_claude_id = data.session_id.clone();
     let prior_codex_id = data.codex_session_id.clone().unwrap_or_default();
+    let prior_antigravity_id = data.antigravity_session_id.clone().unwrap_or_default();
+
+    if let Some(ref provider_name) = provider {
+        let selected = AgentProvider::parse(provider_name)
+            .ok_or_else(|| format!("Unknown agent harness: {}", provider_name))?;
+        if !crate::cli::config::get_configured_agent_providers().contains(&selected) {
+            return Err(format!(
+                "{} is not configured in twapp",
+                selected.display_name()
+            ));
+        }
+        data.select_provider(selected);
+    }
 
     if let Some(ref n) = name {
         data.name = n.clone();
     }
     if let Some(ref sid) = session_id {
-        if data.provider == Some(AgentProvider::Codex)
-            || (data.session_id.is_empty() && data.codex_session_id.is_some())
-        {
-            data.codex_session_id = if sid.is_empty() {
-                None
-            } else {
-                Some(sid.clone())
-            };
-        } else {
-            data.session_id = sid.clone();
+        match data.last_provider() {
+            AgentProvider::Claude => data.session_id = sid.clone(),
+            AgentProvider::Codex => {
+                data.codex_session_id = if sid.is_empty() {
+                    None
+                } else {
+                    Some(sid.clone())
+                };
+            }
+            AgentProvider::Antigravity => {
+                data.antigravity_session_id = if sid.is_empty() {
+                    None
+                } else {
+                    Some(sid.clone())
+                };
+            }
         }
     }
     if let Some(ref cwd) = claude_cwd {
@@ -882,11 +1009,17 @@ pub async fn update_session_fields(
     // "twapp adopted this".
     let new_claude_id = data.session_id.clone();
     let new_codex_id = data.codex_session_id.clone().unwrap_or_default();
-    if new_claude_id != prior_claude_id || new_codex_id != prior_codex_id {
+    let new_antigravity_id = data.antigravity_session_id.clone().unwrap_or_default();
+    if new_claude_id != prior_claude_id
+        || new_codex_id != prior_codex_id
+        || new_antigravity_id != prior_antigravity_id
+    {
         let (old_id, new_id) = if new_claude_id != prior_claude_id {
             (prior_claude_id, new_claude_id)
-        } else {
+        } else if new_codex_id != prior_codex_id {
             (prior_codex_id, new_codex_id)
+        } else {
+            (prior_antigravity_id, new_antigravity_id)
         };
         let _ = session_attribution::append_history(
             &work_dir,
@@ -1435,6 +1568,9 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             provider: Some(AgentProvider::Claude),
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: Some(true),
             imported_from: Some(original_cwd),
@@ -1466,6 +1602,11 @@ pub async fn fork_session(
     config: tauri::State<'_, GuiArgs>,
 ) -> Result<String, String> {
     let provider = config.provider;
+    if provider == AgentProvider::Antigravity {
+        return Err(
+            "Antigravity forks must be created inside the harness with /fork".to_string(),
+        );
+    }
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
     // Fork inherits role + provenance + colab_group from the parent session so CLI
@@ -1577,6 +1718,9 @@ pub async fn fork_session(
                 provider: Some(AgentProvider::Codex),
                 codex_session_id: None,
                 codex_cwd: Some(work_dir.clone()),
+                antigravity_session_id: None,
+                antigravity_cwd: None,
+                migration_source_provider: None,
                 forked_from: old_session_id.clone(),
                 imported: None,
                 imported_from: None,
@@ -1622,6 +1766,9 @@ pub async fn fork_session(
                 provider: Some(AgentProvider::Claude),
                 codex_session_id: None,
                 codex_cwd: None,
+                antigravity_session_id: None,
+                antigravity_cwd: None,
+                migration_source_provider: None,
                 forked_from: old_session_id.clone(),
                 imported: None,
                 imported_from: None,
@@ -1773,7 +1920,7 @@ mod fork_inheritance_tests {
 #[cfg(test)]
 mod launcher_propagation_tests {
     use super::launcher_session_from_data;
-    use crate::cli::session::{AgentProvider, SessionData};
+    use crate::cli::session::SessionData;
 
     fn base_session() -> SessionData {
         SessionData {
@@ -1787,6 +1934,9 @@ mod launcher_propagation_tests {
             provider: None,
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
@@ -1805,11 +1955,7 @@ mod launcher_propagation_tests {
         s.provenance = Some("spawned".into());
         s.colab_group = Some("feature-x".into());
 
-        let ls = launcher_session_from_data(
-            &s,
-            std::path::Path::new("/tmp/parent"),
-            AgentProvider::Claude,
-        );
+        let ls = launcher_session_from_data(&s, std::path::Path::new("/tmp/parent"));
 
         assert_eq!(ls.role.as_deref(), Some("coordinator"));
         assert_eq!(ls.provenance.as_deref(), Some("spawned"));
@@ -1821,7 +1967,6 @@ mod launcher_propagation_tests {
         let ls = launcher_session_from_data(
             &base_session(),
             std::path::Path::new("/tmp/parent"),
-            AgentProvider::Claude,
         );
         assert_eq!(ls.role, None);
         assert_eq!(ls.provenance, None);

@@ -1,5 +1,17 @@
 use tauri::{AppHandle, Emitter};
 
+use crate::cli::session::AgentProvider;
+
+#[derive(serde::Serialize)]
+pub struct AgentHarnessInfo {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub path: Option<String>,
+    pub installed: bool,
+    pub configured: bool,
+}
+
 /// Returns a git-derived version string for dev builds.
 /// Format: "0.5.42-abc1234" (tag + short hash) or "0.5.42-abc1234-dirty" if uncommitted changes.
 /// Falls back to None if not in a git repo or git is unavailable.
@@ -41,6 +53,7 @@ pub fn get_global_config() -> Result<serde_json::Value, String> {
         "github_repo": config.github_repo,
         "session_color": session_color,
         "agent_provider": config.agent_provider,
+        "agent_providers": config.agent_providers,
     }))
 }
 
@@ -50,8 +63,40 @@ pub fn save_global_config(
     jira_project: Option<String>,
     github_repo: Option<String>,
     agent_provider: Option<String>,
+    agent_providers: Option<Vec<String>>,
 ) -> Result<(), String> {
-    crate::cli::config::save_global_config(work_directory, jira_project, github_repo, agent_provider)
+    crate::cli::config::save_global_config(
+        work_directory,
+        jira_project,
+        github_repo,
+        agent_provider,
+        agent_providers,
+    )
+}
+
+#[tauri::command]
+pub fn discover_agent_harnesses() -> Vec<AgentHarnessInfo> {
+    let _ = super::shell_env::refresh_path();
+    let configured = crate::cli::config::get_configured_agent_providers();
+
+    AgentProvider::ALL
+        .into_iter()
+        .filter_map(|provider| {
+            let path = crate::cli::config::find_agent_provider_binary(provider);
+            let is_configured = configured.contains(&provider);
+            if path.is_none() && !is_configured {
+                return None;
+            }
+            Some(AgentHarnessInfo {
+                id: provider.to_string(),
+                name: provider.display_name().to_string(),
+                command: provider.binaries()[0].to_string(),
+                path: path.as_ref().map(|path| path.to_string_lossy().to_string()),
+                installed: path.is_some(),
+                configured: is_configured,
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -76,10 +121,8 @@ pub fn get_agent_provider_preference() -> String {
 
 #[tauri::command]
 pub fn set_agent_provider_preference(provider: String) -> Result<(), String> {
-    let provider = match provider.as_str() {
-        "codex" => crate::cli::session::AgentProvider::Codex,
-        _ => crate::cli::session::AgentProvider::Claude,
-    };
+    let provider = AgentProvider::parse(&provider)
+        .ok_or_else(|| format!("Unknown agent harness: {}", provider))?;
     crate::cli::config::set_agent_provider_preference(provider)
 }
 

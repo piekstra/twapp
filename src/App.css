@@ -1124,6 +1124,13 @@ body,
   border-color: var(--accent);
 }
 
+.session-settings-note {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .config-save-button {
   margin-top: 10px;
   width: 100%;
@@ -3584,6 +3591,66 @@ a.file-link {
   color: var(--text-muted);
 }
 
+.launcher-harness-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launcher-harness-heading > label {
+  margin-bottom: 0;
+}
+
+.launcher-harness-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.launcher-settings-field .launcher-harness-row {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) minmax(60px, auto) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.launcher-harness-row.unavailable {
+  opacity: 0.65;
+}
+
+.launcher-harness-row input {
+  margin: 0;
+}
+
+.launcher-harness-name {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.launcher-harness-row code {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.launcher-harness-status {
+  color: var(--danger);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.launcher-harness-status.installed {
+  color: var(--success, #238636);
+}
+
 .launcher-field-hint {
   font-weight: 400;
   color: var(--text-muted);
@@ -3992,6 +4059,19 @@ a.file-link {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.launcher-harness-picker {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.launcher-harness-picker legend {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .launcher-checkbox-field {

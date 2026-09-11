@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type MouseEvent } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -24,7 +24,16 @@ import type {
   PromptStore,
   ClaimableSession,
   CoordinatorModel,
+  AgentProvider,
+  AgentHarnessInfo,
+  GlobalConfig,
 } from "../types";
+
+function providerLabel(provider: AgentProvider): string {
+  if (provider === "antigravity") return "Antigravity";
+  if (provider === "codex") return "Codex";
+  return "Claude";
+}
 
 function SessionLauncher({
   appVersion,
@@ -62,6 +71,7 @@ function SessionLauncher({
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionGithub, setNewSessionGithub] = useState(false);
   const [newSessionChrome, setNewSessionChrome] = useState(false);
+  const [newSessionProvider, setNewSessionProvider] = useState<AgentProvider>("claude");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -70,7 +80,10 @@ function SessionLauncher({
   const [configWorkDir, setConfigWorkDir] = useState("");
   const [configJiraProject, setConfigJiraProject] = useState("");
   const [configGithubRepo, setConfigGithubRepo] = useState("");
-  const [agentProvider, setAgentProvider] = useState<"claude" | "codex">("claude");
+  const [configuredProviders, setConfiguredProviders] = useState<AgentProvider[]>(["claude"]);
+  const [agentHarnesses, setAgentHarnesses] = useState<AgentHarnessInfo[]>([]);
+  const [harnessesScanning, setHarnessesScanning] = useState(false);
+  const [harnessesError, setHarnessesError] = useState<string | null>(null);
   const [sessionColorPref, setSessionColorPref] = useState("random");
   const [permissions, setPermissions] = useState<string[]>([]);
   const [newPermission, setNewPermission] = useState("");
@@ -274,16 +287,29 @@ function SessionLauncher({
     return () => mediaQuery.removeEventListener("change", applyTheme);
   }, [themeMode]);
 
+  const scanAgentHarnesses = useCallback(async () => {
+    setHarnessesScanning(true);
+    setHarnessesError(null);
+    try {
+      const harnesses = await invoke<AgentHarnessInfo[]>("discover_agent_harnesses");
+      setAgentHarnesses(harnesses);
+    } catch (error) {
+      setHarnessesError(String(error));
+    } finally {
+      setHarnessesScanning(false);
+    }
+  }, []);
+
   // Load settings data on first navigation to settings
   useEffect(() => {
     if (launcherView !== "settings" || settingsLoaded) return;
-    invoke<{ work_directory: string; jira_project: string | null; github_repo: string | null; session_color: string; agent_provider: "claude" | "codex" }>("get_global_config")
+    invoke<GlobalConfig>("get_global_config")
       .then((cfg) => {
         setConfigWorkDir(cfg.work_directory);
         setConfigJiraProject(cfg.jira_project || "");
         setConfigGithubRepo(cfg.github_repo || "");
         setSessionColorPref(cfg.session_color || "random");
-        setAgentProvider(cfg.agent_provider || "claude");
+        setConfiguredProviders(cfg.agent_providers?.length ? cfg.agent_providers : [cfg.agent_provider || "claude"]);
       })
       .catch((e) => console.error("Failed to load config:", e));
     invoke<string[]>("get_default_permissions")
@@ -296,7 +322,21 @@ function SessionLauncher({
       .then((enabled) => setMonitorEnabled(enabled))
       .catch(() => {});
     setSettingsLoaded(true);
-  }, [launcherView, settingsLoaded]);
+    void scanAgentHarnesses();
+  }, [launcherView, settingsLoaded, scanAgentHarnesses]);
+
+  useEffect(() => {
+    if (launcherView !== "new-session") return;
+    invoke<GlobalConfig>("get_global_config")
+      .then((config) => {
+        const providers = config.agent_providers?.length
+          ? config.agent_providers
+          : [config.agent_provider || "claude"];
+        setConfiguredProviders(providers);
+        setNewSessionProvider((current) => providers.includes(current) ? current : providers[0]);
+      })
+      .catch((error) => setCreateError(String(error)));
+  }, [launcherView]);
 
   const filteredSessions = useMemo(() => {
     let result = sessions;
@@ -422,6 +462,33 @@ function SessionLauncher({
     }
   };
 
+  const handleToggleHarness = async (provider: AgentProvider) => {
+    const next = configuredProviders.includes(provider)
+      ? configuredProviders.filter((configured) => configured !== provider)
+      : [...configuredProviders, provider];
+    if (next.length === 0) {
+      setHarnessesError("Keep at least one harness configured.");
+      return;
+    }
+    setHarnessesError(null);
+    try {
+      await invoke("save_global_config", {
+        workDirectory: null,
+        jiraProject: null,
+        githubRepo: null,
+        agentProvider: null,
+        agentProviders: next,
+      });
+      setConfiguredProviders(next);
+      setAgentHarnesses((current) => current.map((harness) => (
+        harness.id === provider ? { ...harness, configured: next.includes(provider) } : harness
+      )));
+      setNewSessionProvider((current) => next.includes(current) ? current : next[0]);
+    } catch (error) {
+      setHarnessesError(String(error));
+    }
+  };
+
   const handleSetSessionColor = async (color: string) => {
     setSessionColorPref(color);
     try {
@@ -533,6 +600,7 @@ function SessionLauncher({
       await invoke("create_and_launch_session", {
         ticket: ticket || null,
         name: name || null,
+        provider: newSessionProvider,
         github: newSessionGithub,
         chrome: newSessionChrome,
       });
@@ -931,32 +999,41 @@ function SessionLauncher({
             <div className="launcher-settings-section">
               <div className="launcher-settings-section-header">Configuration</div>
               <div className="launcher-settings-field">
-                <label>Agent Provider</label>
-                <div className="launcher-sort" role="radiogroup" aria-label="Agent Provider">
+                <div className="launcher-harness-heading">
+                  <label>Agent Harnesses</label>
                   <button
-                    role="radio"
-                    aria-checked={agentProvider === "claude"}
-                    aria-pressed={agentProvider === "claude"}
-                    className={`launcher-sort-btn${agentProvider === "claude" ? " active" : ""}`}
-                    onClick={() => {
-                    setAgentProvider("claude");
-                    handleSaveConfig("agent_provider", "claude");
-                  }}
-                  >Claude</button>
-                  <button
-                    role="radio"
-                    aria-checked={agentProvider === "codex"}
-                    aria-pressed={agentProvider === "codex"}
-                    className={`launcher-sort-btn${agentProvider === "codex" ? " active" : ""}`}
-                    onClick={() => {
-                    setAgentProvider("codex");
-                    handleSaveConfig("agent_provider", "codex");
-                  }}
-                  >Codex</button>
+                    type="button"
+                    className="launcher-settings-add-btn"
+                    onClick={() => void scanAgentHarnesses()}
+                    disabled={harnessesScanning}
+                  >
+                    {harnessesScanning ? "Searching..." : "Search"}
+                  </button>
                 </div>
                 <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
-                  Existing sessions resume natively when this provider already has a session handle. Otherwise twapp preloads a one-time migration prompt.
+                  New sessions ask which configured harness to use. Existing sessions keep their saved harness until changed in Session Config.
                 </span>
+                <div className="launcher-harness-list">
+                  {agentHarnesses.map((harness) => (
+                    <label className={`launcher-harness-row${harness.installed ? "" : " unavailable"}`} key={harness.id}>
+                      <input
+                        type="checkbox"
+                        checked={configuredProviders.includes(harness.id)}
+                        onChange={() => void handleToggleHarness(harness.id)}
+                        disabled={!harness.installed && !configuredProviders.includes(harness.id)}
+                      />
+                      <span className="launcher-harness-name">{harness.name}</span>
+                      <code>{harness.command}</code>
+                      <span className={`launcher-harness-status${harness.installed ? " installed" : ""}`}>
+                        {harness.installed ? "Found" : "Not found"}
+                      </span>
+                    </label>
+                  ))}
+                  {!harnessesScanning && agentHarnesses.length === 0 && (
+                    <div className="launcher-settings-hint">No supported harnesses found on PATH.</div>
+                  )}
+                </div>
+                {harnessesError && <div className="launcher-create-error">{harnessesError}</div>}
               </div>
               <div className="launcher-settings-field">
                 <label>Work Directory</label>
@@ -1221,7 +1298,7 @@ function SessionLauncher({
             )}
           </div>
           <div className="launcher-session-meta">
-            <span className="launcher-imported-badge">{session.provider}</span>
+            <span className="launcher-imported-badge">{providerLabel(session.provider)}</span>
             {isColab && !isCoordinator && (
               <span
                 className="launcher-colab-chip"
@@ -1252,7 +1329,7 @@ function SessionLauncher({
               <span className="launcher-ticket">{session.ticket_key}</span>
             )}
             {session.needs_migration && (
-              <span className="launcher-forked-badge" title={`Will migrate existing ${session.provider === "codex" ? "Claude" : "Codex"} context into ${session.provider} on next launch`}>
+              <span className="launcher-forked-badge" title={`Will prepare migration context for ${session.provider} on next launch`}>
                 Migrate on Open
               </span>
             )}
@@ -1662,6 +1739,27 @@ function SessionLauncher({
           Create a new work session and launch it immediately. Provide a ticket to auto-fetch details, or just a name.
         </p>
         <div className="launcher-new-session-fields">
+          <fieldset className="launcher-harness-picker">
+            <legend>Agent harness</legend>
+            <div className="launcher-sort" role="radiogroup" aria-label="Agent harness">
+              {configuredProviders.map((provider) => (
+                <button
+                  key={provider}
+                  type="button"
+                  role="radio"
+                  aria-checked={newSessionProvider === provider}
+                  aria-pressed={newSessionProvider === provider}
+                  className={`launcher-sort-btn${newSessionProvider === provider ? " active" : ""}`}
+                  onClick={() => {
+                    setNewSessionProvider(provider);
+                    if (provider !== "claude") setNewSessionChrome(false);
+                  }}
+                >
+                  {providerLabel(provider)}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <div className="launcher-settings-field">
             <label>Ticket</label>
             <input
@@ -1691,14 +1789,16 @@ function SessionLauncher({
             />
             <span>GitHub issue</span>
           </label>
-          <label className="launcher-checkbox-field">
-            <input
-              type="checkbox"
-              checked={newSessionChrome}
-              onChange={(e) => setNewSessionChrome(e.target.checked)}
-            />
-            <span>Use Chrome</span>
-          </label>
+          {newSessionProvider === "claude" && (
+            <label className="launcher-checkbox-field">
+              <input
+                type="checkbox"
+                checked={newSessionChrome}
+                onChange={(e) => setNewSessionChrome(e.target.checked)}
+              />
+              <span>Use Chrome</span>
+            </label>
+          )}
         </div>
         {createError && <div className="launcher-create-error">{createError}</div>}
         <div className="launcher-new-session-actions">

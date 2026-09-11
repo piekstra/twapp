@@ -24,7 +24,10 @@ pub mod ticket;
 use clap::Subcommand;
 use coordinator::CoordinatorCommands;
 use msg::MsgCommands;
-use session::{AgentProvider, build_claude_run_command, build_codex_run_command, shell_escape_single};
+use session::{
+    build_antigravity_run_command, build_claude_run_command, build_codex_run_command,
+    shell_escape_single, AgentProvider,
+};
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
@@ -36,18 +39,22 @@ pub enum Commands {
         /// Custom session name (required if no ticket)
         #[arg(long, short = 'n')]
         name: Option<String>,
-        /// Override startup command (default: claude)
+        /// Override the selected harness startup command
         #[arg(long)]
         run: Option<String>,
-        /// Spawn claude with 'Read <path> and execute.' — safer than --run for
+        /// Spawn Claude with 'Read <path> and execute.'; safer than --run for
         /// long prompts with special characters. Path must exist at spawn time.
         #[arg(long)]
         from_file: Option<String>,
-        /// Model name passed through to the provider CLI (claude: `--model`,
-        /// codex: `-c model='<name>'`). twapp does not validate the name —
-        /// the provider CLI rejects unknown models. See `twapp models list`.
+        /// Model name passed through to the provider CLI (Claude: `--model`,
+        /// Codex: `-c model='<name>'`, Antigravity: `--model`). twapp does not
+        /// validate the name; the provider CLI rejects unknown models.
         #[arg(long)]
         model: Option<String>,
+        /// Harness to use for this session. When omitted, interactive launches
+        /// ask if more than one harness is configured.
+        #[arg(long)]
+        provider: Option<AgentProvider>,
         /// Force GitHub issue lookup
         #[arg(long, short = 'g')]
         github: bool,
@@ -376,6 +383,7 @@ pub fn run(cmd: Commands) -> i32 {
             run,
             from_file,
             model,
+            provider,
             github,
             session_id: fork_session_id,
             claude_cwd,
@@ -390,6 +398,7 @@ pub fn run(cmd: Commands) -> i32 {
             run,
             from_file,
             model,
+            provider,
             github,
             fork_session_id,
             claude_cwd,
@@ -628,13 +637,14 @@ pub fn format_session_name(key: &str, title: &str) -> String {
 /// Core session creation logic shared between CLI (cmd_work) and GUI (create_and_launch_session).
 ///
 /// `model`, when set, is pass-through inserted into the spawned provider
-/// invocation (claude: `--model <name>`, codex: `-c model='<name>'`).
+/// invocation (Claude: `--model`, Codex: `-c model=`, Antigravity: `--model`).
 /// twapp does not validate the name.
 pub fn create_session_core(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
     model: Option<String>,
+    provider: AgentProvider,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -658,8 +668,6 @@ pub fn create_session_core(
     }
 
     let global_config = config::GlobalConfig::load()?;
-    let provider = global_config.agent_provider;
-
     let mut ticket_info: Option<ticket::TicketInfo> = None;
     let mut ticket_file_path: Option<std::path::PathBuf> = None;
     let mut window_name = session_name
@@ -762,6 +770,13 @@ pub fn create_session_core(
         } else {
             None
         },
+        antigravity_session_id: None,
+        antigravity_cwd: if provider == AgentProvider::Antigravity {
+            Some(work_dir.to_string_lossy().to_string())
+        } else {
+            None
+        },
+        migration_source_provider: None,
         forked_from: fork_session_id.clone(),
         imported: None,
         imported_from: None,
@@ -788,6 +803,8 @@ pub fn create_session_core(
             model.as_deref(),
             initial_prompt.as_deref(),
         )
+    } else if provider == AgentProvider::Antigravity {
+        build_antigravity_run_command(None, model.as_deref())
     } else {
         build_claude_run_command(
             &session_id,
@@ -825,9 +842,17 @@ pub fn create_session_core(
         app_args.push("--session-id".to_string());
         app_args.push(session_id);
     }
-    if provider == AgentProvider::Codex {
+    if matches!(provider, AgentProvider::Codex | AgentProvider::Antigravity) {
         app_args.push("--capture-started-at".to_string());
         app_args.push(created_at);
+    }
+    if provider == AgentProvider::Antigravity {
+        if let Some(previous_id) =
+            session::find_antigravity_session_for_cwd(&work_dir.to_string_lossy())
+        {
+            app_args.push("--capture-previous-session-id".to_string());
+            app_args.push(previous_id);
+        }
     }
     if let Some(ref pf) = prefill {
         app_args.push("--prefill".to_string());
@@ -854,6 +879,7 @@ fn cmd_work(
     run_command: Option<String>,
     from_file: Option<String>,
     model: Option<String>,
+    provider_arg: Option<AgentProvider>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
@@ -872,6 +898,30 @@ fn cmd_work(
 
     if run_command.is_some() && from_file.is_some() {
         eprintln!("Error: --run and --from-file are mutually exclusive.");
+        return 1;
+    }
+
+    let provider = match select_provider_for_new_session(provider_arg, from_file.is_some()) {
+        Ok(provider) => provider,
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            return 1;
+        }
+    };
+
+    if chrome && provider != AgentProvider::Claude {
+        eprintln!("Error: --chrome is only supported by the Claude harness.");
+        return 1;
+    }
+    if fork_session_id.is_some() && provider != AgentProvider::Claude {
+        eprintln!("Error: --session-id forks are only supported by the Claude harness.");
+        return 1;
+    }
+    if config::find_agent_provider_binary(provider).is_none() {
+        eprintln!(
+            "Error: {} is configured but its command was not found on PATH.",
+            provider.display_name()
+        );
         return 1;
     }
 
@@ -945,6 +995,7 @@ fn cmd_work(
         session_name,
         effective_run,
         model,
+        provider,
         github,
         fork_session_id,
         claude_cwd_arg,
@@ -995,9 +1046,15 @@ fn cmd_resume(fork: bool) -> i32 {
     };
 
     let window_name = session_data.name.clone();
-    let provider = config::GlobalConfig::load()
-        .map(|cfg| cfg.agent_provider)
-        .unwrap_or(AgentProvider::Claude);
+    let provider = session_data.last_provider();
+    let migration_prompt = session_data.migration_source(provider).map(|source| {
+        format!(
+            "This twapp session is migrating from {} to {}. Continue the same task from the current repository state. The source conversation ID is {}. Before acting, inspect the repo status, existing diffs, session notes, and linked ticket so you can recover state cleanly.",
+            source,
+            provider,
+            session_data.native_session_id(source).unwrap_or("unknown"),
+        )
+    });
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {
@@ -1040,7 +1097,15 @@ fn cmd_resume(fork: bool) -> i32 {
                 shell_escape_single(&work_dir.to_string_lossy())
             )
         } else {
-            format!("codex -C '{}'", shell_escape_single(&work_dir.to_string_lossy()))
+            let prompt = migration_prompt
+                .as_deref()
+                .map(|prompt| format!(" '{}'", shell_escape_single(prompt)))
+                .unwrap_or_default();
+            format!(
+                "codex -C '{}'{}",
+                shell_escape_single(&work_dir.to_string_lossy()),
+                prompt
+            )
         };
         session_data.provider = Some(AgentProvider::Codex);
         session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
@@ -1049,7 +1114,57 @@ fn cmd_resume(fork: bool) -> i32 {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, session_data.codex_session_id.as_deref(), &command, chrome, provider, Some(chrono::Utc::now().to_rfc3339()))
+        build_and_launch(
+            &work_dir,
+            &window_name,
+            &color,
+            session_data.codex_session_id.as_deref(),
+            &command,
+            chrome,
+            provider,
+            Some(chrono::Utc::now().to_rfc3339()),
+            None,
+            None,
+        )
+    } else if provider == AgentProvider::Antigravity {
+        if fork {
+            eprintln!(
+                "Error: Antigravity forks are created inside the harness with /fork; twapp cannot assign the new conversation ID before that interaction."
+            );
+            return 1;
+        }
+        let current_id = session_data
+            .native_session_id(AgentProvider::Antigravity)
+            .map(str::to_string);
+        let previous_id = if current_id.is_none() {
+            session::find_antigravity_session_for_cwd(&work_dir.to_string_lossy())
+        } else {
+            None
+        };
+        let command = build_antigravity_run_command(current_id.as_deref(), None);
+        session_data.provider = Some(AgentProvider::Antigravity);
+        session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
+        session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+        if let Err(e) = session::write_session(&work_dir, &session_data) {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+        build_and_launch(
+            &work_dir,
+            &window_name,
+            &color,
+            current_id.as_deref(),
+            &command,
+            chrome,
+            provider,
+            if current_id.is_none() {
+                Some(chrono::Utc::now().to_rfc3339())
+            } else {
+                None
+            },
+            previous_id,
+            migration_prompt,
+        )
     } else if fork {
         let new_id = uuid::Uuid::new_v4().to_string();
         let command = format!(
@@ -1067,6 +1182,9 @@ fn cmd_resume(fork: bool) -> i32 {
             provider: Some(AgentProvider::Claude),
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: Some(session_data.session_id),
             imported: None,
             imported_from: None,
@@ -1081,7 +1199,53 @@ fn cmd_resume(fork: bool) -> i32 {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
+        build_and_launch(
+            &work_dir,
+            &window_name,
+            &color,
+            Some(&session_id),
+            &command,
+            chrome,
+            provider,
+            None,
+            None,
+            None,
+        )
+    } else if session_data
+        .native_session_id(AgentProvider::Claude)
+        .is_none()
+    {
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let prompt = migration_prompt
+            .as_deref()
+            .map(|prompt| format!(" '{}'", shell_escape_single(prompt)))
+            .unwrap_or_default();
+        let command = format!(
+            "{}claude --session-id {}{}{}",
+            cd_prefix, new_id, chrome_flag, prompt
+        );
+        session_data.set_provider_session(
+            AgentProvider::Claude,
+            new_id.clone(),
+            work_dir.to_string_lossy().to_string(),
+        );
+        session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+        if let Err(e) = session::write_session(&work_dir, &session_data) {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+        build_and_launch(
+            &work_dir,
+            &window_name,
+            &color,
+            Some(&new_id),
+            &command,
+            chrome,
+            provider,
+            None,
+            None,
+            None,
+        )
     } else {
         // Attribution: did /compact or /clear swap in a new jsonl since the
         // last resume? Adopt only when the chain-of-descent signal is
@@ -1134,7 +1298,18 @@ fn cmd_resume(fork: bool) -> i32 {
             eprintln!("Error: {}", e);
             return 1;
         }
-        build_and_launch(&work_dir, &window_name, &color, Some(&session_id), &command, chrome, provider, None)
+        build_and_launch(
+            &work_dir,
+            &window_name,
+            &color,
+            Some(&session_id),
+            &command,
+            chrome,
+            provider,
+            None,
+            None,
+            None,
+        )
     }
 }
 
@@ -1204,6 +1379,70 @@ fn atty_stdin() -> bool {
     std::io::stdin().is_terminal()
 }
 
+fn select_provider_for_new_session(
+    explicit: Option<AgentProvider>,
+    has_from_file: bool,
+) -> Result<AgentProvider, String> {
+    use std::io::{BufRead, Write};
+
+    let configured = config::get_configured_agent_providers();
+    if let Some(provider) = explicit {
+        if !configured.contains(&provider) {
+            return Err(format!(
+                "{} is not configured in twapp. Add it in Settings > General > Agent Harnesses.",
+                provider.display_name()
+            ));
+        }
+        if has_from_file && provider != AgentProvider::Claude {
+            return Err("--from-file currently requires the Claude harness".to_string());
+        }
+        return Ok(provider);
+    }
+
+    // Agent-spawned briefing sessions predate multi-harness selection and
+    // carry Claude-specific permission flags. Keep that automation stable.
+    if has_from_file {
+        if configured.contains(&AgentProvider::Claude) {
+            return Ok(AgentProvider::Claude);
+        }
+        return Err("--from-file requires Claude to be configured".to_string());
+    }
+
+    if configured.len() == 1 {
+        return Ok(configured[0]);
+    }
+    if !atty_stdin() {
+        return Err(format!(
+            "multiple harnesses are configured ({}); pass --provider",
+            configured
+                .iter()
+                .map(|provider| provider.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    eprintln!("Choose an agent harness for this session:");
+    for (index, provider) in configured.iter().enumerate() {
+        eprintln!("  [{}] {}", index + 1, provider.display_name());
+    }
+    eprint!("Harness [1-{}]: ", configured.len());
+    let _ = std::io::stderr().flush();
+
+    let mut input = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut input)
+        .map_err(|error| format!("failed to read harness selection: {}", error))?;
+    let selected = input
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|selected| *selected > 0 && *selected <= configured.len())
+        .ok_or_else(|| "invalid harness selection".to_string())?;
+    Ok(configured[selected - 1])
+}
+
 /// Build app args, prepare instance app, and launch GUI.
 fn build_and_launch(
     work_dir: &std::path::Path,
@@ -1214,6 +1453,8 @@ fn build_and_launch(
     chrome: bool,
     provider: AgentProvider,
     capture_started_at: Option<String>,
+    capture_previous_session_id: Option<String>,
+    prefill: Option<String>,
 ) -> i32 {
     let mut app_args = vec![
         "--name".to_string(),
@@ -1234,6 +1475,14 @@ fn build_and_launch(
     if let Some(started_at) = capture_started_at {
         app_args.push("--capture-started-at".to_string());
         app_args.push(started_at);
+    }
+    if let Some(previous_id) = capture_previous_session_id {
+        app_args.push("--capture-previous-session-id".to_string());
+        app_args.push(previous_id);
+    }
+    if let Some(prefill) = prefill {
+        app_args.push("--prefill".to_string());
+        app_args.push(prefill);
     }
 
     let ticket_file = work_dir.join(".twapp-ticket.json");
@@ -1293,15 +1542,20 @@ fn cmd_sessions(path: Option<String>) -> i32 {
     }
 
     println!(
-        "{:<25} {:<12} {:<16} {:<20} {:<16} {:<20} {}",
-        "Name", "Ticket", "Session ID", "Last Active", "Role", "Colab", "Directory"
+        "{:<25} {:<12} {:<13} {:<16} {:<20} {:<16} {:<20} Directory",
+        "Name", "Ticket", "Harness", "Session ID", "Last Active", "Role", "Colab"
     );
-    println!("{}", "-".repeat(137));
+    println!("{}", "-".repeat(151));
     for (s, dir) in &sessions {
         let name = &s.name[..s.name.len().min(24)];
         let ticket = s.ticket_key.as_deref().unwrap_or("-");
         let ticket = &ticket[..ticket.len().min(11)];
-        let sid = format!("{}...", &s.session_id[..s.session_id.len().min(12)]);
+        let provider = s.last_provider();
+        let provider_name = provider.display_name();
+        let sid = s
+            .native_session_id(provider)
+            .map(|id| format!("{}...", &id[..id.len().min(12)]))
+            .unwrap_or_else(|| "-".to_string());
         let last = s
             .last_resumed
             .as_deref()
@@ -1311,9 +1565,10 @@ fn cmd_sessions(path: Option<String>) -> i32 {
         let role_cell = format_role_cell(s.role.as_deref(), s.provenance.as_deref());
         let colab_cell = format_colab_cell(s.colab_group.as_deref());
         println!(
-            "{:<25} {:<12} {:<16} {:<20} {:<16} {:<20} {}",
+            "{:<25} {:<12} {:<13} {:<16} {:<20} {:<16} {:<20} {}",
             name,
             ticket,
+            provider_name,
             sid,
             last,
             role_cell,
@@ -2612,6 +2867,9 @@ mod colab_group_tests {
             provider: Some(session::AgentProvider::Claude),
             codex_session_id: None,
             codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
             forked_from: None,
             imported: None,
             imported_from: None,
