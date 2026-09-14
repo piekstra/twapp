@@ -112,28 +112,29 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
                     &crate::cli::transcript::TranscriptRoots::from_home(),
                 )
             });
-        if let Ok((command, session_id)) = sessions::build_provider_command(
+        let launch = crate::cli::harness::build_provider_command(
             provider,
             &session,
             &work_dir,
             migration_prompt.as_deref(),
-            false,
-        ) {
-            args.command = Some(command);
-            args.session_id = session_id.clone();
-            if provider == crate::cli::session::AgentProvider::Claude {
-                if let Some(session_id) = session_id {
-                    session.set_provider_session(provider, session_id, cwd.clone());
-                    let _ = crate::cli::session::write_session(&work_dir, &session);
-                }
-            } else {
+        );
+        args.command = Some(launch.command);
+        args.session_id = launch.conversation.known_id().map(str::to_string);
+        args.prefill = launch.prefill;
+        if let Some(minted) = launch.conversation.id_to_record() {
+            session.set_provider_session(provider, minted.to_string(), cwd.clone());
+            let _ = crate::cli::session::write_session(&work_dir, &session);
+        }
+        match launch.conversation {
+            crate::cli::harness::Conversation::HarnessAssigns => {
                 args.capture_started_at = Some(chrono::Utc::now().to_rfc3339());
                 if provider == crate::cli::session::AgentProvider::Antigravity {
-                    args.prefill = migration_prompt;
                     args.capture_previous_session_id =
                         crate::cli::session::find_antigravity_session_for_cwd(&cwd);
                 }
             }
+            crate::cli::harness::Conversation::Existing(_)
+            | crate::cli::harness::Conversation::Assigned(_) => {}
         }
     }
 }

@@ -3,7 +3,7 @@ use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
 
-use crate::cli::harness::build_migration_prompt;
+use crate::cli::harness::{build_migration_prompt, build_provider_command, Conversation};
 use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
@@ -135,119 +135,6 @@ fn launcher_session_from_data(
         role: session_data.role.clone(),
         provenance: session_data.provenance.clone(),
         colab_group: session_data.colab_group.clone(),
-    }
-}
-
-pub(super) fn build_provider_command(
-    provider: AgentProvider,
-    session_data: &SessionData,
-    work_dir: &std::path::Path,
-    prompt: Option<&str>,
-    fork: bool,
-) -> Result<(String, Option<String>), String> {
-    let work_dir_str = work_dir.to_string_lossy().to_string();
-    let prompt_suffix = prompt
-        .map(|text| format!(" '{}'", shell_escape_single(text)))
-        .unwrap_or_default();
-    let chrome_flag = if session_data.use_chrome.unwrap_or(false) {
-        " --chrome"
-    } else {
-        ""
-    };
-
-    match provider {
-        AgentProvider::Claude => {
-            let command = if fork {
-                let current_id = session_data
-                    .native_session_id(AgentProvider::Claude)
-                    .ok_or("No Claude session ID available to fork")?;
-                let new_id = uuid::Uuid::new_v4().to_string();
-                let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
-                let cd_prefix = if cwd != work_dir_str {
-                    format!("cd '{}' && ", shell_escape_single(&cwd))
-                } else {
-                    String::new()
-                };
-                (
-                    format!(
-                        "{}claude --resume {} --fork-session --session-id {}{}{}",
-                        cd_prefix, current_id, new_id, chrome_flag, prompt_suffix
-                    ),
-                    Some(new_id),
-                )
-            } else if let Some(current_id) = session_data.native_session_id(AgentProvider::Claude) {
-                let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
-                let cd_prefix = if cwd != work_dir_str {
-                    format!("cd '{}' && ", shell_escape_single(&cwd))
-                } else {
-                    String::new()
-                };
-                (
-                    format!(
-                        "{}claude --resume {}{}{}",
-                        cd_prefix, current_id, chrome_flag, prompt_suffix
-                    ),
-                    Some(current_id.to_string()),
-                )
-            } else {
-                let new_id = uuid::Uuid::new_v4().to_string();
-                (
-                    format!(
-                        "claude --session-id {}{}{}",
-                        new_id, chrome_flag, prompt_suffix
-                    ),
-                    Some(new_id),
-                )
-            };
-            Ok(command)
-        }
-        AgentProvider::Codex => {
-            let escaped_dir = shell_escape_single(&work_dir_str);
-            let command = if fork {
-                let current_id = session_data
-                    .native_session_id(AgentProvider::Codex)
-                    .ok_or("No Codex session ID available to fork")?;
-                (
-                    format!(
-                        "codex fork {} -C '{}'{}",
-                        current_id, escaped_dir, prompt_suffix
-                    ),
-                    None,
-                )
-            } else if let Some(current_id) = session_data.native_session_id(AgentProvider::Codex) {
-                (
-                    format!(
-                        "codex resume {} -C '{}'{}",
-                        current_id, escaped_dir, prompt_suffix
-                    ),
-                    Some(current_id.to_string()),
-                )
-            } else {
-                (format!("codex -C '{}'{}", escaped_dir, prompt_suffix), None)
-            };
-            Ok(command)
-        }
-        AgentProvider::Antigravity => {
-            if fork {
-                return Err(
-                    "Antigravity forks must be created inside the harness with /fork".to_string(),
-                );
-            }
-            let command = if let Some(current_id) =
-                session_data.native_session_id(AgentProvider::Antigravity)
-            {
-                (
-                    format!(
-                        "agy --conversation '{}'",
-                        shell_escape_single(current_id)
-                    ),
-                    Some(current_id.to_string()),
-                )
-            } else {
-                ("agy".to_string(), None)
-            };
-            Ok(command)
-        }
     }
 }
 
@@ -443,22 +330,22 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
                 &TranscriptRoots::from_home(),
             )
         });
-    let (command, provider_session_id) = build_provider_command(
+    let launch = build_provider_command(
         preferred,
         &session_data,
         &work_dir,
         migration_prompt.as_deref(),
-        false,
-    )?;
+    );
+    let provider_session_id = launch.conversation.known_id().map(str::to_string);
 
-    if preferred == AgentProvider::Claude {
-        if let Some(provider_session_id) = provider_session_id.clone() {
-            session_data.set_provider_session(
-                preferred,
-                provider_session_id,
-                work_dir.to_string_lossy().to_string(),
-            );
-        }
+    // An id twapp minted is only real once it is on disk; one the harness
+    // names is captured after launch instead.
+    if let Some(minted) = launch.conversation.id_to_record() {
+        session_data.set_provider_session(
+            preferred,
+            minted.to_string(),
+            work_dir.to_string_lossy().to_string(),
+        );
     } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
         session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
     } else if preferred == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
@@ -482,7 +369,7 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         "--cwd".to_string(),
         directory.clone(),
         "--command".to_string(),
-        command,
+        launch.command,
         "--provider".to_string(),
         preferred.to_string(),
     ];
@@ -490,26 +377,21 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push("--session-id".to_string());
         app_args.push(provider_session_id);
     }
-    if preferred == AgentProvider::Codex
-        && session_data.native_session_id(AgentProvider::Codex).is_none()
-    {
-        app_args.push("--capture-started-at".to_string());
-        app_args.push(chrono::Utc::now().to_rfc3339());
-    } else if preferred == AgentProvider::Antigravity
-        && session_data
-            .native_session_id(AgentProvider::Antigravity)
-            .is_none()
-    {
-        if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
-            app_args.push("--capture-previous-session-id".to_string());
-            app_args.push(previous_id);
+    if matches!(launch.conversation, Conversation::HarnessAssigns) {
+        if preferred == AgentProvider::Antigravity {
+            // Antigravity's cache already holds an entry for this directory if
+            // it ran here before; capture has to ignore that one.
+            if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
+                app_args.push("--capture-previous-session-id".to_string());
+                app_args.push(previous_id);
+            }
         }
         app_args.push("--capture-started-at".to_string());
         app_args.push(chrono::Utc::now().to_rfc3339());
-        if let Some(prompt) = migration_prompt {
-            app_args.push("--prefill".to_string());
-            app_args.push(prompt);
-        }
+    }
+    if let Some(prefill) = launch.prefill {
+        app_args.push("--prefill".to_string());
+        app_args.push(prefill);
     }
     let ticket_file = work_dir.join(".twapp-ticket.json");
     if ticket_file.exists() {
