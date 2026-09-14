@@ -20,8 +20,8 @@ pub mod stop;
 #[cfg(test)]
 pub mod test_env;
 pub mod theme;
-pub mod transcript;
 pub mod ticket;
+pub mod transcript;
 
 use clap::Subcommand;
 use coordinator::CoordinatorCommands;
