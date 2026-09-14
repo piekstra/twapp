@@ -1226,10 +1226,10 @@ fn cmd_resume(fork: bool) -> i32 {
         );
         let command = launch.command;
         let new_id = launch.conversation.known_id().map(str::to_string);
-        if let Some(new_id) = new_id.clone() {
+        if let Some(minted) = launch.conversation.id_to_record() {
             session_data.set_provider_session(
                 AgentProvider::Claude,
-                new_id,
+                minted.to_string(),
                 work_dir.to_string_lossy().to_string(),
             );
         }

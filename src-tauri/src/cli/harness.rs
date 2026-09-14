@@ -14,7 +14,6 @@ use super::session::{
 use super::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::gui::truncate_str;
 
-/// Everything twapp needs to start a harness for an existing session.
 /// Which conversation a launch runs, and who is responsible for the id.
 pub enum Conversation {
     /// The harness already had it. Nothing to record.
@@ -28,15 +27,30 @@ pub enum Conversation {
 }
 
 impl Conversation {
-    /// The id, when twapp knows it before the harness starts.
+    /// The id, when twapp knows it before the harness starts. For reporting
+    /// the conversation, not for deciding what to store.
     pub fn known_id(&self) -> Option<&str> {
         match self {
             Self::Existing(id) | Self::Assigned(id) => Some(id),
             Self::HarnessAssigns => None,
         }
     }
+
+    /// The id the caller must write to the session file, if any.
+    ///
+    /// Only a minted id needs writing. One the harness already had is already
+    /// there, and storing it again would also rewrite the conversation's
+    /// recorded directory to whichever one is being opened, while the command
+    /// may be cd-ing into the directory the file used to name.
+    pub fn id_to_record(&self) -> Option<&str> {
+        match self {
+            Self::Assigned(id) => Some(id),
+            Self::Existing(_) | Self::HarnessAssigns => None,
+        }
+    }
 }
 
+/// Everything twapp needs to start a harness for an existing session.
 pub struct ProviderLaunch {
     /// The shell command to run.
     pub command: String,
@@ -368,6 +382,43 @@ mod tests {
             panic!("a new Claude conversation is twapp's to name");
         };
         assert_eq!(launch.command, format!("claude --session-id {}", minted));
+    }
+
+    #[test]
+    fn resuming_an_existing_conversation_leaves_its_recorded_directory_alone() {
+        let mut data = claude_session();
+        let launch = build_provider_command(
+            AgentProvider::Claude,
+            &data,
+            std::path::Path::new("/tmp/elsewhere"),
+            None,
+        );
+
+        // What every caller does with the launch.
+        if let Some(minted) = launch.conversation.id_to_record() {
+            data.set_provider_session(
+                AgentProvider::Claude,
+                minted.to_string(),
+                "/tmp/elsewhere".to_string(),
+            );
+        }
+
+        // The command runs in /tmp/demo, so the file has to keep saying so.
+        assert!(launch.command.starts_with("cd '/tmp/demo' &&"), "{}", launch.command);
+        assert_eq!(data.claude_cwd, "/tmp/demo");
+    }
+
+    #[test]
+    fn a_minted_conversation_is_the_only_kind_the_caller_records() {
+        assert_eq!(
+            Conversation::Assigned("new-1".to_string()).id_to_record(),
+            Some("new-1")
+        );
+        assert_eq!(
+            Conversation::Existing("old-1".to_string()).id_to_record(),
+            None
+        );
+        assert_eq!(Conversation::HarnessAssigns.id_to_record(), None);
     }
 
     #[test]

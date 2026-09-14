@@ -121,11 +121,11 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
         args.command = Some(launch.command);
         args.session_id = launch.conversation.known_id().map(str::to_string);
         args.prefill = launch.prefill;
+        if let Some(minted) = launch.conversation.id_to_record() {
+            session.set_provider_session(provider, minted.to_string(), cwd.clone());
+            let _ = crate::cli::session::write_session(&work_dir, &session);
+        }
         match launch.conversation {
-            crate::cli::harness::Conversation::Assigned(new_id) => {
-                session.set_provider_session(provider, new_id, cwd.clone());
-                let _ = crate::cli::session::write_session(&work_dir, &session);
-            }
             crate::cli::harness::Conversation::HarnessAssigns => {
                 args.capture_started_at = Some(chrono::Utc::now().to_rfc3339());
                 if provider == crate::cli::session::AgentProvider::Antigravity {
@@ -133,7 +133,8 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
                         crate::cli::session::find_antigravity_session_for_cwd(&cwd);
                 }
             }
-            crate::cli::harness::Conversation::Existing(_) => {}
+            crate::cli::harness::Conversation::Existing(_)
+            | crate::cli::harness::Conversation::Assigned(_) => {}
         }
     }
 }

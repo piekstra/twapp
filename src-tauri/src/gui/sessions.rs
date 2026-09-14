@@ -340,10 +340,10 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
 
     // An id twapp minted is only real once it is on disk; one the harness
     // names is captured after launch instead.
-    if let Conversation::Assigned(new_id) = &launch.conversation {
+    if let Some(minted) = launch.conversation.id_to_record() {
         session_data.set_provider_session(
             preferred,
-            new_id.clone(),
+            minted.to_string(),
             work_dir.to_string_lossy().to_string(),
         );
     } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
