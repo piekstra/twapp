@@ -1,6 +1,7 @@
 pub mod app_bundle;
 pub mod config;
 pub mod coordinator;
+pub mod harness;
 pub mod models;
 pub mod monitor;
 pub mod msg;
@@ -20,6 +21,7 @@ pub mod stop;
 pub mod test_env;
 pub mod theme;
 pub mod ticket;
+pub mod transcript;
 
 use clap::Subcommand;
 use coordinator::CoordinatorCommands;
@@ -1047,14 +1049,17 @@ fn cmd_resume(fork: bool) -> i32 {
 
     let window_name = session_data.name.clone();
     let provider = session_data.last_provider();
-    let migration_prompt = session_data.migration_source(provider).map(|source| {
-        format!(
-            "This twapp session is migrating from {} to {}. Continue the same task from the current repository state. The source conversation ID is {}. Before acting, inspect the repo status, existing diffs, session notes, and linked ticket so you can recover state cleanly.",
-            source,
-            provider,
-            session_data.native_session_id(source).unwrap_or("unknown"),
-        )
-    });
+    let migration_prompt = session_data
+        .migration_source(provider)
+        .map(|source| {
+            harness::build_migration_prompt(
+                &session_data,
+                &work_dir,
+                source,
+                provider,
+                &transcript::TranscriptRoots::from_home(),
+            )
+        });
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {
