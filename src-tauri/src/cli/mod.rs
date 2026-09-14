@@ -1225,14 +1225,14 @@ fn cmd_resume(fork: bool) -> i32 {
             migration_prompt.as_deref(),
         );
         let command = launch.command;
-        let new_id = launch
-            .session_id
-            .expect("a Claude launch always names its conversation");
-        session_data.set_provider_session(
-            AgentProvider::Claude,
-            new_id.clone(),
-            work_dir.to_string_lossy().to_string(),
-        );
+        let new_id = launch.conversation.known_id().map(str::to_string);
+        if let Some(new_id) = new_id.clone() {
+            session_data.set_provider_session(
+                AgentProvider::Claude,
+                new_id,
+                work_dir.to_string_lossy().to_string(),
+            );
+        }
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
         if let Err(e) = session::write_session(&work_dir, &session_data) {
             eprintln!("Error: {}", e);
@@ -1242,7 +1242,7 @@ fn cmd_resume(fork: bool) -> i32 {
             &work_dir,
             &window_name,
             &color,
-            Some(&new_id),
+            new_id.as_deref(),
             &command,
             chrome,
             provider,

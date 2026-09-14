@@ -3,7 +3,7 @@ use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
 
-use crate::cli::harness::{build_migration_prompt, build_provider_command};
+use crate::cli::harness::{build_migration_prompt, build_provider_command, Conversation};
 use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
@@ -336,16 +336,16 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         &work_dir,
         migration_prompt.as_deref(),
     );
-    let provider_session_id = launch.session_id.clone();
+    let provider_session_id = launch.conversation.known_id().map(str::to_string);
 
-    if preferred == AgentProvider::Claude {
-        if let Some(provider_session_id) = provider_session_id.clone() {
-            session_data.set_provider_session(
-                preferred,
-                provider_session_id,
-                work_dir.to_string_lossy().to_string(),
-            );
-        }
+    // An id twapp minted is only real once it is on disk; one the harness
+    // names is captured after launch instead.
+    if let Conversation::Assigned(new_id) = &launch.conversation {
+        session_data.set_provider_session(
+            preferred,
+            new_id.clone(),
+            work_dir.to_string_lossy().to_string(),
+        );
     } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
         session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
     } else if preferred == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
@@ -377,19 +377,14 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push("--session-id".to_string());
         app_args.push(provider_session_id);
     }
-    if preferred == AgentProvider::Codex
-        && session_data.native_session_id(AgentProvider::Codex).is_none()
-    {
-        app_args.push("--capture-started-at".to_string());
-        app_args.push(chrono::Utc::now().to_rfc3339());
-    } else if preferred == AgentProvider::Antigravity
-        && session_data
-            .native_session_id(AgentProvider::Antigravity)
-            .is_none()
-    {
-        if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
-            app_args.push("--capture-previous-session-id".to_string());
-            app_args.push(previous_id);
+    if matches!(launch.conversation, Conversation::HarnessAssigns) {
+        if preferred == AgentProvider::Antigravity {
+            // Antigravity's cache already holds an entry for this directory if
+            // it ran here before; capture has to ignore that one.
+            if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
+                app_args.push("--capture-previous-session-id".to_string());
+                app_args.push(previous_id);
+            }
         }
         app_args.push("--capture-started-at".to_string());
         app_args.push(chrono::Utc::now().to_rfc3339());

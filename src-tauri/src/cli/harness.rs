@@ -1,8 +1,9 @@
-//! Migration context shared by every path that launches a harness.
+//! Builds the command and the briefing every path uses to launch a harness for
+//! an existing session.
 //!
-//! `twapp resume` and the launcher both hand a newly selected harness the same
-//! briefing, so a session migrated from the terminal is not told less about the
-//! work than one migrated from the GUI.
+//! `twapp resume` and the launcher share both, so a session resumed from the
+//! terminal runs the same command and, when its harness changed, is told as
+//! much about the work as one resumed from the GUI.
 
 use std::io::BufRead;
 use std::path::Path;
@@ -14,13 +15,33 @@ use super::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::gui::truncate_str;
 
 /// Everything twapp needs to start a harness for an existing session.
+/// Which conversation a launch runs, and who is responsible for the id.
+pub enum Conversation {
+    /// The harness already had it. Nothing to record.
+    Existing(String),
+    /// twapp minted it for this launch. The caller writes it to the session
+    /// file, or the next launch mints another and this one is orphaned.
+    Assigned(String),
+    /// The harness names its own. The caller starts a capture to find out
+    /// which one it chose.
+    HarnessAssigns,
+}
+
+impl Conversation {
+    /// The id, when twapp knows it before the harness starts.
+    pub fn known_id(&self) -> Option<&str> {
+        match self {
+            Self::Existing(id) | Self::Assigned(id) => Some(id),
+            Self::HarnessAssigns => None,
+        }
+    }
+}
+
 pub struct ProviderLaunch {
     /// The shell command to run.
     pub command: String,
-    /// The conversation the command resumes or creates, when twapp knows it
-    /// before launch. `None` means the harness assigns one and twapp captures
-    /// it from the harness's own store afterwards.
-    pub session_id: Option<String>,
+    /// The conversation the command runs.
+    pub conversation: Conversation,
     /// Text to place in the terminal for the user to send. Carries a prompt
     /// for a harness whose resume command cannot take one as an argument, so
     /// no caller has to know which harnesses those are.
@@ -64,7 +85,7 @@ pub fn build_provider_command(
                         "{}claude --resume {}{}{}",
                         cd_prefix, current_id, chrome_flag, prompt_suffix
                     ),
-                    session_id: Some(current_id.to_string()),
+                    conversation: Conversation::Existing(current_id.to_string()),
                     prefill: None,
                 }
             } else {
@@ -76,7 +97,7 @@ pub fn build_provider_command(
                         "claude --session-id {}{}{}",
                         new_id, chrome_flag, prompt_suffix
                     ),
-                    session_id: Some(new_id),
+                    conversation: Conversation::Assigned(new_id),
                     prefill: None,
                 }
             }
@@ -89,23 +110,24 @@ pub fn build_provider_command(
                         "codex resume {} -C '{}'{}",
                         current_id, escaped_dir, prompt_suffix
                     ),
-                    session_id: Some(current_id.to_string()),
+                    conversation: Conversation::Existing(current_id.to_string()),
                     prefill: None,
                 },
                 None => ProviderLaunch {
                     command: format!("codex -C '{}'{}", escaped_dir, prompt_suffix),
-                    session_id: None,
+                    conversation: Conversation::HarnessAssigns,
                     prefill: None,
                 },
             }
         }
         AgentProvider::Antigravity => {
-            let session_id = session_data
-                .native_session_id(AgentProvider::Antigravity)
-                .map(str::to_string);
+            let existing = session_data.native_session_id(AgentProvider::Antigravity);
             ProviderLaunch {
-                command: build_antigravity_run_command(session_id.as_deref(), None),
-                session_id,
+                command: build_antigravity_run_command(existing, None),
+                conversation: match existing {
+                    Some(id) => Conversation::Existing(id.to_string()),
+                    None => Conversation::HarnessAssigns,
+                },
                 prefill: prompt.map(str::to_string),
             }
         }
@@ -307,7 +329,7 @@ mod tests {
         );
 
         assert_eq!(launch.command, "claude --resume claude-123 'carry on'");
-        assert_eq!(launch.session_id.as_deref(), Some("claude-123"));
+        assert!(matches!(&launch.conversation, Conversation::Existing(id) if id == "claude-123"));
         assert_eq!(launch.prefill, None);
     }
 
@@ -338,10 +360,14 @@ mod tests {
             None,
         );
 
-        // No cd: the caller records the opened directory as this conversation's
-        // cwd, so starting it in the previous one would disagree with the file.
-        assert!(launch.command.starts_with("claude --session-id "), "{}", launch.command);
-        assert!(launch.session_id.is_some());
+        // The minted id comes back, so the caller can record exactly what the
+        // command runs. No cd: the caller records the opened directory as this
+        // conversation's cwd, so starting it in the previous one would disagree
+        // with the file.
+        let Conversation::Assigned(minted) = &launch.conversation else {
+            panic!("a new Claude conversation is twapp's to name");
+        };
+        assert_eq!(launch.command, format!("claude --session-id {}", minted));
     }
 
     #[test]
@@ -356,7 +382,7 @@ mod tests {
             Some("carry on"),
         );
         assert_eq!(without.command, "codex -C '/tmp/demo' 'carry on'");
-        assert_eq!(without.session_id, None);
+        assert!(matches!(without.conversation, Conversation::HarnessAssigns));
 
         data.codex_session_id = Some("codex-456".to_string());
         let with = build_provider_command(
@@ -366,7 +392,7 @@ mod tests {
             None,
         );
         assert_eq!(with.command, "codex resume codex-456 -C '/tmp/demo'");
-        assert_eq!(with.session_id.as_deref(), Some("codex-456"));
+        assert!(matches!(&with.conversation, Conversation::Existing(id) if id == "codex-456"));
     }
 
     #[test]
