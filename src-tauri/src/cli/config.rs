@@ -145,6 +145,21 @@ pub fn get_configured_agent_providers() -> Vec<AgentProvider> {
         .unwrap_or_else(|_| vec![AgentProvider::Claude])
 }
 
+/// Find `provider`'s command, re-reading PATH from an interactive shell before
+/// concluding it is absent.
+///
+/// twapp does not run the harness itself: it writes the command into a
+/// terminal whose shell resolves it. That shell reads startup files the PATH
+/// twapp starts with may not reflect, so a first miss means "ask the shell
+/// again", not "not installed".
+pub fn locate_agent_provider_binary(provider: AgentProvider) -> Option<PathBuf> {
+    if let Some(found) = find_agent_provider_binary(provider) {
+        return Some(found);
+    }
+    crate::gui::shell_env::refresh_path().ok()?;
+    find_agent_provider_binary(provider)
+}
+
 pub fn find_agent_provider_binary(provider: AgentProvider) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 

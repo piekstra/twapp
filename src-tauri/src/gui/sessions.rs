@@ -428,7 +428,7 @@ pub async fn create_and_launch_session(
             provider.display_name()
         ));
     }
-    if crate::cli::config::find_agent_provider_binary(provider).is_none() {
+    if crate::cli::config::locate_agent_provider_binary(provider).is_none() {
         return Err(format!(
             "{} is configured but its command was not found on PATH",
             provider.display_name()
