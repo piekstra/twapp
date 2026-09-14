@@ -46,17 +46,27 @@ const SESSION_COLORS = [
   { hex: "#e8f0e0", name: "Sage" },
 ];
 
-/// Ask the backend for the command that resumes this session.
-///
-/// The backend owns command construction so a resume from here carries the same
-/// flags as one from the launcher. Falls back to a bare `claude` only if the
-/// call fails, which means the session file could not be read.
-async function resumeCommandFor(directory: string): Promise<string> {
-  const resumed = await invoke<{ command: string; session_id: string | null }>(
-    "resume_command_for_session",
-    { directory },
-  ).catch(() => null);
-  return resumed?.command ?? "claude";
+type ResumeCommand = {
+  command: string;
+  session_id: string | null;
+  prefill: string | null;
+};
+
+/**
+ * Ask the backend for the command that resumes this session.
+ *
+ * The backend owns command construction, so a resume from here carries the same
+ * flags as one from the launcher. Returns null when it cannot say: the caller
+ * then opens a plain shell, because spawning some other harness would resume
+ * the wrong conversation while looking like it worked.
+ */
+async function resumeCommandFor(directory: string): Promise<ResumeCommand | null> {
+  try {
+    return await invoke<ResumeCommand>("resume_command_for_session", { directory });
+  } catch (error) {
+    console.error("Could not build a resume command for", directory, error);
+    return null;
+  }
 }
 
 function App() {
@@ -576,7 +586,7 @@ function App() {
           config = {
             ...config,
             session_id: recoveredSessionId,
-            command: await resumeCommandFor(config.cwd),
+            command: (await resumeCommandFor(config.cwd))?.command ?? config.command,
           };
         }
       } else if (
@@ -592,7 +602,7 @@ function App() {
           config = {
             ...config,
             session_id: recoveredSessionId,
-            command: await resumeCommandFor(config.cwd),
+            command: (await resumeCommandFor(config.cwd))?.command ?? config.command,
           };
         }
       }
@@ -613,12 +623,23 @@ function App() {
       fit.fit();
       const dims = fit.proposeDimensions();
 
-      const launchCommand = config.command || (config.cwd ? await resumeCommandFor(config.cwd) : "claude");
+      let resumed: ResumeCommand | null = null;
+      if (!config.command && config.cwd) {
+        resumed = await resumeCommandFor(config.cwd);
+        // The backend may have minted and stored a conversation; the badge and
+        // the fork dialog read it from here.
+        const mintedId = resumed?.session_id;
+        if (mintedId) {
+          setAppConfig((prev) => (prev ? { ...prev, session_id: mintedId } : prev));
+        }
+      }
 
       invoke("spawn_shell", {
         cwd: config.cwd || null,
-        command: launchCommand,
-        prefill: config.prefill || null,
+        // Null opens a plain shell. Launching a different harness would resume
+        // the wrong conversation while looking like it worked.
+        command: config.command || resumed?.command || null,
+        prefill: config.prefill || resumed?.prefill || null,
         rows: dims?.rows ?? null,
         cols: dims?.cols ?? null,
       }).catch(console.error);
@@ -1248,9 +1269,9 @@ function App() {
         setAppConfig((prev) => prev ? { ...prev, name: args.name } : prev);
         setTabs((prev) => prev.map((t) => t.id === "main" ? { ...t, name: args.name } : t));
       }
-      // Provider and session_id have to move together: Restart Terminal builds
-      // its resume command from both, and a new harness paired with the old
-      // one's conversation id resumes the wrong conversation.
+      // Provider and session_id have to move together here: the badge, the fork
+      // dialog and the capture decisions all read them from appConfig, and a new
+      // harness shown beside the old one's conversation id misreports the state.
       if (args.sessionId !== undefined || args.provider !== undefined) {
         setAppConfig((prev) => prev ? {
           ...prev,
@@ -1292,11 +1313,17 @@ function App() {
     await invoke("kill_pty");
     terminalInstance.current?.reset();
     const dims = fitAddon.current?.proposeDimensions();
-    const resumeCmd = appConfig?.cwd ? await resumeCommandFor(appConfig.cwd) : "claude";
+    const resumed = appConfig?.cwd ? await resumeCommandFor(appConfig.cwd) : null;
+    if (resumed?.session_id && resumed.session_id !== resolvedSessionId) {
+      resolvedSessionId = resumed.session_id;
+      const mintedId = resumed.session_id;
+      setAppConfig((prev) => (prev ? { ...prev, session_id: mintedId } : prev));
+    }
     await invoke("spawn_shell", {
       cwd: appConfig?.cwd || null,
-      command: resumeCmd,
-      prefill: null,
+      // Null opens a plain shell rather than a harness this session does not use.
+      command: resumed?.command ?? null,
+      prefill: resumed?.prefill ?? null,
       rows: dims?.rows ?? null,
       cols: dims?.cols ?? null,
     });

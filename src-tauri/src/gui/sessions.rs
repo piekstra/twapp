@@ -484,11 +484,12 @@ pub async fn start_codex_session_capture(
     Ok(())
 }
 
-/// The command that restarts a session's harness, and the conversation it runs.
+/// The command that restarts a session's harness, and what goes with it.
 #[derive(serde::Serialize)]
 pub struct ResumeCommand {
     pub command: String,
     pub session_id: Option<String>,
+    pub prefill: Option<String>,
 }
 
 /// Build the command that resumes the session in `directory`.
@@ -497,9 +498,6 @@ pub struct ResumeCommand {
 /// started from the terminal window carries the same flags as one started by
 /// the launcher: the `--chrome` a Chrome session needs, and the `cd` into the
 /// directory a Claude conversation was started in.
-///
-/// A Claude session with no stored conversation gets a new one, which is
-/// written back here so the id the caller runs is the id twapp records.
 #[tauri::command]
 pub async fn resume_command_for_session(directory: String) -> Result<ResumeCommand, String> {
     resume_command_for_directory(&directory)
@@ -509,18 +507,40 @@ fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String
     let work_dir = std::path::PathBuf::from(directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
     let provider = session_data.last_provider();
-    let launch = build_provider_command(provider, &session_data, &work_dir, None);
+
+    // A harness switch stages a migration, and recording a conversation clears
+    // it. A restart is therefore where a staged briefing gets delivered, not
+    // where it gets silently consumed.
+    let migration_prompt = session_data.migration_source(provider).map(|source| {
+        build_migration_prompt(
+            &session_data,
+            &work_dir,
+            source,
+            provider,
+            &TranscriptRoots::from_home(),
+        )
+    });
+    let launch = build_provider_command(
+        provider,
+        &session_data,
+        &work_dir,
+        migration_prompt.as_deref(),
+    );
 
     // A minted conversation is only real once it is on disk, or the next
     // restart mints another and this one is orphaned.
     if let Some(minted) = launch.conversation.id_to_record() {
         session_data.set_provider_session(provider, minted.to_string(), directory.to_string());
-        crate::cli::session::write_session(&work_dir, &session_data)?;
     }
+    // A restart is a resume, and attribution narrows its search for a
+    // re-attributed conversation by when the session was last resumed.
+    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    crate::cli::session::write_session(&work_dir, &session_data)?;
 
     Ok(ResumeCommand {
         session_id: launch.conversation.known_id().map(str::to_string),
         command: launch.command,
+        prefill: launch.prefill,
     })
 }
 
@@ -1672,6 +1692,30 @@ mod resume_command_tests {
             resumed.command,
             "cd '/tmp/somewhere-else' && claude --resume claude-123"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_staged_migration_is_delivered_by_the_restart_that_consumes_it() {
+        let dir = session_dir();
+        // Switched to Claude from a Codex conversation, with no Claude one yet.
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"claude",
+                "codex_session_id":"codex-456","migration_source_provider":"codex"}"#,
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        // Recording the minted conversation clears the staged migration, so the
+        // briefing has to ride along with this launch or it is lost for good.
+        assert!(resumed.command.contains("migrating from codex to claude"), "{}", resumed.command);
+
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.migration_source_provider, None);
+        assert!(after.last_resumed.is_some());
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
