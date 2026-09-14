@@ -4,9 +4,11 @@
 //! briefing, so a session migrated from the terminal is not told less about the
 //! work than one migrated from the GUI.
 
-use std::io::{BufRead, Seek, SeekFrom};
+use std::io::BufRead;
+use std::path::Path;
 
 use super::session::{AgentProvider, SessionData};
+use super::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::gui::truncate_str;
 
 pub fn build_migration_prompt(
@@ -14,6 +16,7 @@ pub fn build_migration_prompt(
     work_dir: &std::path::Path,
     source: AgentProvider,
     target: AgentProvider,
+    roots: &TranscriptRoots,
 ) -> String {
     let mut sections = vec![format!(
         "This twapp session is migrating from {} to {}. Continue the same task from the current repository state.",
@@ -32,14 +35,10 @@ pub fn build_migration_prompt(
     match source {
         AgentProvider::Claude => {
             if let Some(source_id) = session_data.native_session_id(AgentProvider::Claude) {
-                let home = dirs::home_dir().unwrap_or_default();
-                let encoded = session_data
-                    .native_cwd(AgentProvider::Claude, work_dir)
-                    .replace('/', "-");
-                let jsonl_path = home
-                    .join(".claude/projects")
-                    .join(encoded)
-                    .join(format!("{}.jsonl", source_id));
+                let jsonl_path = roots.claude_transcript(
+                    &session_data.native_cwd(AgentProvider::Claude, work_dir),
+                    source_id,
+                );
                 let (summary, first_message, _, last_timestamp, _, _) =
                     extract_jsonl_metadata(&jsonl_path);
                 if let Some(summary) = summary.or(first_message) {
@@ -55,7 +54,7 @@ pub fn build_migration_prompt(
         }
         AgentProvider::Codex => {
             if let Some(source_id) = session_data.native_session_id(AgentProvider::Codex) {
-                let prompts = recent_codex_prompts(source_id);
+                let prompts = recent_codex_prompts(source_id, &roots.codex_history);
                 if !prompts.is_empty() {
                     sections.push(format!(
                         "Recent Codex user requests:\n- {}",
@@ -128,11 +127,7 @@ fn load_note_context(work_dir: &std::path::Path) -> Vec<String> {
     notes
 }
 
-fn recent_codex_prompts(session_id: &str) -> Vec<String> {
-    let history_path = match dirs::home_dir() {
-        Some(home) => home.join(".codex/history.jsonl"),
-        None => return Vec::new(),
-    };
+fn recent_codex_prompts(session_id: &str, history_path: &Path) -> Vec<String> {
     let Ok(file) = std::fs::File::open(history_path) else {
         return Vec::new();
     };
@@ -155,145 +150,6 @@ fn recent_codex_prompts(session_id: &str) -> Vec<String> {
     prompts
 }
 
-pub fn extract_jsonl_metadata(
-    path: &std::path::Path,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    u32,
-) {
-    // Returns: (summary, first_message, first_timestamp, last_timestamp, git_branch, message_count)
-
-    let file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return (None, None, None, None, None, 0),
-    };
-    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
-
-    // --- Read tail for summary and last timestamp ---
-    let mut summary: Option<String> = None;
-    let mut last_timestamp: Option<String> = None;
-    {
-        let mut f = std::io::BufReader::new(&file);
-        let tail_size: u64 = 256 * 1024; // 256KB
-        let seek_pos = if file_len > tail_size {
-            file_len - tail_size
-        } else {
-            0
-        };
-        let _ = f.seek(SeekFrom::Start(seek_pos));
-
-        // If we seeked into the middle of a line, skip the partial line
-        if seek_pos > 0 {
-            let mut _skip = String::new();
-            let _ = f.read_line(&mut _skip);
-        }
-
-        for line in f.lines() {
-            let Ok(line) = line else { continue };
-            if line.contains("\"type\":\"summary\"") {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if let Some(s) = v.get("summary").and_then(|s| s.as_str()) {
-                        summary = Some(s.to_string());
-                    }
-                }
-            }
-            // Track last timestamp from any message with one
-            if line.contains("\"timestamp\"") {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()) {
-                        last_timestamp = Some(ts.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // --- Read head for first message, first timestamp, git branch ---
-    let mut first_message: Option<String> = None;
-    let mut first_timestamp: Option<String> = None;
-    let mut git_branch: Option<String> = None;
-    let mut message_count: u32 = 0;
-    {
-        let mut file_ref = &file;
-        let _ = file_ref.seek(SeekFrom::Start(0));
-        let f = std::io::BufReader::new(file_ref);
-        let head_limit = 64 * 1024; // 64KB for head scan
-        let mut bytes_read: usize = 0;
-        let mut found_first = false;
-
-        for line in f.lines() {
-            let Ok(line) = line else { continue };
-            bytes_read += line.len() + 1;
-
-            // Count messages throughout (for head portion)
-            if line.contains("\"type\":\"user\"") || line.contains("\"type\":\"assistant\"") {
-                message_count += 1;
-            }
-
-            if !found_first && bytes_read <= head_limit {
-                if line.contains("\"type\":\"user\"") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                        // First timestamp
-                        if first_timestamp.is_none() {
-                            first_timestamp = v
-                                .get("timestamp")
-                                .and_then(|t| t.as_str())
-                                .map(String::from);
-                        }
-                        // Git branch
-                        if git_branch.is_none() {
-                            git_branch = v
-                                .get("gitBranch")
-                                .and_then(|b| b.as_str())
-                                .filter(|b| !b.is_empty())
-                                .map(String::from);
-                        }
-                        // First user message content
-                        if let Some(msg) = v.get("message").and_then(|m| m.get("content")) {
-                            let text = if let Some(s) = msg.as_str() {
-                                s.to_string()
-                            } else if let Some(arr) = msg.as_array() {
-                                // Content can be array of objects with "text" fields
-                                arr.iter()
-                                    .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            } else {
-                                String::new()
-                            };
-                            if !text.is_empty() {
-                                first_message = Some(truncate_str(&text, 120));
-                            }
-                        }
-                        found_first = true;
-                    }
-                }
-            }
-
-            // If past head limit and we found the first message, just keep counting
-            if bytes_read > head_limit && found_first {
-                // Continue counting but don't parse JSON
-            }
-        }
-    }
-
-    // For very large files, message count from full scan is expensive.
-    // The head-only count is an undercount but acceptable for display.
-    // If file is small enough (< 10MB), we already scanned everything above.
-
-    (
-        summary,
-        first_message,
-        first_timestamp,
-        last_timestamp,
-        git_branch,
-        message_count,
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -331,6 +187,15 @@ mod tests {
         dir
     }
 
+    /// Roots under a fixture directory, so a test never reads the developer's
+    /// own transcripts and never depends on whether they have any.
+    fn roots_in(dir: &std::path::Path) -> TranscriptRoots {
+        TranscriptRoots {
+            claude_projects: dir.join("claude-projects"),
+            codex_history: dir.join("codex-history.jsonl"),
+        }
+    }
+
     #[test]
     fn migration_prompt_states_both_harnesses_and_how_to_recover() {
         let dir = work_dir();
@@ -339,6 +204,7 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
+            &roots_in(&dir),
         );
 
         assert!(prompt.contains("migrating from antigravity to claude"), "{}", prompt);
@@ -367,10 +233,70 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
+            &roots_in(&dir),
         );
 
         assert!(prompt.contains("Ticket: MON-1 Wire the thing [In Progress]"), "{}", prompt);
         assert!(prompt.contains("second note"), "{}", prompt);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_claude_source_contributes_its_transcript_summary_and_last_activity() {
+        let dir = work_dir();
+        let roots = roots_in(&dir);
+        let mut data = session_migrating_from_antigravity();
+        data.session_id = "claude-123".to_string();
+        data.claude_cwd = dir.to_string_lossy().to_string();
+        data.antigravity_session_id = None;
+
+        let transcript = roots.claude_transcript(&data.claude_cwd, "claude-123");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(
+            &transcript,
+            "{\"type\":\"summary\",\"summary\":\"Wiring the importer\"}\n             {\"type\":\"user\",\"timestamp\":\"2026-09-14T10:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"start\"}}\n",
+        )
+        .unwrap();
+
+        let prompt = build_migration_prompt(
+            &data,
+            &dir,
+            AgentProvider::Claude,
+            AgentProvider::Codex,
+            &roots,
+        );
+
+        assert!(prompt.contains("Claude context summary: Wiring the importer"), "{}", prompt);
+        assert!(prompt.contains("Claude transcript last activity: 2026-09-14T10:00:00Z"), "{}", prompt);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_codex_source_contributes_only_its_own_recent_requests() {
+        let dir = work_dir();
+        let roots = roots_in(&dir);
+        let mut data = session_migrating_from_antigravity();
+        data.codex_session_id = Some("codex-456".to_string());
+        data.antigravity_session_id = None;
+
+        std::fs::write(
+            &roots.codex_history,
+            "{\"session_id\":\"codex-456\",\"text\":\"rename the column\"}\n             {\"session_id\":\"someone-else\",\"text\":\"unrelated work\"}\n",
+        )
+        .unwrap();
+
+        let prompt = build_migration_prompt(
+            &data,
+            &dir,
+            AgentProvider::Codex,
+            AgentProvider::Claude,
+            &roots,
+        );
+
+        assert!(prompt.contains("rename the column"), "{}", prompt);
+        assert!(!prompt.contains("unrelated work"), "{}", prompt);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -383,6 +309,7 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
+            &roots_in(&dir),
         );
 
         assert!(!prompt.contains("Ticket:"), "{}", prompt);

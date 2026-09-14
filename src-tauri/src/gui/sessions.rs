@@ -3,7 +3,8 @@ use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
 
-use crate::cli::harness::{build_migration_prompt, extract_jsonl_metadata};
+use crate::cli::harness::build_migration_prompt;
+use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
     find_latest_codex_session_for_cwd, shell_escape_single, AgentProvider, SessionData,
@@ -433,7 +434,15 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
 
     let migration_prompt = session_data
         .migration_source(preferred)
-        .map(|source| build_migration_prompt(&session_data, &work_dir, source, preferred));
+        .map(|source| {
+            build_migration_prompt(
+                &session_data,
+                &work_dir,
+                source,
+                preferred,
+                &TranscriptRoots::from_home(),
+            )
+        });
     let (command, provider_session_id) = build_provider_command(
         preferred,
         &session_data,
@@ -984,9 +993,6 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
 
     Ok(())
 }
-
-/// Extract the last summary and first user message from a JSONL file efficiently.
-/// Reads only the tail (for summary) and head (for first message) of the file.
 
 #[tauri::command]
 pub async fn discover_claude_sessions() -> Result<ImportPreview, String> {

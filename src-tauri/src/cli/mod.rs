@@ -20,6 +20,7 @@ pub mod stop;
 #[cfg(test)]
 pub mod test_env;
 pub mod theme;
+pub mod transcript;
 pub mod ticket;
 
 use clap::Subcommand;
@@ -1050,7 +1051,15 @@ fn cmd_resume(fork: bool) -> i32 {
     let provider = session_data.last_provider();
     let migration_prompt = session_data
         .migration_source(provider)
-        .map(|source| harness::build_migration_prompt(&session_data, &work_dir, source, provider));
+        .map(|source| {
+            harness::build_migration_prompt(
+                &session_data,
+                &work_dir,
+                source,
+                provider,
+                &transcript::TranscriptRoots::from_home(),
+            )
+        });
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {
