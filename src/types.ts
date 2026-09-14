@@ -1,6 +1,8 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 
+export type AgentProvider = "claude" | "codex" | "antigravity";
+
 export interface AppConfig {
   name: string;
   color: string | null;
@@ -9,8 +11,9 @@ export interface AppConfig {
   prefill: string | null;
   ticket: string | null;
   session_id: string | null;
-  provider: "claude" | "codex";
+  provider: AgentProvider;
   capture_started_at: string | null;
+  capture_previous_session_id: string | null;
   override_terminal_theme: boolean;
 }
 
@@ -123,7 +126,7 @@ export const darkTheme = getDarkTheme();
 
 export interface LauncherSession {
   session_id: string;
-  provider: "claude" | "codex";
+  provider: AgentProvider;
   provider_session_id: string | null;
   needs_migration: boolean;
   name: string;
@@ -145,6 +148,24 @@ export interface LauncherSession {
 export interface LauncherResponse {
   sessions: LauncherSession[];
   home_dir: string;
+}
+
+export interface GlobalConfig {
+  work_directory: string;
+  jira_project: string | null;
+  github_repo: string | null;
+  session_color: string;
+  agent_provider: AgentProvider;
+  agent_providers: AgentProvider[];
+}
+
+export interface AgentHarnessInfo {
+  id: AgentProvider;
+  name: string;
+  command: string;
+  path: string | null;
+  installed: boolean;
+  configured: boolean;
 }
 
 export interface DiscoveredSession {

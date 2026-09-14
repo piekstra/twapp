@@ -41,6 +41,11 @@ pub struct GuiArgs {
     #[arg(long)]
     pub capture_started_at: Option<String>,
 
+    /// Existing workspace cache entry to ignore while capturing a newly
+    /// created provider conversation.
+    #[arg(long)]
+    pub capture_previous_session_id: Option<String>,
+
     /// Use Chrome instead of Claude desktop
     #[arg(long)]
     pub chrome: bool,

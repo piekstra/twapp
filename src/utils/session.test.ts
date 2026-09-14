@@ -31,6 +31,12 @@ describe("buildResumeCommand", () => {
       "codex -C '/tmp/demo'",
     );
   });
+
+  it("builds an Antigravity conversation resume command", () => {
+    expect(buildResumeCommand("antigravity", "agy'123", "/tmp/demo")).toBe(
+      "agy --conversation 'agy'\\''123'",
+    );
+  });
 });
 
 describe("maskProviderSessionId", () => {
@@ -49,6 +55,7 @@ describe("buildSessionFieldsArgs", () => {
     session_id: "6b8e7694-7969-475b-ae9f-5abd07fbd16a",
     claude_cwd: "/tmp/demo",
     ticket_key: "",
+    provider: "claude",
     ...o,
   });
 
@@ -78,6 +85,7 @@ describe("buildSessionFieldsArgs", () => {
       session_id: "new-id",
       claude_cwd: "/tmp/other",
       ticket_key: "JTK-1",
+      provider: "codex",
     });
     const args = buildSessionFieldsArgs("/tmp/demo", next, original);
 
@@ -87,6 +95,7 @@ describe("buildSessionFieldsArgs", () => {
       sessionId: "new-id",
       claudeCwd: "/tmp/other",
       ticketKey: "JTK-1",
+      provider: "codex",
     });
   });
 
@@ -100,6 +109,7 @@ describe("buildSessionFieldsArgs", () => {
       sessionId: "6b8e7694-7969-475b-ae9f-5abd07fbd16a",
       claudeCwd: "/tmp/demo",
       ticketKey: "JTK-9",
+      provider: "claude",
     });
   });
 });

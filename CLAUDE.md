@@ -23,8 +23,11 @@ Run `twapp <command> --help` for details.
 - `twapp work <ticket> -s <id> --claude-cwd <dir>` — Fork to new directory (new ID, keeps context)
 
 **Provider selection**:
-- `agent_provider` in `~/.config/twapp/config.yaml` controls whether sessions launch in Claude or Codex by default.
-- twapp stores provider-specific session handles and can migrate twapp-managed sessions between providers on first open when needed.
+- `defaults.agent_providers` in `~/.config/twapp/config.yaml` is the creation allowlist. The launcher searches for supported local CLIs and lets the user configure Claude, Codex, and Antigravity when installed.
+- New GUI sessions always show the configured harness choices. `twapp work` prompts when multiple harnesses are configured, and accepts `--provider` for scripts and non-interactive use.
+- The active harness belongs to each session. twapp stores each harness's native session handle separately, so switching in Session Config preserves the source conversation and reuses either conversation when switching back.
+- A switch to a harness with no native handle stages migration context for the next open. Antigravity conversations are captured from `~/.gemini/antigravity-cli/cache/last_conversations.json` after launch.
+- `agent_provider` remains a legacy fallback when `agent_providers` is absent. It must not override an existing session's saved provider.
 - Default permissions remain Claude-only.
 
 When to use each:
@@ -38,11 +41,11 @@ When to use each:
 **Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
 
 **Launcher Settings**: Gear icon in launcher header switches to settings view with three tabs:
-- **General** — theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo, and default agent provider. Auto-saves on blur.
+- **General**: theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo, and installed/configured agent harnesses. Auto-saves on blur.
 - **Prompts** — global quick prompt management (add/edit/remove sections and prompts). Same data as `~/.config/twapp/quick-prompts.json`.
 - **Permissions** — default Claude permission CRUD. Same data as `~/.config/twapp/default-permissions.json`.
 
-**New Session (GUI)**: "+" button in launcher header opens a dedicated form to create and launch a session (ticket key or name). Uses `create_session_core()` — shared logic extracted from `cmd_work` — so CLI and GUI session creation stay in sync. Respects the session color preference.
+**New Session (GUI)**: "+" button in launcher header opens a dedicated form to choose one configured harness, then create and launch a session (ticket key or name). It uses `create_session_core()`, shared with `cmd_work`, so CLI and GUI session creation stay in sync. Respects the session color preference.
 
 **Fork Session (GUI)**: "Fork Session..." in the actions menu (or Cmd+Shift+N) opens a dialog to fork the current session. Accepts an optional ticket key and/or custom name. Ticket triggers directory creation + jtk fetch (same as new session). Custom name sets the session name without requiring a ticket. Both fields empty forks with the current directory name.
 
@@ -52,7 +55,7 @@ When to use each:
 
 ## Architecture
 
-Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude and Codex work sessions.
+Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude, Codex, and Antigravity work sessions.
 
 - **Frontend**: `src/App.tsx` (main terminal UI), `src/components/SessionLauncher.tsx` (session management), `src/components/FilePreview/` (file preview renderers), `src/components/PromptSections.tsx` (quick prompts UI), `src/types.ts` (shared types), `src/utils/` (format, file, version helpers), `src/App.css`
 - **Backend GUI**: `src-tauri/src/gui/` - Tauri commands split into modules: `pty.rs` (terminal), `sessions.rs` (session management), `tickets.rs` (ticket integration), `monitor.rs` (background process), `config.rs` (settings), `files.rs` (file operations), `notes.rs`, `prompts.rs`, `types.rs`, `mod.rs` (app setup)
