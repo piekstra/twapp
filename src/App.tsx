@@ -21,7 +21,7 @@ import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
 import { remarkAutolinkFilePaths } from "./utils/markdown";
-import { buildResumeCommand, buildSessionFieldsArgs } from "./utils/session";
+import { buildSessionFieldsArgs } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
 import { canSendMessage } from "./utils/colab";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
@@ -45,6 +45,19 @@ const SESSION_COLORS = [
   { hex: "#e8d8cc", name: "Cappuccino" },
   { hex: "#e8f0e0", name: "Sage" },
 ];
+
+/// Ask the backend for the command that resumes this session.
+///
+/// The backend owns command construction so a resume from here carries the same
+/// flags as one from the launcher. Falls back to a bare `claude` only if the
+/// call fails, which means the session file could not be read.
+async function resumeCommandFor(directory: string): Promise<string> {
+  const resumed = await invoke<{ command: string; session_id: string | null }>(
+    "resume_command_for_session",
+    { directory },
+  ).catch(() => null);
+  return resumed?.command ?? "claude";
+}
 
 function App() {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -563,7 +576,7 @@ function App() {
           config = {
             ...config,
             session_id: recoveredSessionId,
-            command: buildResumeCommand("codex", recoveredSessionId, config.cwd),
+            command: await resumeCommandFor(config.cwd),
           };
         }
       } else if (
@@ -579,7 +592,7 @@ function App() {
           config = {
             ...config,
             session_id: recoveredSessionId,
-            command: buildResumeCommand("antigravity", recoveredSessionId, config.cwd),
+            command: await resumeCommandFor(config.cwd),
           };
         }
       }
@@ -600,11 +613,7 @@ function App() {
       fit.fit();
       const dims = fit.proposeDimensions();
 
-      const launchCommand = config.command || buildResumeCommand(
-        config.provider,
-        config.session_id,
-        config.cwd,
-      );
+      const launchCommand = config.command || (config.cwd ? await resumeCommandFor(config.cwd) : "claude");
 
       invoke("spawn_shell", {
         cwd: config.cwd || null,
@@ -1283,11 +1292,7 @@ function App() {
     await invoke("kill_pty");
     terminalInstance.current?.reset();
     const dims = fitAddon.current?.proposeDimensions();
-    const resumeCmd = buildResumeCommand(
-      appConfig?.provider || "claude",
-      resolvedSessionId,
-      appConfig?.cwd,
-    );
+    const resumeCmd = appConfig?.cwd ? await resumeCommandFor(appConfig.cwd) : "claude";
     await invoke("spawn_shell", {
       cwd: appConfig?.cwd || null,
       command: resumeCmd,

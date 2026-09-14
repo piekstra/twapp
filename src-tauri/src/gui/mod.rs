@@ -206,6 +206,7 @@ pub fn run(args: GuiArgs) {
             sessions::launch_session,
             sessions::start_codex_session_capture,
             sessions::sync_codex_session_id,
+            sessions::resume_command_for_session,
             sessions::start_antigravity_session_capture,
             sessions::sync_antigravity_session_id,
             config::get_global_config,

@@ -484,6 +484,46 @@ pub async fn start_codex_session_capture(
     Ok(())
 }
 
+/// The command that restarts a session's harness, and the conversation it runs.
+#[derive(serde::Serialize)]
+pub struct ResumeCommand {
+    pub command: String,
+    pub session_id: Option<String>,
+}
+
+/// Build the command that resumes the session in `directory`.
+///
+/// The frontend asks rather than assembling the command itself, so a resume
+/// started from the terminal window carries the same flags as one started by
+/// the launcher: the `--chrome` a Chrome session needs, and the `cd` into the
+/// directory a Claude conversation was started in.
+///
+/// A Claude session with no stored conversation gets a new one, which is
+/// written back here so the id the caller runs is the id twapp records.
+#[tauri::command]
+pub async fn resume_command_for_session(directory: String) -> Result<ResumeCommand, String> {
+    resume_command_for_directory(&directory)
+}
+
+fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
+    let work_dir = std::path::PathBuf::from(directory);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+    let provider = session_data.last_provider();
+    let launch = build_provider_command(provider, &session_data, &work_dir, None);
+
+    // A minted conversation is only real once it is on disk, or the next
+    // restart mints another and this one is orphaned.
+    if let Some(minted) = launch.conversation.id_to_record() {
+        session_data.set_provider_session(provider, minted.to_string(), directory.to_string());
+        crate::cli::session::write_session(&work_dir, &session_data)?;
+    }
+
+    Ok(ResumeCommand {
+        session_id: launch.conversation.known_id().map(str::to_string),
+        command: launch.command,
+    })
+}
+
 #[tauri::command]
 pub async fn sync_codex_session_id(directory: String) -> Result<Option<String>, String> {
     sync_codex_session_id_for_directory(&directory, None)
@@ -1580,5 +1620,80 @@ mod launcher_propagation_tests {
         assert_eq!(ls.role, None);
         assert_eq!(ls.provenance, None);
         assert_eq!(ls.colab_group, None);
+    }
+}
+
+#[cfg(test)]
+mod resume_command_tests {
+    use super::*;
+
+    fn session_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("twapp-resume-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &std::path::Path, json: &str) {
+        std::fs::write(dir.join(".twapp-session.json"), json).unwrap();
+    }
+
+    #[test]
+    fn a_chrome_session_keeps_chrome_when_its_terminal_restarts() {
+        let dir = session_dir();
+        write(
+            &dir,
+            &format!(
+                r#"{{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                     "claude_cwd":"{}","created":"2026-01-01T00:00:00Z","last_resumed":null,
+                     "provider":"claude","use_chrome":true}}"#,
+                dir.to_string_lossy()
+            ),
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        assert_eq!(resumed.command, "claude --resume claude-123 --chrome");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_conversation_started_elsewhere_restarts_in_its_own_directory() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                "claude_cwd":"/tmp/somewhere-else","created":"2026-01-01T00:00:00Z",
+                "last_resumed":null,"provider":"claude"}"#,
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        assert_eq!(
+            resumed.command,
+            "cd '/tmp/somewhere-else' && claude --resume claude-123"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_claude_conversation_is_recorded_so_the_next_restart_resumes_it() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"claude"}"#,
+        );
+
+        let first = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        let minted = first.session_id.clone().unwrap();
+        assert!(first.command.contains(&format!("--session-id {}", minted)));
+
+        // Without the write-back the next call would mint a different id and
+        // the terminal would resume a conversation twapp never recorded.
+        let second = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        assert_eq!(second.session_id.as_deref(), Some(minted.as_str()));
+        assert_eq!(second.command, format!("claude --resume {}", minted));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
