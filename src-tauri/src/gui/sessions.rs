@@ -3,7 +3,7 @@ use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
 
-use crate::cli::harness::{build_migration_prompt, build_provider_command, Conversation};
+use crate::cli::harness::{prepare_launch, Conversation};
 use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
@@ -317,40 +317,9 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     // Update last_resumed (after attribution, so the attribution window uses
     // the *previous* resume's timestamp).
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
-    session_data.provider = Some(preferred);
 
-    let migration_prompt = session_data
-        .migration_source(preferred)
-        .map(|source| {
-            build_migration_prompt(
-                &session_data,
-                &work_dir,
-                source,
-                preferred,
-                &TranscriptRoots::from_home(),
-            )
-        });
-    let launch = build_provider_command(
-        preferred,
-        &session_data,
-        &work_dir,
-        migration_prompt.as_deref(),
-    );
+    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
     let provider_session_id = launch.conversation.known_id().map(str::to_string);
-
-    // An id twapp minted is only real once it is on disk; one the harness
-    // names is captured after launch instead.
-    if let Some(minted) = launch.conversation.id_to_record() {
-        session_data.set_provider_session(
-            preferred,
-            minted.to_string(),
-            work_dir.to_string_lossy().to_string(),
-        );
-    } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
-        session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
-    } else if preferred == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
-        session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
-    }
 
     crate::cli::session::write_session(&work_dir, &session_data)?;
 
@@ -482,6 +451,47 @@ pub async fn start_codex_session_capture(
     });
 
     Ok(())
+}
+
+/// The command that restarts a session's harness, and what goes with it.
+#[derive(serde::Serialize)]
+pub struct ResumeCommand {
+    pub command: String,
+    pub session_id: Option<String>,
+    pub prefill: Option<String>,
+}
+
+/// Build the command that resumes the session in `directory`.
+///
+/// The frontend asks rather than assembling the command itself, so a resume
+/// started from the terminal window carries the same flags as one started by
+/// the launcher: the `--chrome` a Chrome session needs, and the `cd` into the
+/// directory a Claude conversation was started in.
+#[tauri::command]
+pub async fn resume_command_for_session(directory: String) -> Result<ResumeCommand, String> {
+    resume_command_for_directory(&directory)
+}
+
+fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
+    let work_dir = std::path::PathBuf::from(directory);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+
+    // A harness switch stages a migration, and recording a conversation clears
+    // it, so a restart is where a staged briefing gets delivered rather than
+    // silently consumed. prepare_launch handles that for both entry points.
+    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
+
+    // last_resumed is deliberately left alone. It is the floor attribution uses
+    // to find the conversation a /compact left behind, and this path runs no
+    // attribution, so moving it forward would discard those candidates. The
+    // launcher maintains the field, right after it attributes.
+    crate::cli::session::write_session(&work_dir, &session_data)?;
+
+    Ok(ResumeCommand {
+        session_id: launch.conversation.known_id().map(str::to_string),
+        command: launch.command,
+        prefill: launch.prefill,
+    })
 }
 
 #[tauri::command]
@@ -1580,5 +1590,140 @@ mod launcher_propagation_tests {
         assert_eq!(ls.role, None);
         assert_eq!(ls.provenance, None);
         assert_eq!(ls.colab_group, None);
+    }
+}
+
+#[cfg(test)]
+mod resume_command_tests {
+    use super::*;
+
+    fn session_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("twapp-resume-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &std::path::Path, json: &str) {
+        std::fs::write(dir.join(".twapp-session.json"), json).unwrap();
+    }
+
+    #[test]
+    fn a_chrome_session_keeps_chrome_when_its_terminal_restarts() {
+        let dir = session_dir();
+        write(
+            &dir,
+            &format!(
+                r#"{{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                     "claude_cwd":"{}","created":"2026-01-01T00:00:00Z","last_resumed":null,
+                     "provider":"claude","use_chrome":true}}"#,
+                dir.to_string_lossy()
+            ),
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        assert_eq!(resumed.command, "claude --resume claude-123 --chrome");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_conversation_started_elsewhere_restarts_in_its_own_directory() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                "claude_cwd":"/tmp/somewhere-else","created":"2026-01-01T00:00:00Z",
+                "last_resumed":null,"provider":"claude"}"#,
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        assert_eq!(
+            resumed.command,
+            "cd '/tmp/somewhere-else' && claude --resume claude-123"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_restart_leaves_the_attribution_window_where_it_was() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                "claude_cwd":"/tmp/demo","created":"2026-01-01T00:00:00Z",
+                "last_resumed":"2026-01-02T00:00:00Z","provider":"claude"}"#,
+        );
+
+        resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        // Moving this forward would hide the jsonl a /compact left behind from
+        // the attribution the next launcher open runs.
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.last_resumed.as_deref(), Some("2026-01-02T00:00:00Z"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_codex_restart_records_the_directory_the_capture_will_search() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"codex"}"#,
+        );
+
+        resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.codex_cwd.as_deref(), Some(dir.to_string_lossy().as_ref()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_staged_migration_is_delivered_by_the_restart_that_consumes_it() {
+        let dir = session_dir();
+        // Switched to Claude from a Codex conversation, with no Claude one yet.
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"claude",
+                "codex_session_id":"codex-456","migration_source_provider":"codex"}"#,
+        );
+
+        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        // Recording the minted conversation clears the staged migration, so the
+        // briefing has to ride along with this launch or it is lost for good.
+        assert!(resumed.command.contains("migrating from codex to claude"), "{}", resumed.command);
+
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.migration_source_provider, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_claude_conversation_is_recorded_so_the_next_restart_resumes_it() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"claude"}"#,
+        );
+
+        let first = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        let minted = first.session_id.clone().unwrap();
+        assert!(first.command.contains(&format!("--session-id {}", minted)));
+
+        // Without the write-back the next call would mint a different id and
+        // the terminal would resume a conversation twapp never recorded.
+        let second = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        assert_eq!(second.session_id.as_deref(), Some(minted.as_str()));
+        assert_eq!(second.command, format!("claude --resume {}", minted));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

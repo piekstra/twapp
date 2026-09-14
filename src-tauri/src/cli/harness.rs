@@ -62,6 +62,45 @@ pub struct ProviderLaunch {
     pub prefill: Option<String>,
 }
 
+/// Prepare a session's next launch and record what it decided.
+///
+/// Builds the command, delivers any staged migration briefing, and updates the
+/// session with the conversation the launch runs. Callers differ in what
+/// surrounds this — the launcher runs attribution first, a terminal restart
+/// does not — so only the part they share lives here. Neither `last_resumed`
+/// nor the write to disk belong to it.
+///
+/// Writing the sequence out per caller is what let the two drift far enough
+/// for a restart to consume a staged migration without delivering it.
+pub fn prepare_launch(
+    session_data: &mut SessionData,
+    work_dir: &Path,
+    roots: &TranscriptRoots,
+) -> ProviderLaunch {
+    let provider = session_data.last_provider();
+    session_data.provider = Some(provider);
+
+    let migration_prompt = session_data
+        .migration_source(provider)
+        .map(|source| build_migration_prompt(session_data, work_dir, source, provider, roots));
+    let launch =
+        build_provider_command(provider, session_data, work_dir, migration_prompt.as_deref());
+
+    let work_dir_str = work_dir.to_string_lossy().to_string();
+    // An id twapp minted is only real once it is on disk; one the harness
+    // names is captured after launch, and the capture needs the directory the
+    // harness ran in recorded before it goes looking.
+    if let Some(minted) = launch.conversation.id_to_record() {
+        session_data.set_provider_session(provider, minted.to_string(), work_dir_str);
+    } else if provider == AgentProvider::Codex && session_data.codex_cwd.is_none() {
+        session_data.codex_cwd = Some(work_dir_str);
+    } else if provider == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
+        session_data.antigravity_cwd = Some(work_dir_str);
+    }
+
+    launch
+}
+
 /// Build the launch for `provider` against an existing session.
 ///
 /// `prompt` is the migration briefing, and each arm states how it carries it:

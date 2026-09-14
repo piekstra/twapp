@@ -1,43 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildResumeCommand,
   buildSessionFieldsArgs,
   maskProviderSessionId,
-  shellEscapeSingleQuoted,
   type SessionFieldValues,
 } from "./session";
-
-describe("shellEscapeSingleQuoted", () => {
-  it("escapes single quotes for shell-safe single-quoted strings", () => {
-    expect(shellEscapeSingleQuoted("a'b")).toBe("a'\\''b");
-  });
-});
-
-describe("buildResumeCommand", () => {
-  it("builds a claude resume command with quoted session id", () => {
-    expect(buildResumeCommand("claude", "abc'123", "/tmp/demo")).toBe(
-      "claude --resume 'abc'\\''123'",
-    );
-  });
-
-  it("builds a codex resume command with quoted session id and cwd", () => {
-    expect(buildResumeCommand("codex", "abc'123", "/tmp/it's-demo")).toBe(
-      "codex resume 'abc'\\''123' -C '/tmp/it'\\''s-demo'",
-    );
-  });
-
-  it("builds a codex fresh command without a session id", () => {
-    expect(buildResumeCommand("codex", null, "/tmp/demo")).toBe(
-      "codex -C '/tmp/demo'",
-    );
-  });
-
-  it("builds an Antigravity conversation resume command", () => {
-    expect(buildResumeCommand("antigravity", "agy'123", "/tmp/demo")).toBe(
-      "agy --conversation 'agy'\\''123'",
-    );
-  });
-});
 
 describe("maskProviderSessionId", () => {
   it("masks long provider session ids", () => {
