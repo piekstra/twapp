@@ -24,20 +24,22 @@ fn try_shell(shell: &str, interactive: bool) -> Result<String, String> {
         return Err(format!("{} exited with non-zero status", shell));
     }
 
-    // An interactive shell may greet before it answers, so take the last
-    // non-empty line and require it to look like a PATH rather than a prompt.
-    let path = String::from_utf8_lossy(&output.stdout)
+    parse_path_output(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| format!("{} did not return a usable PATH", shell))
+}
+
+/// Pick the PATH out of a shell's output.
+///
+/// An interactive shell may greet before it answers, so take the last
+/// non-empty line and require it to look like a PATH rather than a prompt.
+fn parse_path_output(stdout: &str) -> Option<String> {
+    stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .next_back()
-        .unwrap_or_default()
-        .to_string();
-    if !path.split(':').any(|entry| entry == "/usr/bin") {
-        return Err(format!("{} did not return a usable PATH", shell));
-    }
-
-    Ok(path)
+        .filter(|line| line.split(':').any(|entry| entry == "/usr/bin"))
+        .map(str::to_string)
 }
 
 /// Spawn the user's login shell to get their full PATH.
@@ -252,19 +254,19 @@ mod path_discovery_tests {
 
     #[test]
     fn a_shell_that_greets_before_answering_still_yields_its_path() {
-        // try_shell takes the last non-empty line, so a banner printed by an
-        // interactive startup file does not become the PATH.
-        let dir = std::env::temp_dir().join(format!("twapp-zdot-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(".zshrc"), "echo 'welcome to the shell'\n").unwrap();
-        std::env::set_var("ZDOTDIR", &dir);
+        // A banner printed by an interactive startup file precedes the answer.
+        assert_eq!(
+            parse_path_output("welcome to the shell\n/usr/local/bin:/usr/bin:/bin\n").as_deref(),
+            Some("/usr/local/bin:/usr/bin:/bin")
+        );
+    }
 
-        let path = try_shell("/bin/zsh", true).unwrap();
-
-        assert!(!path.contains("welcome"), "{}", path);
-        assert!(path.split(':').any(|entry| entry == "/usr/bin"), "{}", path);
-
-        std::env::remove_var("ZDOTDIR");
-        let _ = std::fs::remove_dir_all(&dir);
+    #[test]
+    fn output_that_is_not_a_path_is_refused_rather_than_used() {
+        // A shell that only greets, or answers with an unset PATH, must not
+        // have its greeting installed as the process PATH.
+        assert_eq!(parse_path_output("welcome to the shell\n"), None);
+        assert_eq!(parse_path_output(""), None);
+        assert_eq!(parse_path_output("   \n\n"), None);
     }
 }
