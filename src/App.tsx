@@ -69,6 +69,21 @@ async function resumeCommandFor(directory: string): Promise<ResumeCommand | null
   }
 }
 
+/**
+ * The command and prefill for a session, shaped to merge into AppConfig.
+ *
+ * Both move together: the prefill carries a migration briefing the backend
+ * only produces once, so taking the command without it loses the briefing for
+ * good.
+ */
+async function resumedFields(
+  directory: string,
+): Promise<Partial<Pick<AppConfig, "command" | "prefill">>> {
+  const resumed = await resumeCommandFor(directory);
+  if (!resumed) return {};
+  return { command: resumed.command, prefill: resumed.prefill };
+}
+
 function App() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<Terminal | null>(null);
@@ -583,11 +598,7 @@ function App() {
         }).catch(() => null);
 
         if (recoveredSessionId) {
-          config = {
-            ...config,
-            session_id: recoveredSessionId,
-            command: (await resumeCommandFor(config.cwd))?.command ?? config.command,
-          };
+          config = { ...config, session_id: recoveredSessionId, ...(await resumedFields(config.cwd)) };
         }
       } else if (
         config.provider === "antigravity" &&
@@ -599,11 +610,7 @@ function App() {
           directory: config.cwd,
         }).catch(() => null);
         if (recoveredSessionId) {
-          config = {
-            ...config,
-            session_id: recoveredSessionId,
-            command: (await resumeCommandFor(config.cwd))?.command ?? config.command,
-          };
+          config = { ...config, session_id: recoveredSessionId, ...(await resumedFields(config.cwd)) };
         }
       }
 

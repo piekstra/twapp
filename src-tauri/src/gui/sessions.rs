@@ -3,7 +3,7 @@ use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
 
-use crate::cli::harness::{build_migration_prompt, build_provider_command, Conversation};
+use crate::cli::harness::{prepare_launch, Conversation};
 use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
@@ -317,40 +317,9 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
     // Update last_resumed (after attribution, so the attribution window uses
     // the *previous* resume's timestamp).
     session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
-    session_data.provider = Some(preferred);
 
-    let migration_prompt = session_data
-        .migration_source(preferred)
-        .map(|source| {
-            build_migration_prompt(
-                &session_data,
-                &work_dir,
-                source,
-                preferred,
-                &TranscriptRoots::from_home(),
-            )
-        });
-    let launch = build_provider_command(
-        preferred,
-        &session_data,
-        &work_dir,
-        migration_prompt.as_deref(),
-    );
+    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
     let provider_session_id = launch.conversation.known_id().map(str::to_string);
-
-    // An id twapp minted is only real once it is on disk; one the harness
-    // names is captured after launch instead.
-    if let Some(minted) = launch.conversation.id_to_record() {
-        session_data.set_provider_session(
-            preferred,
-            minted.to_string(),
-            work_dir.to_string_lossy().to_string(),
-        );
-    } else if preferred == AgentProvider::Codex && session_data.codex_cwd.is_none() {
-        session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
-    } else if preferred == AgentProvider::Antigravity && session_data.antigravity_cwd.is_none() {
-        session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
-    }
 
     crate::cli::session::write_session(&work_dir, &session_data)?;
 
@@ -506,35 +475,16 @@ pub async fn resume_command_for_session(directory: String) -> Result<ResumeComma
 fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
     let work_dir = std::path::PathBuf::from(directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
-    let provider = session_data.last_provider();
 
     // A harness switch stages a migration, and recording a conversation clears
-    // it. A restart is therefore where a staged briefing gets delivered, not
-    // where it gets silently consumed.
-    let migration_prompt = session_data.migration_source(provider).map(|source| {
-        build_migration_prompt(
-            &session_data,
-            &work_dir,
-            source,
-            provider,
-            &TranscriptRoots::from_home(),
-        )
-    });
-    let launch = build_provider_command(
-        provider,
-        &session_data,
-        &work_dir,
-        migration_prompt.as_deref(),
-    );
+    // it, so a restart is where a staged briefing gets delivered rather than
+    // silently consumed. prepare_launch handles that for both entry points.
+    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
 
-    // A minted conversation is only real once it is on disk, or the next
-    // restart mints another and this one is orphaned.
-    if let Some(minted) = launch.conversation.id_to_record() {
-        session_data.set_provider_session(provider, minted.to_string(), directory.to_string());
-    }
-    // A restart is a resume, and attribution narrows its search for a
-    // re-attributed conversation by when the session was last resumed.
-    session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    // last_resumed is deliberately left alone. It is the floor attribution uses
+    // to find the conversation a /compact left behind, and this path runs no
+    // attribution, so moving it forward would discard those candidates. The
+    // launcher maintains the field, right after it attributes.
     crate::cli::session::write_session(&work_dir, &session_data)?;
 
     Ok(ResumeCommand {
@@ -1696,6 +1646,43 @@ mod resume_command_tests {
     }
 
     #[test]
+    fn a_restart_leaves_the_attribution_window_where_it_was() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                "claude_cwd":"/tmp/demo","created":"2026-01-01T00:00:00Z",
+                "last_resumed":"2026-01-02T00:00:00Z","provider":"claude"}"#,
+        );
+
+        resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        // Moving this forward would hide the jsonl a /compact left behind from
+        // the attribution the next launcher open runs.
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.last_resumed.as_deref(), Some("2026-01-02T00:00:00Z"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_codex_restart_records_the_directory_the_capture_will_search() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"","name":"demo","color":"","ticket_key":null,"claude_cwd":"",
+                "created":"2026-01-01T00:00:00Z","last_resumed":null,"provider":"codex"}"#,
+        );
+
+        resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.codex_cwd.as_deref(), Some(dir.to_string_lossy().as_ref()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_staged_migration_is_delivered_by_the_restart_that_consumes_it() {
         let dir = session_dir();
         // Switched to Claude from a Codex conversation, with no Claude one yet.
@@ -1714,7 +1701,6 @@ mod resume_command_tests {
 
         let after = crate::cli::session::read_session(&dir).unwrap();
         assert_eq!(after.migration_source_provider, None);
-        assert!(after.last_resumed.is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
