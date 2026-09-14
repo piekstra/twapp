@@ -104,27 +104,25 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
         let migration_prompt = session
             .migration_source(provider)
             .map(|source| crate::cli::harness::build_migration_prompt(&session, &work_dir, source, provider));
-        if let Ok((command, session_id)) = sessions::build_provider_command(
+        let launch = crate::cli::harness::build_provider_command(
             provider,
             &session,
             &work_dir,
             migration_prompt.as_deref(),
-            false,
-        ) {
-            args.command = Some(command);
-            args.session_id = session_id.clone();
-            if provider == crate::cli::session::AgentProvider::Claude {
-                if let Some(session_id) = session_id {
-                    session.set_provider_session(provider, session_id, cwd.clone());
-                    let _ = crate::cli::session::write_session(&work_dir, &session);
-                }
-            } else {
-                args.capture_started_at = Some(chrono::Utc::now().to_rfc3339());
-                if provider == crate::cli::session::AgentProvider::Antigravity {
-                    args.prefill = migration_prompt;
-                    args.capture_previous_session_id =
-                        crate::cli::session::find_antigravity_session_for_cwd(&cwd);
-                }
+        );
+        args.command = Some(launch.command);
+        args.session_id = launch.session_id.clone();
+        args.prefill = launch.prefill;
+        if provider == crate::cli::session::AgentProvider::Claude {
+            if let Some(session_id) = launch.session_id {
+                session.set_provider_session(provider, session_id, cwd.clone());
+                let _ = crate::cli::session::write_session(&work_dir, &session);
+            }
+        } else {
+            args.capture_started_at = Some(chrono::Utc::now().to_rfc3339());
+            if provider == crate::cli::session::AgentProvider::Antigravity {
+                args.capture_previous_session_id =
+                    crate::cli::session::find_antigravity_session_for_cwd(&cwd);
             }
         }
     }

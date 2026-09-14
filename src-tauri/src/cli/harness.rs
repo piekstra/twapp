@@ -6,8 +6,111 @@
 
 use std::io::{BufRead, Seek, SeekFrom};
 
-use super::session::{AgentProvider, SessionData};
+use std::path::Path;
+
+use super::session::{
+    build_antigravity_run_command, shell_escape_single, AgentProvider, SessionData,
+};
 use crate::gui::truncate_str;
+
+/// Everything twapp needs to start a harness for an existing session.
+pub struct ProviderLaunch {
+    /// The shell command to run.
+    pub command: String,
+    /// The conversation the command resumes or creates, when twapp knows it
+    /// before launch. `None` means the harness assigns one and twapp captures
+    /// it from the harness's own store afterwards.
+    pub session_id: Option<String>,
+    /// Text to place in the terminal for the user to send. Carries a prompt
+    /// for a harness whose resume command cannot take one as an argument, so
+    /// no caller has to know which harnesses those are.
+    pub prefill: Option<String>,
+}
+
+/// Build the launch for `provider` against an existing session.
+///
+/// `prompt` is the migration briefing, and each arm states how it carries it:
+/// Claude and Codex take it as a trailing argument, Antigravity takes it as a
+/// prefill because `agy` accepts no prompt argument.
+pub fn build_provider_command(
+    provider: AgentProvider,
+    session_data: &SessionData,
+    work_dir: &Path,
+    prompt: Option<&str>,
+) -> ProviderLaunch {
+    let work_dir_str = work_dir.to_string_lossy().to_string();
+    let prompt_suffix = prompt
+        .map(|text| format!(" '{}'", shell_escape_single(text)))
+        .unwrap_or_default();
+    let chrome_flag = if session_data.use_chrome.unwrap_or(false) {
+        " --chrome"
+    } else {
+        ""
+    };
+
+    match provider {
+        AgentProvider::Claude => {
+            if let Some(current_id) = session_data.native_session_id(AgentProvider::Claude) {
+                // Claude scopes a conversation to the directory it started in,
+                // so a session created elsewhere has to be resumed from there.
+                let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
+                let cd_prefix = if cwd != work_dir_str {
+                    format!("cd '{}' && ", shell_escape_single(&cwd))
+                } else {
+                    String::new()
+                };
+                ProviderLaunch {
+                    command: format!(
+                        "{}claude --resume {}{}{}",
+                        cd_prefix, current_id, chrome_flag, prompt_suffix
+                    ),
+                    session_id: Some(current_id.to_string()),
+                    prefill: None,
+                }
+            } else {
+                // A new conversation belongs to the directory twapp is opening,
+                // which is what the caller records as its cwd.
+                let new_id = uuid::Uuid::new_v4().to_string();
+                ProviderLaunch {
+                    command: format!(
+                        "claude --session-id {}{}{}",
+                        new_id, chrome_flag, prompt_suffix
+                    ),
+                    session_id: Some(new_id),
+                    prefill: None,
+                }
+            }
+        }
+        AgentProvider::Codex => {
+            let escaped_dir = shell_escape_single(&work_dir_str);
+            match session_data.native_session_id(AgentProvider::Codex) {
+                Some(current_id) => ProviderLaunch {
+                    command: format!(
+                        "codex resume {} -C '{}'{}",
+                        current_id, escaped_dir, prompt_suffix
+                    ),
+                    session_id: Some(current_id.to_string()),
+                    prefill: None,
+                },
+                None => ProviderLaunch {
+                    command: format!("codex -C '{}'{}", escaped_dir, prompt_suffix),
+                    session_id: None,
+                    prefill: None,
+                },
+            }
+        }
+        AgentProvider::Antigravity => {
+            let session_id = session_data
+                .native_session_id(AgentProvider::Antigravity)
+                .map(str::to_string);
+            ProviderLaunch {
+                command: build_antigravity_run_command(session_id.as_deref(), None),
+                session_id,
+                prefill: prompt.map(str::to_string),
+            }
+        }
+    }
+}
 
 pub fn build_migration_prompt(
     session_data: &SessionData,
@@ -329,6 +432,101 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("twapp-migration-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn claude_session() -> SessionData {
+        let mut data = session_migrating_from_antigravity();
+        data.session_id = "claude-123".to_string();
+        data.claude_cwd = "/tmp/demo".to_string();
+        data.antigravity_session_id = None;
+        data.provider = Some(AgentProvider::Claude);
+        data
+    }
+
+    #[test]
+    fn claude_resumes_its_conversation_and_takes_the_prompt_as_an_argument() {
+        let launch = build_provider_command(
+            AgentProvider::Claude,
+            &claude_session(),
+            std::path::Path::new("/tmp/demo"),
+            Some("carry on"),
+        );
+
+        assert_eq!(launch.command, "claude --resume claude-123 'carry on'");
+        assert_eq!(launch.session_id.as_deref(), Some("claude-123"));
+        assert_eq!(launch.prefill, None);
+    }
+
+    #[test]
+    fn claude_resumes_from_the_directory_its_conversation_was_started_in() {
+        let launch = build_provider_command(
+            AgentProvider::Claude,
+            &claude_session(),
+            std::path::Path::new("/tmp/elsewhere"),
+            None,
+        );
+
+        assert_eq!(
+            launch.command,
+            "cd '/tmp/demo' && claude --resume claude-123"
+        );
+    }
+
+    #[test]
+    fn a_new_claude_conversation_starts_in_the_directory_being_opened() {
+        let mut data = claude_session();
+        data.session_id = String::new();
+
+        let launch = build_provider_command(
+            AgentProvider::Claude,
+            &data,
+            std::path::Path::new("/tmp/elsewhere"),
+            None,
+        );
+
+        // No cd: the caller records the opened directory as this conversation's
+        // cwd, so starting it in the previous one would disagree with the file.
+        assert!(launch.command.starts_with("claude --session-id "), "{}", launch.command);
+        assert!(launch.session_id.is_some());
+    }
+
+    #[test]
+    fn codex_names_its_conversation_only_once_it_has_one() {
+        let mut data = claude_session();
+        data.provider = Some(AgentProvider::Codex);
+
+        let without = build_provider_command(
+            AgentProvider::Codex,
+            &data,
+            std::path::Path::new("/tmp/demo"),
+            Some("carry on"),
+        );
+        assert_eq!(without.command, "codex -C '/tmp/demo' 'carry on'");
+        assert_eq!(without.session_id, None);
+
+        data.codex_session_id = Some("codex-456".to_string());
+        let with = build_provider_command(
+            AgentProvider::Codex,
+            &data,
+            std::path::Path::new("/tmp/demo"),
+            None,
+        );
+        assert_eq!(with.command, "codex resume codex-456 -C '/tmp/demo'");
+        assert_eq!(with.session_id.as_deref(), Some("codex-456"));
+    }
+
+    #[test]
+    fn antigravity_carries_the_prompt_as_a_prefill_because_agy_takes_no_argument() {
+        let launch = build_provider_command(
+            AgentProvider::Antigravity,
+            &session_migrating_from_antigravity(),
+            std::path::Path::new("/tmp/demo"),
+            Some("carry on"),
+        );
+
+        assert_eq!(launch.command, "agy --conversation 'conversation-123'");
+        assert!(!launch.command.contains("carry on"), "{}", launch.command);
+        assert_eq!(launch.prefill.as_deref(), Some("carry on"));
     }
 
     #[test]

@@ -1086,22 +1086,14 @@ fn cmd_resume(fork: bool) -> i32 {
             } else {
                 format!("codex -C '{}'", shell_escape_single(&work_dir.to_string_lossy()))
             }
-        } else if let Some(current_id) = session_data.codex_session_id.clone() {
-            format!(
-                "codex resume {} -C '{}'",
-                current_id,
-                shell_escape_single(&work_dir.to_string_lossy())
-            )
         } else {
-            let prompt = migration_prompt
-                .as_deref()
-                .map(|prompt| format!(" '{}'", shell_escape_single(prompt)))
-                .unwrap_or_default();
-            format!(
-                "codex -C '{}'{}",
-                shell_escape_single(&work_dir.to_string_lossy()),
-                prompt
+            harness::build_provider_command(
+                provider,
+                &session_data,
+                &work_dir,
+                migration_prompt.as_deref(),
             )
+            .command
         };
         session_data.provider = Some(AgentProvider::Codex);
         session_data.codex_cwd = Some(work_dir.to_string_lossy().to_string());
@@ -1137,7 +1129,13 @@ fn cmd_resume(fork: bool) -> i32 {
         } else {
             None
         };
-        let command = build_antigravity_run_command(current_id.as_deref(), None);
+        let launch = harness::build_provider_command(
+            provider,
+            &session_data,
+            &work_dir,
+            migration_prompt.as_deref(),
+        );
+        let command = launch.command;
         session_data.provider = Some(AgentProvider::Antigravity);
         session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
@@ -1159,7 +1157,7 @@ fn cmd_resume(fork: bool) -> i32 {
                 None
             },
             previous_id,
-            migration_prompt,
+            launch.prefill,
         )
     } else if fork {
         let new_id = uuid::Uuid::new_v4().to_string();
@@ -1211,15 +1209,16 @@ fn cmd_resume(fork: bool) -> i32 {
         .native_session_id(AgentProvider::Claude)
         .is_none()
     {
-        let new_id = uuid::Uuid::new_v4().to_string();
-        let prompt = migration_prompt
-            .as_deref()
-            .map(|prompt| format!(" '{}'", shell_escape_single(prompt)))
-            .unwrap_or_default();
-        let command = format!(
-            "{}claude --session-id {}{}{}",
-            cd_prefix, new_id, chrome_flag, prompt
+        let launch = harness::build_provider_command(
+            provider,
+            &session_data,
+            &work_dir,
+            migration_prompt.as_deref(),
         );
+        let command = launch.command;
+        let new_id = launch
+            .session_id
+            .expect("a Claude launch always names its conversation");
         session_data.set_provider_session(
             AgentProvider::Claude,
             new_id.clone(),
@@ -1288,7 +1287,13 @@ fn cmd_resume(fork: bool) -> i32 {
             }
         }
         session_id = session_data.session_id.clone();
-        let command = format!("{}claude --resume {}{}", cd_prefix, session_id, chrome_flag);
+        let command = harness::build_provider_command(
+            provider,
+            &session_data,
+            &work_dir,
+            migration_prompt.as_deref(),
+        )
+        .command;
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
         if let Err(e) = session::write_session(&work_dir, &session_data) {
             eprintln!("Error: {}", e);
