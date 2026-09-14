@@ -82,7 +82,7 @@ pub fn discover_agent_harnesses() -> Vec<AgentHarnessInfo> {
     AgentProvider::ALL
         .into_iter()
         .filter_map(|provider| {
-            let path = crate::cli::config::find_agent_provider_binary(provider);
+            let path = crate::cli::config::locate_agent_provider_binary(provider);
             let is_configured = configured.contains(&provider);
             if path.is_none() && !is_configured {
                 return None;

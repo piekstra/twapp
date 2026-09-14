@@ -919,7 +919,7 @@ fn cmd_work(
         eprintln!("Error: --session-id forks are only supported by the Claude harness.");
         return 1;
     }
-    if config::find_agent_provider_binary(provider).is_none() {
+    if config::locate_agent_provider_binary(provider).is_none() {
         eprintln!(
             "Error: {} is configured but its command was not found on PATH.",
             provider.display_name()
