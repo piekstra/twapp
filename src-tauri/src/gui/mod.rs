@@ -103,7 +103,15 @@ fn refresh_from_session_file(args: &mut GuiArgs) {
     } else if provider_changed {
         let migration_prompt = session
             .migration_source(provider)
-            .map(|source| crate::cli::harness::build_migration_prompt(&session, &work_dir, source, provider));
+            .map(|source| {
+                crate::cli::harness::build_migration_prompt(
+                    &session,
+                    &work_dir,
+                    source,
+                    provider,
+                    &crate::cli::transcript::TranscriptRoots::from_home(),
+                )
+            });
         let launch = crate::cli::harness::build_provider_command(
             provider,
             &session,
