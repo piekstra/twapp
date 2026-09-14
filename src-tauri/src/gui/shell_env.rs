@@ -5,9 +5,16 @@ use std::sync::OnceLock;
 static DISCOVERED_PATH: OnceLock<Mutex<String>> = OnceLock::new();
 
 /// Try to discover PATH by spawning a login shell with the given binary.
-fn try_shell(shell: &str) -> Result<String, String> {
+///
+/// `interactive` decides which startup files the shell reads. zsh sources
+/// `.zshrc` only for interactive shells, and that is where PATH additions
+/// commonly live, so a non-interactive login shell can report a PATH the
+/// user's own terminal does not have. It is also the faster of the two, so
+/// startup uses it and the retry pays for the interactive one.
+fn try_shell(shell: &str, interactive: bool) -> Result<String, String> {
+    let flags = if interactive { "-ilc" } else { "-lc" };
     let output = std::process::Command::new(shell)
-        .args(["-lc", "echo $PATH"])
+        .args([flags, "echo $PATH"])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
@@ -17,27 +24,37 @@ fn try_shell(shell: &str) -> Result<String, String> {
         return Err(format!("{} exited with non-zero status", shell));
     }
 
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return Err(format!("{} returned empty PATH", shell));
-    }
+    parse_path_output(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| format!("{} did not return a usable PATH", shell))
+}
 
-    Ok(path)
+/// Pick the PATH out of a shell's output.
+///
+/// An interactive shell may greet before it answers, so take the last
+/// non-empty line and require it to look like a PATH rather than a prompt.
+fn parse_path_output(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .filter(|line| line.split(':').any(|entry| entry == "/usr/bin"))
+        .map(str::to_string)
 }
 
 /// Spawn the user's login shell to get their full PATH.
 /// Tries $SHELL first, then falls back to /bin/zsh and /bin/bash.
-fn discover_path_from_shell() -> Result<String, String> {
+fn discover_path_from_shell(interactive: bool) -> Result<String, String> {
     // Try the user's configured shell first
     if let Ok(shell) = std::env::var("SHELL") {
-        if let Ok(path) = try_shell(&shell) {
+        if let Ok(path) = try_shell(&shell, interactive) {
             return Ok(path);
         }
     }
 
     // Fallback: try common shells
     for shell in &["/bin/zsh", "/bin/bash"] {
-        if let Ok(path) = try_shell(shell) {
+        if let Ok(path) = try_shell(shell, interactive) {
             return Ok(path);
         }
     }
@@ -48,7 +65,7 @@ fn discover_path_from_shell() -> Result<String, String> {
 /// Discover the user's PATH and set it process-wide.
 /// Call once at GUI startup. Falls back to common paths if discovery fails.
 pub fn init_path() {
-    let path = match discover_path_from_shell() {
+    let path = match discover_path_from_shell(false) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Warning: PATH discovery failed ({}), using fallback", e);
@@ -69,10 +86,13 @@ pub fn init_path() {
     *mutex.lock() = path;
 }
 
-/// Re-discover PATH from login shell and update the process environment.
-/// Called when a tool-not-found error triggers a retry.
+/// Re-discover PATH and update the process environment.
+///
+/// Called when a tool looks missing. Uses an interactive shell, which reads
+/// the startup files a plain login shell skips, so it sees what the terminal
+/// twapp spawns will see.
 pub fn refresh_path() -> Result<(), String> {
-    let path = discover_path_from_shell()?;
+    let path = discover_path_from_shell(true)?;
     std::env::set_var("PATH", &path);
     if let Some(mutex) = DISCOVERED_PATH.get() {
         *mutex.lock() = path;
@@ -196,4 +216,57 @@ pub fn run_tool_sync(
     }
 
     Err(not_found_message(tool))
+}
+
+#[cfg(test)]
+mod path_discovery_tests {
+    use super::*;
+
+    /// zsh reads .zshrc only when interactive, and PATH additions commonly
+    /// live there. A non-interactive login shell therefore reports a PATH the
+    /// user's own terminal does not have, which is what made an installed
+    /// harness look missing.
+    #[test]
+    fn an_interactive_shell_sees_path_entries_a_login_shell_misses() {
+        let dir = std::env::temp_dir().join(format!("twapp-zdot-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".zshrc"), "export PATH=\"/zshrc-only:$PATH\"\n").unwrap();
+        std::fs::write(dir.join(".zprofile"), "export PATH=\"/zprofile-only:$PATH\"\n").unwrap();
+
+        let run = |interactive: bool| {
+            let flags = if interactive { "-ilc" } else { "-lc" };
+            let out = std::process::Command::new("/bin/zsh")
+                .args([flags, "echo $PATH"])
+                .env("ZDOTDIR", &dir)
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+
+        assert!(run(false).contains("/zprofile-only"));
+        assert!(!run(false).contains("/zshrc-only"));
+        assert!(run(true).contains("/zshrc-only"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_shell_that_greets_before_answering_still_yields_its_path() {
+        // A banner printed by an interactive startup file precedes the answer.
+        assert_eq!(
+            parse_path_output("welcome to the shell\n/usr/local/bin:/usr/bin:/bin\n").as_deref(),
+            Some("/usr/local/bin:/usr/bin:/bin")
+        );
+    }
+
+    #[test]
+    fn output_that_is_not_a_path_is_refused_rather_than_used() {
+        // A shell that only greets, or answers with an unset PATH, must not
+        // have its greeting installed as the process PATH.
+        assert_eq!(parse_path_output("welcome to the shell\n"), None);
+        assert_eq!(parse_path_output(""), None);
+        assert_eq!(parse_path_output("   \n\n"), None);
+    }
 }
