@@ -44,8 +44,9 @@ pub enum Commands {
         /// Override the selected harness startup command
         #[arg(long)]
         run: Option<String>,
-        /// Spawn Claude with 'Read <path> and execute.'; safer than --run for
-        /// long prompts with special characters. Path must exist at spawn time.
+        /// Spawn the selected harness with 'Read <path> and execute.'; safer
+        /// than --run for long prompts with special characters. Path must
+        /// exist at spawn time. Supported by Claude and Codex.
         #[arg(long)]
         from_file: Option<String>,
         /// Model name passed through to the provider CLI (Claude: `--model`,
@@ -952,9 +953,9 @@ fn cmd_work(
     };
 
     // Feature: --from-file. Resolve to an absolute path and verify the file
-    // exists BEFORE launching any terminal, then wrap as a claude prompt.
+    // exists BEFORE launching any terminal, then wrap it as a provider prompt.
     let effective_run = match from_file {
-        Some(path) => match resolve_from_file(&path) {
+        Some(path) => match resolve_from_file(&path, provider, model.as_deref()) {
             Ok(cmd) => Some(cmd),
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -1414,19 +1415,22 @@ fn resolve_new_session_provider(
                 provider.display_name()
             ));
         }
-        if has_from_file && provider != AgentProvider::Claude {
-            return Err("--from-file currently requires the Claude harness".to_string());
+        if has_from_file && provider == AgentProvider::Antigravity {
+            return Err("--from-file is not supported by the Antigravity harness".to_string());
         }
         return Ok(ProviderChoice::Chosen(provider));
     }
 
-    // Agent-spawned briefing sessions predate multi-harness selection and
-    // carry Claude-specific permission flags. Keep that automation stable.
+    // Preserve the established default for agent-spawned briefing sessions,
+    // while allowing Codex-only installations to use the same workflow.
     if has_from_file {
         if configured.contains(&AgentProvider::Claude) {
             return Ok(ProviderChoice::Chosen(AgentProvider::Claude));
         }
-        return Err("--from-file requires Claude to be configured".to_string());
+        if configured.contains(&AgentProvider::Codex) {
+            return Ok(ProviderChoice::Chosen(AgentProvider::Codex));
+        }
+        return Err("--from-file requires Claude or Codex to be configured".to_string());
     }
 
     if configured.len() == 1 {
@@ -2463,10 +2467,14 @@ pub fn resolve_provenance(
     }
 }
 
-/// Translate `--from-file <path>` into the equivalent `--run` command.
+/// Translate `--from-file <path>` into the equivalent provider `--run` command.
 /// Resolves `<path>` to an absolute path so later `cd`s don't break it,
 /// and returns an error if the file does not exist.
-fn resolve_from_file(path: &str) -> Result<String, String> {
+fn resolve_from_file(
+    path: &str,
+    provider: AgentProvider,
+    model: Option<&str>,
+) -> Result<String, String> {
     let raw = std::path::PathBuf::from(path);
     let abs = if raw.is_absolute() {
         raw
@@ -2483,13 +2491,21 @@ fn resolve_from_file(path: &str) -> Result<String, String> {
         ));
     }
     let abs_str = resolved.to_string_lossy();
-    // Single-quoted prompt; escape embedded single quotes the standard way.
     let prompt = format!("Read {} and execute.", abs_str);
-    let escaped = session::shell_escape_single(&prompt);
-    Ok(format!(
-        "claude --dangerously-skip-permissions '{}'",
-        escaped
-    ))
+    match provider {
+        AgentProvider::Claude => {
+            // Keep the established Claude spawn command byte-for-byte stable.
+            let escaped = session::shell_escape_single(&prompt);
+            Ok(format!(
+                "claude --dangerously-skip-permissions '{}'",
+                escaped
+            ))
+        }
+        AgentProvider::Codex => Ok(build_codex_run_command(".", model, Some(&prompt))),
+        AgentProvider::Antigravity => {
+            Err("--from-file is not supported by the Antigravity harness".to_string())
+        }
+    }
 }
 
 /// If `cmd` begins with a `cd <dir> && ...` pattern, return the `<dir>`.
@@ -2580,11 +2596,15 @@ mod cd_prefix_tests {
 
 #[cfg(test)]
 mod from_file_tests {
-    use super::resolve_from_file;
+    use super::{resolve_from_file, AgentProvider};
 
     #[test]
     fn missing_file_errors() {
-        let err = resolve_from_file("/tmp/definitely-not-a-real-twapp-test-file-xyz.md")
+        let err = resolve_from_file(
+            "/tmp/definitely-not-a-real-twapp-test-file-xyz.md",
+            AgentProvider::Codex,
+            None,
+        )
             .err()
             .expect("expected an error");
         assert!(err.contains("does not exist"), "got: {}", err);
@@ -2598,7 +2618,7 @@ mod from_file_tests {
         ));
         std::fs::write(&tmp, "briefing body").unwrap();
         let canonical = tmp.canonicalize().unwrap();
-        let cmd = resolve_from_file(tmp.to_str().unwrap()).unwrap();
+        let cmd = resolve_from_file(tmp.to_str().unwrap(), AgentProvider::Claude, None).unwrap();
         assert!(cmd.starts_with("claude --dangerously-skip-permissions '"));
         assert!(
             cmd.contains(&format!("Read {}", canonical.display())),
@@ -2620,13 +2640,66 @@ mod from_file_tests {
         std::fs::write(&file, "x").unwrap();
         let prev_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&dir).unwrap();
-        let cmd = resolve_from_file("brief.md").unwrap();
+        let cmd = resolve_from_file("brief.md", AgentProvider::Claude, None).unwrap();
         std::env::set_current_dir(prev_cwd).unwrap();
         assert!(
             cmd.contains("/brief.md"),
             "expected absolute path in command, got: {}",
             cmd
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_receives_metacharacter_path_as_one_literal_prompt_argument() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join(format!(
+            "twapp-from-file-codex-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let briefing = dir.join("brief ' $(touch pwned) ; $HOME `uname`.md");
+        std::fs::write(&briefing, "briefing body").unwrap();
+        let canonical = briefing.canonicalize().unwrap();
+
+        let fake_codex = bin_dir.join("codex");
+        std::fs::write(&fake_codex, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+
+        let command = resolve_from_file(
+            briefing.to_str().unwrap(),
+            AgentProvider::Codex,
+            Some("gpt-6-astra"),
+        )
+        .unwrap();
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(&dir)
+            .env("PATH", &bin_dir)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "command failed: {}", command);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!(
+                "-c\nmodel=gpt-6-astra\n-C\n.\nRead {} and execute.\n",
+                canonical.display()
+            )
+        );
+        assert!(
+            !dir.join("pwned").exists(),
+            "the shell interpolated briefing-path contents"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -2986,13 +3059,20 @@ mod provider_selection_tests {
     }
 
     #[test]
-    fn from_file_requires_claude() {
-        assert!(resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), true, true).is_err());
+    fn from_file_supports_codex_and_preserves_claude_as_the_default() {
+        assert_eq!(
+            resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), true, true),
+            Ok(ProviderChoice::Chosen(CODEX))
+        );
         assert_eq!(
             resolve_new_session_provider(&[CLAUDE, CODEX], None, true, true),
             Ok(ProviderChoice::Chosen(CLAUDE))
         );
-        assert!(resolve_new_session_provider(&[CODEX, AGY], None, true, true).is_err());
+        assert_eq!(
+            resolve_new_session_provider(&[CODEX, AGY], None, true, true),
+            Ok(ProviderChoice::Chosen(CODEX))
+        );
+        assert!(resolve_new_session_provider(&[AGY], Some(AGY), true, true).is_err());
     }
 
     #[test]
