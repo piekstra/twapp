@@ -237,6 +237,13 @@ pub enum Commands {
         #[arg(long)]
         cli_src: Option<String>,
     },
+    /// Run the headless PTY host (started by the GUI)
+    #[command(hide = true)]
+    Ptyd {
+        /// Socket to listen on
+        #[arg(long)]
+        socket: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -604,6 +611,12 @@ pub fn run(cmd: Commands) -> i32 {
             gui_src,
             cli_src: _,
         } => cmd_dev_reload(pid, &cwd, gui_src.as_deref()),
+        Commands::Ptyd { socket } => {
+            let socket = socket
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(crate::ptyd::default_socket_path);
+            crate::ptyd::server::run(&socket)
+        }
     }
 }
 
