@@ -1,6 +1,6 @@
 # Contributing to twapp
 
-Thanks for your interest in contributing! twapp is a personal project that's open source — contributions are welcome, but please read this first so we're on the same page.
+Thanks for your interest in contributing! twapp is a personal project that's open source. Contributions are welcome, but please read this first so we're on the same page.
 
 ## Before You Start
 
@@ -28,24 +28,23 @@ npx tsc --noEmit          # type check
 ### Project Structure
 
 ```
-src/              # React/TypeScript frontend
-  App.tsx         # Main terminal UI component
-  types.ts        # Shared TypeScript types
-  utils/          # Utility functions (format, file, version)
-  components/     # Extracted components (SessionLauncher, FilePreview, PromptSections)
-src-tauri/        # Rust backend
-  src/cli/        # CLI subcommands (work, resume, note, prompt, etc.)
-  src/gui/        # Tauri commands split into modules (pty, sessions, tickets, monitor, etc.)
-  src/lib.rs      # Clap routing between CLI and GUI modes
+src/                  # React/TypeScript frontend
+  hub/                # The window: rail, terminals, session panel, overview, palette
+  components/         # SessionLauncher (All sessions library), FilePreview, PromptSections
+  utils/              # Format, file, version helpers
+src-tauri/            # Rust backend
+  src/gui/            # Tauri commands; hub.rs is the session registry
+  src/ptyd/           # Headless PTY host the window attaches to
+  src/status/         # Session state from harness files, titles and the process tree
+  src/summary/        # Headless summaries and triage
+  src/cli/            # CLI subcommands
+  src/lib.rs          # Clap routing between CLI and GUI modes
+docs/architecture.md  # Design reference
 ```
 
 ### Testing UI Changes
 
-Always verify UI changes visually before submitting:
-
-1. Start the dev server: `npm run dev`
-2. Open `http://localhost:1420` in a browser
-3. Tauri `invoke()` calls will fail in browser mode — this is expected. The UI still renders for visual inspection.
+Verify UI changes visually before submitting. Start the dev server (`npm run dev`) and open `http://localhost:1420` in a browser with a mocked Tauri backend, or build the app and run it. See CLAUDE.md for the mock and for driving a real build without it taking focus.
 
 ## Code Style
 
@@ -57,7 +56,7 @@ Always verify UI changes visually before submitting:
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes
-3. Run `cargo check --manifest-path src-tauri/Cargo.toml` and `npx tsc --noEmit`
+3. Run `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test` and `npx tsc --noEmit`
 4. Open a PR against `main` with a clear description of what and why
 
 ## License

@@ -1,0 +1,11 @@
+KEY | VALUE | SOURCE
+url | https://example.atlassian.net/ | config (domain, deprecated)
+email | pat@example.com | config
+api_token | ******** | environment
+default_project |  | -
+auth_method | basic | default
+cloud_id |  | -
+keyring_ref | atlassian-cli/default | fixed
+keyring_backend | keychain (auto) | -
+
+Config file: /home/pat/.config/jira-ticket-cli/config.json

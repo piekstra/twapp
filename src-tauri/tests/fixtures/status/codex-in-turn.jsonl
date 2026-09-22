@@ -1,0 +1,7 @@
+{"timestamp": "2026-02-03T10:00:00Z", "type": "session_meta", "payload": {"id": "thread-aaa", "cwd": "/work/app"}}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "t0"}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "task_complete", "turn_id": "t0", "last_agent_message": "Done before.", "error": null}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "t1"}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": []}}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Looking at the parser now."}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "info": null}, "ordinal": 1}

@@ -1,0 +1,770 @@
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { AgentProvider, GlobalConfig, Note, PromptSection, PromptStore, QuickPrompt, SessionHistoryEvent, TicketInfo } from "../types";
+import { formatTicketBadge, formatTime } from "../utils/format";
+import { remarkAutolinkFilePaths } from "../utils/markdown";
+import { buildSessionFieldsArgs } from "../utils/session";
+import { getDarkModeAccentColor } from "../color";
+import PromptSections from "../components/PromptSections";
+import type { EditingPromptState } from "../components/PromptSections";
+import { markdownComponents } from "../components/markdown";
+import { STATE_LABELS, hubApi, sinceLabel, type SessionView } from "./api";
+
+export const SESSION_COLORS = [
+  { hex: "#ffe0e0", name: "Rose" },
+  { hex: "#e0e8ff", name: "Cornflower" },
+  { hex: "#e0ffe0", name: "Mint" },
+  { hex: "#fff0e0", name: "Peach" },
+  { hex: "#f0e0ff", name: "Lavender" },
+  { hex: "#e0ffff", name: "Seafoam" },
+  { hex: "#fef3c7", name: "Lemon" },
+  { hex: "#e8d8cc", name: "Cappuccino" },
+  { hex: "#e8f0e0", name: "Sage" },
+];
+
+type SessionFieldValues = {
+  name: string;
+  session_id: string;
+  claude_cwd: string;
+  ticket_key: string;
+  provider: AgentProvider;
+};
+
+interface Props {
+  session: SessionView;
+  activeTab: string;
+  now: number;
+  globalPrompts: PromptStore;
+  setGlobalPrompts: (update: (prev: PromptStore) => PromptStore) => void;
+  reloadPrompts: () => void;
+  onPreview: (path: string) => void;
+  onRestart: () => void;
+  onCloseSession: () => void;
+  onFork: () => void;
+}
+
+export default function SessionPanel({
+  session,
+  activeTab,
+  now,
+  globalPrompts,
+  setGlobalPrompts,
+  reloadPrompts,
+  onPreview,
+  onRestart,
+  onCloseSession,
+  onFork,
+}: Props) {
+  const directory = session.key;
+  const mdComponents = markdownComponents(onPreview);
+
+  // --- Notes ---------------------------------------------------------------
+  // Notes can also change on disk while the panel is open (`twapp note add`
+  // from an agent), so every save merges with what is on disk, keeping notes
+  // this panel has not seen and dropping only the ones deleted here.
+  const [notes, setNotes] = useState<Note[]>([]);
+  const deletedNotes = useRef<Set<string>>(new Set());
+  const [notesExpanded, setNotesExpanded] = useState(true);
+  const [newNote, setNewNote] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
+
+  const mergeWithDisk = (local: Note[], disk: Note[]): Note[] => {
+    const known = new Set(local.map((n) => n.id));
+    const added = disk.filter((n) => !known.has(n.id) && !deletedNotes.current.has(n.id));
+    return [...added, ...local].sort((a, b) => b.timestamp - a.timestamp);
+  };
+
+  const reloadNotes = () => {
+    invoke<Note[]>("load_notes", { directory })
+      .then((saved) => setNotes((local) => mergeWithDisk(local, saved || [])))
+      .catch(console.error);
+  };
+
+  const updateNotes = (change: (prev: Note[]) => Note[]) => {
+    setNotes((prev) => {
+      const next = change(prev);
+      invoke<Note[]>("load_notes", { directory })
+        .then((disk) => {
+          const merged = mergeWithDisk(next, disk || []);
+          invoke("save_notes", { directory, notes: merged }).catch(console.error);
+          if (merged.length !== next.length) setNotes(merged);
+        })
+        .catch(console.error);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    deletedNotes.current = new Set();
+    setNotes([]);
+    reloadNotes();
+    const id = setInterval(reloadNotes, 10000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [directory]);
+
+  const addNote = () => {
+    if (!newNote.trim()) return;
+    const note = { id: crypto.randomUUID(), text: newNote.trim(), timestamp: Date.now() };
+    updateNotes((prev) => [note, ...prev]);
+    setNewNote("");
+  };
+  const deleteNote = (id: string) => {
+    deletedNotes.current.add(id);
+    updateNotes((prev) => prev.filter((n) => n.id !== id));
+  };
+  const saveEditNote = () => {
+    if (!editingNoteId) return;
+    const trimmed = editingText.trim();
+    if (trimmed) updateNotes((prev) => prev.map((n) => (n.id === editingNoteId ? { ...n, text: trimmed } : n)));
+    setEditingNoteId(null);
+    setEditingText("");
+  };
+
+  const send = (text: string) => {
+    hubApi.write(session.key, activeTab, text).catch(console.error);
+  };
+
+  // --- Ticket --------------------------------------------------------------
+  const [ticket, setTicket] = useState<TicketInfo | null>(null);
+  const [ticketExpanded, setTicketExpanded] = useState(true);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [changingTicket, setChangingTicket] = useState(false);
+  const [linkKey, setLinkKey] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [ticketError, setTicketError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    setTicket(null);
+    setChangingTicket(false);
+    setTicketError(null);
+    invoke<TicketInfo | null>("get_ticket_info", { directory })
+      .then((info) => setTicket(info))
+      .catch(console.error);
+  }, [directory, session.ticket_key]);
+
+  const linkTicket = async () => {
+    const key = linkKey.trim();
+    if (!key) return;
+    setLinking(true);
+    setTicketError(null);
+    try {
+      setTicket(await invoke<TicketInfo>("link_ticket", { directory, key }));
+      setLinkKey("");
+      setChangingTicket(false);
+    } catch (e) {
+      setTicketError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const refreshTicket = async () => {
+    setRefreshing(true);
+    setTicketError(null);
+    try {
+      setTicket(await invoke<TicketInfo>("refresh_ticket", { directory }));
+    } catch (e) {
+      setTicketError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const unlinkTicket = async () => {
+    await invoke("unlink_ticket", { directory }).catch(console.error);
+    setTicket(null);
+    setChangingTicket(false);
+  };
+
+  // --- Quick prompts (global) ---------------------------------------------
+  const [promptsExpanded, setPromptsExpanded] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [editingPrompt, setEditingPrompt] = useState<EditingPromptState | null>(null);
+
+  const toggleSection = (key: string) =>
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const savePromptEdit = () => {
+    if (!editingPrompt) return;
+    const { mode, sectionId, promptId, title, text } = editingPrompt;
+    if (mode === "new-section" && title.trim()) {
+      const section: PromptSection = { id: crypto.randomUUID(), title: title.trim(), prompts: [] };
+      setGlobalPrompts((prev) => ({ sections: [...prev.sections, section] }));
+      setExpandedSections((prev) => new Set(prev).add(`global-${section.id}`));
+    } else if (mode === "edit-section" && sectionId && title.trim()) {
+      setGlobalPrompts((prev) => ({
+        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, title: title.trim() } : s)),
+      }));
+    } else if (mode === "new-prompt" && sectionId && title.trim() && text.trim()) {
+      const prompt: QuickPrompt = { id: crypto.randomUUID(), title: title.trim(), text: text.trim() };
+      setGlobalPrompts((prev) => ({
+        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, prompts: [...s.prompts, prompt] } : s)),
+      }));
+    } else if (mode === "edit-prompt" && sectionId && promptId && title.trim() && text.trim()) {
+      setGlobalPrompts((prev) => ({
+        sections: prev.sections.map((s) =>
+          s.id === sectionId
+            ? { ...s, prompts: s.prompts.map((p) => (p.id === promptId ? { ...p, title: title.trim(), text: text.trim() } : p)) }
+            : s,
+        ),
+      }));
+    }
+    setEditingPrompt(null);
+  };
+
+  // --- Settings and history -------------------------------------------------
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<SessionHistoryEvent[]>([]);
+  const [fields, setFields] = useState<SessionFieldValues | null>(null);
+  const [fieldsOriginal, setFieldsOriginal] = useState<SessionFieldValues | null>(null);
+  const [fieldsSaving, setFieldsSaving] = useState(false);
+  const [fieldsError, setFieldsError] = useState<string | null>(null);
+  const [configuredProviders, setConfiguredProviders] = useState<AgentProvider[]>(["claude"]);
+  const [providerIds, setProviderIds] = useState<Partial<Record<AgentProvider, string>>>({});
+
+  const loadHistory = () => {
+    invoke<SessionHistoryEvent[]>("get_session_history", { directory })
+      .then((events) => setHistory(events ?? []))
+      .catch(() => setHistory([]));
+  };
+  useEffect(loadHistory, [directory]);
+
+  const loadFields = () => {
+    setFieldsError(null);
+    invoke<GlobalConfig>("get_global_config")
+      .then((config) => setConfiguredProviders(config.agent_providers))
+      .catch(() => setConfiguredProviders([session.provider]));
+    invoke<Record<string, unknown> | null>("get_session_info", { directory }).then((data) => {
+      const provider = (data?.provider as AgentProvider) || session.provider;
+      const ids = {
+        claude: (data?.session_id as string) || "",
+        codex: (data?.codex_session_id as string) || "",
+        antigravity: (data?.antigravity_session_id as string) || "",
+      };
+      setProviderIds(ids);
+      const values: SessionFieldValues = {
+        name: (data?.name as string) || session.name,
+        session_id: ids[provider] || "",
+        claude_cwd: (data?.claude_cwd as string) || directory,
+        ticket_key: (data?.ticket_key as string) || "",
+        provider,
+      };
+      setFields(values);
+      setFieldsOriginal(values);
+    });
+  };
+  useEffect(() => {
+    if (settingsOpen) loadFields();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen]);
+
+  const fieldsDirty =
+    fields &&
+    fieldsOriginal &&
+    (Object.keys(fields) as (keyof SessionFieldValues)[]).some((k) => fields[k] !== fieldsOriginal[k]);
+
+  const saveFields = async () => {
+    if (!fields) return;
+    setFieldsSaving(true);
+    setFieldsError(null);
+    try {
+      const args = buildSessionFieldsArgs(directory, fields, fieldsOriginal);
+      await invoke("update_session_fields", args);
+      setFieldsOriginal({ ...fields });
+      loadHistory();
+    } catch (err) {
+      setFieldsError(String(err));
+    } finally {
+      setFieldsSaving(false);
+    }
+  };
+
+  const setColor = (color: string, overrideTerminalTheme = session.override_terminal_theme) => {
+    invoke("update_session_color", { directory, color, overrideTerminalTheme }).catch(console.error);
+  };
+
+  const isDark = document.documentElement.classList.contains("dark");
+  const summary = session.summary;
+  const status = session.status;
+
+  return (
+    <aside className="session-panel">
+      <div className="panel-title-row">
+        <span className="panel-title" title={directory}>
+          {session.name}
+        </span>
+        <button className="sidebar-action-button" onClick={() => setSettingsOpen(true)} title="Session settings">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="6" cy="6" r="1.5" />
+            <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.17 2.17l1.06 1.06M8.77 8.77l1.06 1.06M9.83 2.17l-1.06 1.06M3.23 8.77l-1.06 1.06" />
+          </svg>
+        </button>
+      </div>
+
+      <div className={`summary-card state-${status.state}${session.attention ? " attention" : ""}`}>
+        <div className="summary-state">
+          <span className={`state-dot state-${status.state}`} />
+          <span>{STATE_LABELS[status.state]}</span>
+          {status.state !== "suspended" && <span className="summary-since">for {sinceLabel(status.since, now)}</span>}
+          <button
+            className="summary-refresh"
+            title="Summarize again"
+            onClick={() => hubApi.summarize(session.key).catch(console.error)}
+          >
+            &#8635;
+          </button>
+        </div>
+        {status.detail && <div className="summary-detail">{status.detail}</div>}
+        {summary ? (
+          <>
+            <div className="summary-headline">{summary.headline}</div>
+            {summary.doing && <div className="summary-doing">{summary.doing}</div>}
+            {summary.needs_user && (
+              <div className="summary-needs">
+                <span className="summary-needs-label">Needs from you</span>
+                {summary.needs_user}
+              </div>
+            )}
+          </>
+        ) : (
+          (status.title || status.last_message) && (
+            <div className="summary-doing">{status.title || status.last_message}</div>
+          )
+        )}
+      </div>
+
+      <div className="panel-actions">
+        <button className="panel-action" onClick={onRestart} title="Restart the harness">Restart</button>
+        <button className="panel-action" onClick={onFork} title="Fork (⌘⇧N)">Fork</button>
+        {history.length > 0 && (
+          <button className="panel-action" onClick={() => setHistoryOpen(true)}>
+            History ({history.length})
+          </button>
+        )}
+        <button className="panel-action danger" onClick={onCloseSession} title="Stop and remove from the window">Close</button>
+      </div>
+
+      {/* Ticket */}
+      <div className="ticket-panel">
+        <div className="ticket-header" onClick={() => setTicketExpanded(!ticketExpanded)}>
+          <h2>
+            <span className={`prompt-chevron${ticketExpanded ? " expanded" : ""}`}>&#9654;</span>
+            Ticket
+            {!ticketExpanded && ticket && <span className="notes-count">{formatTicketBadge(ticket.key)}</span>}
+          </h2>
+          <div className="ticket-header-actions">
+            {ticket && (
+              <>
+                <button
+                  className="ticket-refresh-button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    refreshTicket();
+                  }}
+                  disabled={refreshing}
+                >
+                  {refreshing ? "..." : "Refresh"}
+                </button>
+                <button
+                  className="ticket-change-button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChangingTicket(true);
+                    setTicketExpanded(true);
+                  }}
+                >
+                  Change
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        {ticketExpanded && ticketError && <div className="ticket-link-error">{ticketError}</div>}
+        {ticketExpanded &&
+          (ticket && !changingTicket ? (
+            <div className="ticket-content">
+              <div className="ticket-badges">
+                <span className="ticket-key">{ticket.key}</span>
+                <span className="ticket-badge ticket-type">{ticket.type}</span>
+                <span className={`ticket-badge ticket-status ticket-status-${ticket.status.toLowerCase().replace(/\s+/g, "-")}`}>
+                  {ticket.status}
+                </span>
+                {ticket.points && <span className="ticket-badge ticket-points">{ticket.points} pts</span>}
+              </div>
+              <div className="ticket-title">{ticket.title}</div>
+              {ticket.epic && <div className="ticket-epic">{ticket.epic}</div>}
+              {ticket.description && (
+                <div
+                  className={`ticket-description ${descriptionExpanded ? "expanded" : ""}`}
+                  onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                >
+                  {ticket.description}
+                </div>
+              )}
+              {ticket.url && (
+                <a
+                  className="ticket-link"
+                  href={ticket.url}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(ticket.url!).catch(console.error);
+                  }}
+                >
+                  Open in {ticket.source === "github" ? "GitHub" : "Jira"}
+                </a>
+              )}
+            </div>
+          ) : (
+            <div className="ticket-empty">
+              {!ticket && <div className="ticket-empty-label">No ticket linked</div>}
+              <div className="ticket-link-form">
+                <input
+                  type="text"
+                  className="ticket-link-input"
+                  placeholder="ABC-123, 123, or owner/repo#123"
+                  value={linkKey}
+                  onChange={(e) => setLinkKey(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") linkTicket();
+                    if (e.key === "Escape") setChangingTicket(false);
+                  }}
+                  disabled={linking}
+                  autoFocus={changingTicket}
+                />
+                <button className="ticket-link-button" onClick={linkTicket} disabled={linking || !linkKey.trim()}>
+                  {linking ? "..." : "Link"}
+                </button>
+              </div>
+              {ticket && changingTicket && (
+                <div className="ticket-change-actions">
+                  <button className="ticket-change-button" onClick={unlinkTicket}>Unlink</button>
+                  <button className="ticket-change-button" onClick={() => setChangingTicket(false)}>Cancel</button>
+                </div>
+              )}
+            </div>
+          ))}
+      </div>
+
+      {/* Notes */}
+      <div className="notes-section-header">
+        <h2 onClick={() => setNotesExpanded(!notesExpanded)}>
+          <span className={`prompt-chevron ${notesExpanded ? "expanded" : ""}`}>&#9654;</span>
+          Notes
+          {!notesExpanded && notes.length > 0 && <span className="notes-count">{notes.length}</span>}
+        </h2>
+        <button className="section-refresh-btn" onClick={reloadNotes} title="Reload notes from disk">&#8635;</button>
+      </div>
+      {notesExpanded && (
+        <div className="note-input">
+          <textarea
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            placeholder="Add a note..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.metaKey) addNote();
+            }}
+          />
+          <button onClick={addNote}>Add</button>
+        </div>
+      )}
+      <div className={`notes-list ${notesExpanded ? "" : "collapsed"}`}>
+        {notes.map((note) => (
+          <div key={note.id} className="note">
+            <div className="note-header">
+              <span className="note-time">{formatTime(note.timestamp)}</span>
+              <div className="note-actions">
+                {editingNoteId === note.id ? (
+                  <button className="note-edit-save" onClick={saveEditNote} title="Save">✓</button>
+                ) : (
+                  <button
+                    className="note-edit"
+                    onClick={() => {
+                      setEditingNoteId(note.id);
+                      setEditingText(note.text);
+                    }}
+                    title="Edit"
+                  >
+                    ✎
+                  </button>
+                )}
+                <button
+                  className="note-send"
+                  onClick={() => {
+                    send(note.text);
+                    deleteNote(note.id);
+                  }}
+                  title="Type into the terminal"
+                >
+                  ↵
+                </button>
+                <button className="note-delete" onClick={() => deleteNote(note.id)}>×</button>
+              </div>
+            </div>
+            {editingNoteId === note.id ? (
+              <textarea
+                className="note-edit-input"
+                value={editingText}
+                onChange={(e) => setEditingText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && e.metaKey) saveEditNote();
+                  if (e.key === "Escape") {
+                    setEditingNoteId(null);
+                    setEditingText("");
+                  }
+                }}
+                autoFocus
+              />
+            ) : (
+              <div className="note-text">
+                <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={mdComponents}>
+                  {note.text}
+                </Markdown>
+              </div>
+            )}
+          </div>
+        ))}
+        {notes.length === 0 && (
+          <div className="notes-empty">
+            No notes yet.
+            <br />
+            <span>⌘+Enter to add</span>
+          </div>
+        )}
+      </div>
+
+      {/* Quick prompts */}
+      <div className="prompts-panel">
+        <div className="prompts-header" onClick={() => setPromptsExpanded(!promptsExpanded)}>
+          <h2>
+            <span className={`prompt-chevron ${promptsExpanded ? "expanded" : ""}`}>&#9654;</span>
+            Quick Prompts
+          </h2>
+          <div className="prompts-header-actions">
+            <button
+              className="section-refresh-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                reloadPrompts();
+              }}
+              title="Reload prompts from disk"
+            >
+              &#8635;
+            </button>
+            <button
+              className="sidebar-action-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPromptsExpanded(true);
+                setEditingPrompt({ mode: "new-section", scope: "global", sectionId: null, promptId: null, title: "", text: "" });
+              }}
+              title="Add section"
+            >
+              +
+            </button>
+          </div>
+        </div>
+        {promptsExpanded && (
+          <div className="prompts-content">
+            {editingPrompt?.mode === "new-section" && (
+              <div className="prompt-edit-form">
+                <input
+                  placeholder="Section name"
+                  value={editingPrompt.title}
+                  onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") savePromptEdit();
+                    if (e.key === "Escape") setEditingPrompt(null);
+                  }}
+                  autoFocus
+                />
+                <div className="prompt-edit-form-actions">
+                  <button className="prompt-form-cancel" onClick={() => setEditingPrompt(null)}>Cancel</button>
+                  <button className="prompt-form-save" onClick={savePromptEdit}>Save</button>
+                </div>
+              </div>
+            )}
+            <PromptSections
+              sections={globalPrompts.sections}
+              scope="global"
+              expandedSections={expandedSections}
+              editingPrompt={editingPrompt}
+              setEditingPrompt={setEditingPrompt}
+              toggleSection={toggleSection}
+              savePromptEdit={savePromptEdit}
+              startEditSection={(scope, section) =>
+                setEditingPrompt({ mode: "edit-section", scope, sectionId: section.id, promptId: null, title: section.title, text: "" })
+              }
+              startNewPrompt={(scope, sectionId) =>
+                setEditingPrompt({ mode: "new-prompt", scope, sectionId, promptId: null, title: "", text: "" })
+              }
+              startEditPrompt={(scope, sectionId, prompt) =>
+                setEditingPrompt({ mode: "edit-prompt", scope, sectionId, promptId: prompt.id, title: prompt.title, text: prompt.text })
+              }
+              deleteSection={(_scope, sectionId) =>
+                setGlobalPrompts((prev) => ({ sections: prev.sections.filter((s) => s.id !== sectionId) }))
+              }
+              deletePrompt={(_scope, sectionId, promptId) =>
+                setGlobalPrompts((prev) => ({
+                  sections: prev.sections.map((s) =>
+                    s.id === sectionId ? { ...s, prompts: s.prompts.filter((p) => p.id !== promptId) } : s,
+                  ),
+                }))
+              }
+              sendPrompt={send}
+            />
+            {globalPrompts.sections.length === 0 && !editingPrompt && (
+              <div className="prompts-empty">No prompts yet. Click + to add a section.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {settingsOpen && (
+        <div className="config-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="config-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="config-header">
+              <span className="config-title">Session Config</span>
+              <button className="config-close" onClick={() => setSettingsOpen(false)}>&times;</button>
+            </div>
+            <div className="config-body">
+              <div className="config-section">
+                <div className="session-settings-label">Session Color</div>
+                <div className="session-color-grid">
+                  {SESSION_COLORS.map(({ hex, name }) => (
+                    <div
+                      key={hex}
+                      className={`session-color-dot${session.color === hex ? " selected" : ""}`}
+                      style={{ backgroundColor: isDark ? getDarkModeAccentColor(hex) : hex }}
+                      title={name}
+                      onClick={() => setColor(hex)}
+                    />
+                  ))}
+                </div>
+                <div className="session-color-custom">
+                  <label className="session-settings-label">Custom</label>
+                  <input
+                    type="color"
+                    value={session.color || "#e0e8ff"}
+                    onInput={(e) => setColor((e.target as HTMLInputElement).value)}
+                  />
+                </div>
+                <label className="session-settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={session.override_terminal_theme}
+                    onChange={(e) => setColor(session.color || "#e0e8ff", e.target.checked)}
+                  />
+                  Apply to terminal
+                </label>
+              </div>
+              {fields && (
+                <div className="config-section">
+                  <div className="session-settings-field">
+                    <label className="session-settings-label">Harness</label>
+                    <select
+                      className="session-settings-input"
+                      value={fields.provider}
+                      onChange={(event) => {
+                        const provider = event.target.value as AgentProvider;
+                        setFields((prev) => (prev ? { ...prev, provider, session_id: providerIds[provider] || "" } : prev));
+                      }}
+                    >
+                      {Array.from(new Set([...configuredProviders, fields.provider])).map((provider) => (
+                        <option key={provider} value={provider}>
+                          {provider === "antigravity" ? "Antigravity" : provider === "codex" ? "Codex" : "Claude"}
+                        </option>
+                      ))}
+                    </select>
+                    {fields.provider !== session.provider && (
+                      <div className="session-settings-note">
+                        Save, then Restart to switch harnesses. If no saved {fields.provider} conversation exists, twapp prepares a migration preload.
+                      </div>
+                    )}
+                  </div>
+                  {([
+                    ["name", "Name"],
+                    ["session_id", fields.provider === "antigravity" ? "Antigravity Conversation ID" : fields.provider === "codex" ? "Codex Session ID" : "Claude Session ID"],
+                    ["claude_cwd", "Resume CWD"],
+                    ["ticket_key", "Ticket"],
+                  ] as const).map(([key, label]) => (
+                    <div className="session-settings-field" key={key}>
+                      <label className="session-settings-label">{label}</label>
+                      <input
+                        className="session-settings-input"
+                        value={fields[key]}
+                        onChange={(e) => setFields((prev) => (prev ? { ...prev, [key]: e.target.value } : prev))}
+                        spellCheck={false}
+                      />
+                    </div>
+                  ))}
+                  {fieldsError && <div className="config-error">{fieldsError}</div>}
+                  {fieldsDirty && (
+                    <button className="config-save-button" onClick={saveFields} disabled={fieldsSaving}>
+                      {fieldsSaving ? "Saving..." : "Save"}
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="config-section">
+                <div className="session-settings-label">Directory</div>
+                <code className="config-directory">{directory}</code>
+                {session.session_id && (
+                  <>
+                    <div className="session-settings-label">Conversation</div>
+                    <code className="config-directory" onClick={() => navigator.clipboard.writeText(session.session_id!)} title="Click to copy">
+                      {session.session_id}
+                    </code>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="config-overlay" onClick={() => setHistoryOpen(false)}>
+          <div className="config-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="config-header">
+              <span className="config-title">Session History</span>
+              <button className="config-close" onClick={() => setHistoryOpen(false)}>&times;</button>
+            </div>
+            <div className="config-body">
+              <div className="history-list">
+                {[...history].reverse().map((ev, idx) => (
+                  <div className="history-item" key={idx}>
+                    <div className="history-item-header">
+                      <span className={`history-badge history-badge-${ev.event}`}>
+                        {ev.event === "manual_edit" ? "edited" : ev.event}
+                      </span>
+                      {ev.ambiguous && <span className="history-badge history-badge-ambiguous">ambiguous</span>}
+                      <span className="history-timestamp">{new Date(ev.timestamp).toLocaleString()}</span>
+                    </div>
+                    <div className="history-ids">
+                      <span className="history-id-label">from</span>
+                      <code className="history-id">{ev.old_session_id ? ev.old_session_id.slice(0, 8) : "(none)"}</code>
+                      <span className="history-id-label">&rarr;</span>
+                      <code className="history-id">{ev.new_session_id ? ev.new_session_id.slice(0, 8) : "(none)"}</code>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}

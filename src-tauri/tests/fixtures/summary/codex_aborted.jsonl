@@ -1,0 +1,3 @@
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "task_started", "turn_id": "1"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "user", "content": [{"type": "input_text", "text": "Refactor the parser."}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "turn_aborted", "turn_id": "1", "reason": "interrupted"}}

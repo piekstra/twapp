@@ -1,5 +1,8 @@
 pub mod cli;
 pub mod gui;
+pub mod ptyd;
+pub mod status;
+pub mod summary;
 
 use clap::Parser;
 

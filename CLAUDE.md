@@ -2,117 +2,74 @@
 
 ## Usage Reference
 
-This section is the authoritative reference for twapp usage across all twapp-managed agent sessions.
+This section is the reference for agents running inside twapp sessions.
 
-**Key commands:** `work`, `resume`, `sessions`, `note`, `prompt`, `permissions`, `ticket`, `monitor`, `set-session`, `install-gui`, `setup-cert`, `dev-reload`
+twapp is one window hosting every session. Each session is a directory with a `.twapp-session.json`; its terminals run in `twapp ptyd`, so the window can quit or restart without stopping them.
 
-Run `twapp <command> --help` for details.
+**Commands an agent in a session uses:**
+- `twapp note add|list|remove`: notes for the current session (the panel shows them).
+- `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`).
+- `twapp prompt add|list|remove`: quick prompts, shared by every session.
+- `twapp status [--json]`: the sessions open in the window, their state and summary.
+- `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
 
-**Binary location:** `~/.config/twapp/bin/twapp` (symlink to `~/.config/twapp/twapp.app/Contents/MacOS/twapp`)
+Run `twapp <command> --help` for flags.
 
-**Config files:**
-- Session data: `.twapp-session.json` in working directory
-- Notes: `.twapp-notes[-name].json` in working directory
-- Default permissions: `~/.config/twapp/default-permissions.json`
-- Global config: `~/.config/twapp/config.yaml`
+**Binary:** `~/.config/twapp/bin/twapp`, a symlink into `~/.config/twapp/twapp.app`.
 
-**Session workflows:**
-- `twapp work <ticket>` — New session, new ID
-- `twapp resume` — Continue existing session (same ID, same directory)
-- `twapp resume --fork` — Fork in current directory (new ID, keeps context)
-- `twapp work <ticket> -s <id> --claude-cwd <dir>` — Fork to new directory (new ID, keeps context)
+**Config and state:**
+- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json` in the session directory.
+- Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, selection, last-viewed).
+- Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).
+- Summaries cache: `~/.local/state/twapp/summaries/`.
 
-**Provider selection**:
-- `defaults.agent_providers` in `~/.config/twapp/config.yaml` is the creation allowlist. The launcher searches for supported local CLIs and lets the user configure Claude, Codex, and Antigravity when installed.
-- New GUI sessions always show the configured harness choices. `twapp work` prompts when multiple harnesses are configured, and accepts `--provider` for scripts and non-interactive use.
-- The active harness belongs to each session. twapp stores each harness's native session handle separately, so switching in Session Config preserves the source conversation and reuses either conversation when switching back.
-- A switch to a harness with no native handle stages migration context for the next open. Antigravity conversations are captured from `~/.gemini/antigravity-cli/cache/last_conversations.json` after launch.
-- `agent_provider` remains a legacy fallback when `agent_providers` is absent. It must not override an existing session's saved provider.
-- Default permissions remain Claude-only.
-
-When to use each:
-- **work**: Starting fresh on a new ticket
-- **resume**: Coming back to a session after closing the window
-- **resume --fork**: Splitting a session that grew too broad (same repo)
-- **work -s**: Forking off to work on a related issue in a different repo/directory
-
-**Session naming**: When created from a ticket (Jira or GitHub), sessions are named with the ticket key + shortened title (e.g. "MON-1234 Implement Great Feature"), truncated at word boundaries to stay under 50 chars. If `--name` is provided, that overrides the auto-generated name.
-
-**Session Launcher**: Open twapp from Spotlight (no CLI args) to see the session dashboard. Lists all sessions with name, ticket, directory, running status, last active time, and message count. Supports search, sort by recent (time buckets) or A-Z (letter groups), and Cmd+R to rescan. Sessions stream in progressively during scan. Auto-refreshes every 5s when visible, pauses when hidden, and rescans on focus if stale (>5 min).
-
-**Launcher Settings**: Gear icon in launcher header switches to settings view with three tabs:
-- **General**: theme (light/dark/system), session color preference (random or specific hex from palette with split light/dark previews), work directory, Jira project, GitHub repo, and installed/configured agent harnesses. Auto-saves on blur.
-- **Prompts** — global quick prompt management (add/edit/remove sections and prompts). Same data as `~/.config/twapp/quick-prompts.json`.
-- **Permissions** — default Claude permission CRUD. Same data as `~/.config/twapp/default-permissions.json`.
-
-**New Session (GUI)**: "+" button in launcher header opens a dedicated form to choose one configured harness, then create and launch a session (ticket key or name). It uses `create_session_core()`, shared with `cmd_work`, so CLI and GUI session creation stay in sync. Respects the session color preference.
-
-**Fork Session (GUI)**: "Fork Session..." in the actions menu (or Cmd+Shift+N) opens a dialog to fork the current session. Accepts an optional ticket key and/or custom name. Ticket triggers directory creation + jtk fetch (same as new session). Custom name sets the session name without requiring a ticket. Both fields empty forks with the current directory name.
-
-**Session Deletion**: Trash icon on session hover opens a confirmation modal. `preflight_delete_session` gathers safety checks (running status, uncommitted git changes, unpushed commits, ticket completion status, note count, conversation size). `delete_session` has two tiers: "Remove Session" (deletes `.twapp-*` metadata, `.claude/` project dir, conversation JSONL, `~/.claude.json` entry) or "Delete Everything" (entire working directory). Running sessions cannot be deleted (server-side block).
-
-**Import Claude Sessions**: Download-arrow icon in launcher header discovers unmanaged Claude CLI sessions from `~/.claude/projects/`. `discover_claude_sessions` scans JSONL files, extracts summaries (from compaction) and metadata (message count, timestamps, git branch, file size), cross-references with known twapp sessions to avoid duplicates, and groups results by original working directory. The import view shows expandable directory groups with searchable sessions, editable names, and metadata. `import_sessions` creates new directories in the work directory with full twapp session metadata (`imported: true`, `imported_from: session_id`). Imported sessions show an "Imported" badge on the meta line, with a filter toggle in the sort bar to show/hide them. This import flow is currently Claude-only; Codex support focuses on twapp-managed sessions and provider switching.
+**Harnesses:** `defaults.agent_providers` in `config.yaml` lists the harnesses offered for new sessions (Claude, Codex, Antigravity). Each session keeps its active harness and a separate conversation id per harness; switching stages a migration briefing when the target has no conversation yet. Default permissions are Claude-only.
 
 ## Architecture
 
-Tauri app (Rust backend + React/TypeScript frontend) that serves as both a CLI tool and GUI terminal wrapper for Claude, Codex, and Antigravity work sessions.
+[docs/architecture.md](docs/architecture.md) is the design reference: processes, the ptyd and hub socket protocols, the status engine's signals, summaries, layout and restore.
 
-- **Frontend**: `src/App.tsx` (main terminal UI), `src/components/SessionLauncher.tsx` (session management), `src/components/FilePreview/` (file preview renderers), `src/components/PromptSections.tsx` (quick prompts UI), `src/types.ts` (shared types), `src/utils/` (format, file, version helpers), `src/App.css`
-- **Backend GUI**: `src-tauri/src/gui/` - Tauri commands split into modules: `pty.rs` (terminal), `sessions.rs` (session management), `tickets.rs` (ticket integration), `monitor.rs` (background process), `config.rs` (settings), `files.rs` (file operations), `notes.rs`, `prompts.rs`, `types.rs`, `mod.rs` (app setup)
-- **Backend CLI**: `src-tauri/src/cli/` - CLI subcommands (work, resume, sessions, etc.). `create_session_core()` in `mod.rs` is shared between CLI and GUI. `monitor.rs` handles CLI monitor commands.
-- **Routing**: `src-tauri/src/lib.rs` - Clap parser, routes subcommands to CLI or GUI mode
-- **Config**: `src-tauri/tauri.conf.json`
+- **Frontend** (`src/`): `hub/Hub.tsx` (window layout, keyboard, dialogs), `hub/terminals.ts` (one xterm per session tab; the single WebGL renderer moves to the visible terminal), `hub/useHub.ts` (session store fed by `hub:*` events), `hub/SessionRail.tsx`, `hub/SessionPanel.tsx` (summary, ticket, notes, prompts, session settings), `hub/Overview.tsx`, `hub/CommandPalette.tsx`, `components/SessionLauncher.tsx` (the All sessions library: search, new session, import, settings), `components/FilePreview/`.
+- **Window backend** (`src-tauri/src/gui/`): `hub.rs` (session registry, ptyd client, status polling, `hub.sock`, `hub_*` commands), `sessions.rs` (launch arguments, create, fork, rename, delete, import), `tickets.rs`, `notes.rs`, `prompts.rs`, `config.rs`, `files.rs`, `mod.rs` (app setup, single-instance forwarding).
+- **Terminal host** (`src-tauri/src/ptyd/`): headless PTY daemon, framed protocol, client.
+- **Status engine** (`src-tauri/src/status/`): per-session state from Claude status files and transcripts, Codex rollouts, OSC titles and notifications, and the process tree.
+- **Summarizer** (`src-tauri/src/summary/`): transcript condensing, headless harness runs, cache, triage.
+- **CLI** (`src-tauri/src/cli/`): subcommands; `create_session_core()` in `mod.rs` is shared with the GUI; `hub_link.rs` hands sessions to the window.
 
 ## Dev Process
 
-### Verifying UI Changes
+### Verifying UI changes
 
-**Always verify UI changes visually before committing.** Use the Vite dev server + Playwright:
+Verify UI changes visually before committing. Run the Vite dev server (`npm run dev`, http://localhost:1420) and drive it with headless Playwright. `invoke()` needs a Tauri backend, so inject a mock `window.__TAURI_INTERNALS__` (an `invoke` returning fixture data for `hub_snapshot` and friends, plus `transformCallback`) with `page.addInitScript` to render realistic states.
 
-1. Start the dev server: `npm run dev` (serves at http://localhost:1420)
-2. Use Playwright browser tools to navigate to http://localhost:1420
-3. Interact with the UI (click buttons, fill forms) and take screenshots to verify layout
-4. Note: Tauri `invoke()` calls will fail in browser mode — this is expected. The UI still renders and can be visually inspected.
+To exercise the real backend, build the app (`npm run tauri build --bundles app`), open it with `open -g -n -a <bundle>` so it does not take focus, and open sessions with `{"open_background": [...]}` on `hub.sock`. `twapp status` shows what the window sees.
 
-This catches alignment issues, spacing problems, and CSS bugs that aren't visible from code alone.
-
-### Building and Installing
+### Building and installing
 
 ```bash
 npm run tauri build
-twapp install-gui src-tauri/target/release/twapp
+twapp install-gui src-tauri/target/release/bundle/macos/twapp.app
 ```
 
-### TypeScript Check
+### Checks
 
 ```bash
 npx tsc --noEmit
+npm test
+cd src-tauri && cargo test && cargo clippy --all-targets
 ```
 
 ### Versioning
 
-**Automatic**: CI derives version from `version.txt` (major.minor) + run number (patch), injects into build files without committing, builds, tags, and creates a GitHub release. No commits pushed back to main.
-
-**Manual override**: To bump minor/major, update `version.txt` (e.g., `0.5` → `0.6` or `1.0`). Patch is always the CI run number.
+CI derives the version from `version.txt` (major.minor) plus the run number, injects it into the build files without committing, builds, tags, and creates a GitHub release. Bump minor or major by editing `version.txt`.
 
 ## Key Patterns
 
-- **CLI/GUI parity**: The CLI (`src-tauri/src/cli/`) and GUI (`src-tauri/src/gui/` + `src/`) often implement the same operations. When modifying one, check if the other needs a matching change. Examples: fork, ticket link/refresh, session management. Not all features need parity (some are UI-only like theme switching) but session-related operations should stay in sync.
-- **Tauri commands**: `invoke<ReturnType>("command_name", { args })` from frontend, `#[tauri::command]` in Rust
-- **State persistence**: `useEffect` hooks auto-save to disk on state change, guarded by `loaded` refs to skip initial empty state
-- **PTY injection**: `invoke("write_to_pty", { data: text })` writes directly to terminal stdin (no trailing newline, so user can append before submitting)
-- **File storage**: `.twapp-*.json` files in cwd for session data, `~/.config/twapp/` for global data
-- **Collapsible sections**: Chevron toggle pattern with `expanded` CSS class for `rotate(90deg)` transition
-- **Quick prompts CLI**: `twapp prompt add <title> <text> [--section <name>] [--global]` to add prompts from CLI so your active agent can save reusable prompts. `twapp prompt list [--global]` to list, `twapp prompt remove <id-prefix> [--global]` to remove. Default scope is project; `--global` writes to `~/.config/twapp/quick-prompts.json`
-- **Monitor**: Background command runner with live output in a collapsible bar. Opt-in only (disabled by default; enable in Settings > General > Features).
-  - **CLI**: `twapp monitor "npm run dev"` starts a command. `--stop` stops it, `--status` shows what's running, `--logs` tails the log. CLI communicates with GUI via `.twapp-monitor-request.json`; GUI polls for it and spawns the process.
-  - **GUI bar**: Dockable to top or bottom (position persisted in `config.yaml`). Resizable via drag handle (size persisted). Header shows command, status indicator, duration. Click header to expand/collapse output.
-  - **Float mode**: Toggle via icon in bar header. When float is on, the output panel overlays the terminal instead of pushing it. Click outside the bar to collapse. When float is off, it takes up static space.
-  - **Log search**: Magnifying glass icon opens incremental search bar (xterm SearchAddon). Enter/Shift+Enter to navigate matches, Esc to close.
-  - **Log file explorer**: Document icon opens a dropdown listing `.twapp-monitor-{timestamp}.log` files (newest first). Click a file to preview it in the in-app file viewer. Small reveal button on hover opens it in Finder.
-  - **One command at a time**: Starting a new command stops the previous. Output auto-logs to timestamped `.twapp-monitor-{timestamp}.log` files.
-  - **Config keys**: `monitor_enabled` (bool), `monitor_position` ("top"/"bottom"), `monitor_size` (px), `monitor_float` (bool) — all in `~/.config/twapp/config.yaml`.
-  - **Cleanup**: Monitor log files (`.twapp-monitor-*.log`) and request/active JSON files are cleaned up with session deletion.
-- **Session launcher streaming**: `scan_sessions` uses Tauri events (`launcher:session`, `launcher:home-dir`, `launcher:done`) to stream results progressively. `list_all_sessions` returns all at once for periodic refresh. Frontend deduplicates by `session_id` and skips polling during active scans to prevent duplicates.
-- **Launcher navigation**: `launcherView` state (`"sessions" | "settings" | "new-session" | "import"`) controls which view is shown. Settings uses `settingsTab` state for tab switching. Settings data lazy-loads on first navigation to avoid unnecessary backend calls.
-- **Color palette**: 9 named colors (rose, cornflower, mint, peach, lavender, seafoam, lemon, cappuccino, sage) defined in both `theme.rs` (Rust) and `SessionLauncher.tsx` (frontend). `getDarkModeAccentColor()` from `color.ts` computes dark-mode equivalents. Config stores `session_color: random | hex` in `config.yaml`.
+- **Session identity**: the canonical session directory path is the key everywhere (`hub::session_key`). Commands take `directory`; nothing reads a per-process session.
+- **Opening sessions**: every path (CLI, new session, fork, resume, palette) builds GUI launch arguments and calls `Hub::open_argv`. Arguments with a command start the PTY at once; restored sessions start when selected.
+- **Terminal output**: ptyd output reaches the frontend through one Tauri `Channel` per tab as raw bytes; the backend also feeds the main tab's bytes to the status tracker. A terminal that attaches to a running PTY gets a replay, then a one-column resize so the harness redraws.
+- **Status and summaries**: `Hub::poll_once` runs every two seconds. Transitions into `your_turn`, `needs_approval` or `errored` request a summary; the summarizer debounces and caches.
+- **Ticket fetching**: `cli/ticket.rs` owns every jtk and gh call; GUI commands call it through `tickets::fetch_blocking`. jtk 1.3+ has no JSON output, so Jira fields come from `jtk issues get --fields ... --fulltext`, parsed by `parse_jtk_issue` (fixtures in `src-tauri/tests/fixtures/jtk/`).
+- **CLI/GUI parity**: session operations (create, fork, ticket link, rename) exist in both; change them together.
+- **Tauri commands**: `invoke<T>("command_name", { camelCaseArgs })` from the frontend, `#[tauri::command]` in Rust. Snake_case argument keys are silently dropped.
+- **Color palette**: 9 named colors in `cli/theme.rs` and `hub/SessionPanel.tsx`; `getDarkModeAccentColor()` in `color.ts` derives dark-mode variants.

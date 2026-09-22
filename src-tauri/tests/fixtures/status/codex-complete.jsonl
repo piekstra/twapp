@@ -1,0 +1,4 @@
+{"timestamp": "2026-02-03T10:00:00Z", "type": "session_meta", "payload": {"id": "thread-aaa", "cwd": "/work/app"}}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "t1"}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Working."}, "ordinal": 1}
+{"timestamp": "2026-02-03T10:00:00Z", "type": "event_msg", "payload": {"type": "task_complete", "turn_id": "t1", "last_agent_message": "Parser fixed; tests pass.", "error": null, "duration_ms": 900}, "ordinal": 1}

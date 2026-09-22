@@ -1,20 +1,23 @@
-use super::types::*;
+use std::path::{Path, PathBuf};
 
-fn resolve_notes_path(config: &GuiArgs) -> std::path::PathBuf {
-    let cwd = config.cwd.as_deref().unwrap_or(".");
-    let base = std::path::Path::new(cwd);
-    // Use instance name to isolate notes when multiple sessions share a directory
-    if config.name != "twapp" {
-        let safe_name = config.name.replace('/', "-").replace(' ', "-");
-        base.join(format!(".twapp-notes-{}.json", safe_name))
-    } else {
+/// Notes live beside the session: `.twapp-notes-<name>.json`, named after the
+/// session so sessions that once shared a directory kept separate notes.
+fn resolve_notes_path(directory: &str) -> PathBuf {
+    let base = Path::new(directory);
+    let name = crate::cli::session::read_session(base)
+        .map(|s| s.name)
+        .unwrap_or_default();
+    if name.is_empty() || name == "twapp" {
         base.join(".twapp-notes.json")
+    } else {
+        let safe_name = name.replace('/', "-").replace(' ', "-");
+        base.join(format!(".twapp-notes-{}.json", safe_name))
     }
 }
 
 #[tauri::command]
-pub fn load_notes(config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value, String> {
-    let path = resolve_notes_path(config.inner());
+pub fn load_notes(directory: String) -> Result<serde_json::Value, String> {
+    let path = resolve_notes_path(&directory);
     if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).map_err(|e| e.to_string())
@@ -24,8 +27,8 @@ pub fn load_notes(config: tauri::State<'_, GuiArgs>) -> Result<serde_json::Value
 }
 
 #[tauri::command]
-pub fn save_notes(notes: serde_json::Value, config: tauri::State<'_, GuiArgs>) -> Result<(), String> {
-    let path = resolve_notes_path(config.inner());
+pub fn save_notes(directory: String, notes: serde_json::Value) -> Result<(), String> {
+    let path = resolve_notes_path(&directory);
     std::fs::write(&path, serde_json::to_string_pretty(&notes).unwrap())
         .map_err(|e| e.to_string())
 }

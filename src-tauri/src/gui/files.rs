@@ -1,15 +1,19 @@
-use super::types::*;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-#[tauri::command]
-pub fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let file_path = std::path::Path::new(&path);
-    let resolved = if file_path.is_absolute() {
+/// Relative paths resolve against the session directory they were printed in.
+fn resolve_path(path: &str, directory: Option<&str>) -> std::path::PathBuf {
+    let file_path = std::path::Path::new(path);
+    if file_path.is_absolute() {
         file_path.to_path_buf()
     } else {
-        let cwd = config.cwd.as_deref().unwrap_or(".");
-        std::path::Path::new(cwd).join(file_path)
-    };
+        std::path::Path::new(directory.unwrap_or(".")).join(file_path)
+    }
+}
+
+#[tauri::command]
+pub fn read_file(path: String, directory: Option<String>) -> Result<String, String> {
+    let resolved = resolve_path(&path, directory.as_deref());
     if !resolved.exists() {
         return Err(format!("File not found: {}", resolved.display()));
     }
@@ -21,14 +25,8 @@ pub fn read_file(path: String, config: tauri::State<'_, GuiArgs>) -> Result<Stri
 }
 
 #[tauri::command]
-pub fn read_file_base64(path: String, config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let file_path = std::path::Path::new(&path);
-    let resolved = if file_path.is_absolute() {
-        file_path.to_path_buf()
-    } else {
-        let cwd = config.cwd.as_deref().unwrap_or(".");
-        std::path::Path::new(cwd).join(file_path)
-    };
+pub fn read_file_base64(path: String, directory: Option<String>) -> Result<String, String> {
+    let resolved = resolve_path(&path, directory.as_deref());
     if !resolved.exists() {
         return Err(format!("File not found: {}", resolved.display()));
     }
@@ -42,8 +40,8 @@ pub fn read_file_base64(path: String, config: tauri::State<'_, GuiArgs>) -> Resu
 }
 
 #[tauri::command]
-pub fn dev_reload(config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+pub fn dev_reload(directory: String) -> Result<String, String> {
+    let cwd = directory;
     let pid = std::process::id();
 
     // Log file so the user can see build progress/errors
@@ -67,41 +65,9 @@ pub fn dev_reload(config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
     Ok(log_path.to_string_lossy().to_string())
 }
 
-/// Close the current instance and relaunch.
-/// In session mode: `twapp resume` in the session's cwd.
-/// In launcher mode (no session): just `twapp` to reopen the launcher.
 #[tauri::command]
-pub fn reload_app(config: tauri::State<'_, GuiArgs>) -> Result<(), String> {
-    let is_launcher = config.session_id.is_none() && config.command.is_none();
-
-    let cmd = if is_launcher {
-        "twapp".to_string()
-    } else {
-        let cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
-        format!("cd '{}' && twapp resume", cwd.replace('\'', "'\\''"))
-    };
-
-    // Use login shell so PATH includes twapp
-    Command::new("/bin/zsh")
-        .args(["-lc", &cmd])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to relaunch twapp: {}", e))?;
-
-    // Exit current instance after brief delay for spawn
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        std::process::exit(0);
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn read_rebuild_log(config: tauri::State<'_, GuiArgs>) -> Result<String, String> {
-    let cwd = config.cwd.as_deref().unwrap_or(".");
+pub fn read_rebuild_log(directory: String) -> Result<String, String> {
+    let cwd = directory.as_str();
     let log_path = std::path::Path::new(cwd).join(".twapp-rebuild.log");
     if log_path.exists() {
         std::fs::read_to_string(&log_path).map_err(|e| e.to_string())
@@ -210,12 +176,27 @@ pub async fn install_update(download_url: String) -> Result<String, String> {
     Ok("Update installed successfully".to_string())
 }
 
+/// Quit and start the installed app again. The hub socket belongs to this
+/// process, so the new process is started only after this one has exited;
+/// sessions keep running in ptyd across the restart.
 #[tauri::command]
-pub fn reveal_in_finder(path: String) -> Result<(), String> {
-    Command::new("open")
-        .arg("-R")
-        .arg(&path)
+pub fn relaunch_app() -> Result<(), String> {
+    let app = crate::cli::app_bundle::gui_app_path();
+    let script = format!(
+        "sleep 1; open -a '{}'",
+        app.to_string_lossy().replace('\'', "'\\''")
+    );
+    Command::new("/bin/sh")
+        .args(["-c", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
         .spawn()
-        .map_err(|e| format!("Failed to reveal: {}", e))?;
+        .map_err(|e| format!("Failed to relaunch twapp: {}", e))?;
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::process::exit(0);
+    });
     Ok(())
 }
