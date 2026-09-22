@@ -529,8 +529,9 @@ fragile when the embedded prompt is long or contains
 Unicode/backticks/quotes. Prefer `--from-file` whenever the prompt is
 longer than ~100 characters or contains special characters: twapp
 resolves the path to an absolute path, verifies it exists *before*
-spawning the terminal, and wraps the prompt as
-`claude --dangerously-skip-permissions 'Read <abs-path> and execute.'`.
+spawning the terminal, and passes `Read <abs-path> and execute.` as one
+shell-escaped prompt argument to Claude or Codex. Claude remains the
+default when both are configured; select Codex with `--provider codex`.
 
 This keeps the caller side simple — just write the prompt into a
 markdown file and point twapp at it. Nothing to escape.
@@ -1186,7 +1187,7 @@ burns iteration.
 | Command | Description |
 |---------|-------------|
 | `twapp work <ticket\|--name>` | Start a new work session using the configured provider |
-| `twapp work --from-file <path>` | Spawn a session whose prompt is `Read <path> and execute.` (safer than `--run` for long prompts) |
+| `twapp work --from-file <path>` | Spawn a Claude or Codex session whose prompt is `Read <path> and execute.` (safer than `--run` for long prompts) |
 | `twapp work --model <name>` | Pass-through model selection; forwarded to the provider CLI (claude: `--model`, codex: `-c model='…'`) |
 | `twapp models list [--provider <p>] [--format json]` | Show known models for the provider (cache if present, else bundled default) |
 | `twapp models refresh [--provider <p>]` | Re-populate the provider cache from the models endpoint (claude: `ANTHROPIC_API_KEY` required) |
