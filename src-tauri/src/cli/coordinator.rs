@@ -340,7 +340,10 @@ pub fn resolve_mailbox(
     }
     if let Ok(v) = std::env::var("TWAPP_SHARED_DIR") {
         if !v.trim().is_empty() {
-            return Ok(PathBuf::from(v).join("mailbox"));
+            let shared = PathBuf::from(v).join("mailbox");
+            std::fs::create_dir_all(shared.join("inbox"))
+                .map_err(|e| format!("failed to create shared mailbox {}: {}", shared.display(), e))?;
+            return Ok(shared);
         }
     }
     let local = work_dir.join("mailbox");
@@ -904,6 +907,36 @@ mod tests {
 
         let _ = fs::remove_dir_all(&work_dir);
         let _ = fs::remove_dir_all(&inherited);
+    }
+
+    #[test]
+    fn mailbox_creates_inbox_under_shared_dir_env() {
+        let _guard = test_env::lock();
+        let work_dir = unique_tmp("twapp-coord-mbx-shared");
+        fs::create_dir_all(&work_dir).unwrap();
+        let shared = unique_tmp("twapp-coord-mbx-shared-env");
+        let prev_mailbox = std::env::var("TWAPP_MAILBOX_DIR").ok();
+        let prev_shared = std::env::var("TWAPP_SHARED_DIR").ok();
+        std::env::remove_var("TWAPP_MAILBOX_DIR");
+        std::env::set_var("TWAPP_SHARED_DIR", &shared);
+
+        let resolved = resolve_mailbox(None, &work_dir);
+
+        match prev_mailbox {
+            Some(v) => std::env::set_var("TWAPP_MAILBOX_DIR", v),
+            None => std::env::remove_var("TWAPP_MAILBOX_DIR"),
+        }
+        match prev_shared {
+            Some(v) => std::env::set_var("TWAPP_SHARED_DIR", v),
+            None => std::env::remove_var("TWAPP_SHARED_DIR"),
+        }
+
+        assert_eq!(resolved.unwrap(), shared.join("mailbox"));
+        assert!(shared.join("mailbox").join("inbox").is_dir());
+        assert!(!work_dir.join("collab").exists());
+
+        let _ = fs::remove_dir_all(&work_dir);
+        let _ = fs::remove_dir_all(&shared);
     }
 
     #[test]

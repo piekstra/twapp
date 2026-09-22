@@ -313,6 +313,10 @@ pub fn get_mailbox_status(config: tauri::State<'_, GuiArgs>) -> MailboxStatus {
     let mailbox_env = std::env::var("TWAPP_MAILBOX_DIR").ok();
     let shared_env = std::env::var("TWAPP_SHARED_DIR").ok();
     let cwd = config.cwd.as_deref().map(Path::new);
+    let status = probe_mailbox_status(mailbox_env.as_deref(), shared_env.as_deref(), cwd);
+    if status.configured {
+        return status;
+    }
     if let Some(cwd) = cwd {
         if let Ok(mailbox) = crate::cli::msg::resolve_mailbox_dir_from(cwd) {
             if mailbox.is_dir() {
@@ -323,7 +327,7 @@ pub fn get_mailbox_status(config: tauri::State<'_, GuiArgs>) -> MailboxStatus {
             }
         }
     }
-    probe_mailbox_status(mailbox_env.as_deref(), shared_env.as_deref(), cwd)
+    status
 }
 
 #[cfg(test)]
