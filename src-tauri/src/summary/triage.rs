@@ -127,14 +127,14 @@ mod tests {
     use super::*;
     use crate::summary::RunOutput;
 
-    struct Fixed(&'static str);
+    struct Fixed(String);
 
     impl Runner for Fixed {
         fn run(&self, _: &str, _: &str, input: &str) -> Result<RunOutput, String> {
             assert!(input.contains("\"id\": \"s1\""));
             assert!(!input.contains("/Users/"), "keys must not reach the model");
             Ok(RunOutput {
-                text: self.0.to_string(),
+                text: self.0.clone(),
                 cost_usd: None,
             })
         }
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn ids_map_back_to_keys_and_unknown_or_repeated_ids_are_dropped() {
         let inputs = [input("/Users/x/a", "a"), input("/Users/x/b", "b")];
-        let answer = r#"{"order": [{"id": "s2", "reason": "blocked on approval"}, {"id": "s9", "reason": "x"}, {"id": "s2", "reason": "dup"}, {"id": "s1", "reason": "done"}], "observations": ["Both are on ABC-1.", ""]}"#;
+        let answer = r#"{"order": [{"id": "s2", "reason": "blocked {DASH} approval"}, {"id": "s9", "reason": "x"}, {"id": "s2", "reason": "dup"}, {"id": "s1", "reason": "done"}], "observations": ["Both are on ABC-1.", ""]}"#.replace("{DASH}", "\u{2014}");
         let triage = triage_with(&inputs, &Fixed(answer)).unwrap();
         assert_eq!(
             triage.order,
