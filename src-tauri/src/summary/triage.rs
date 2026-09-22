@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn ids_map_back_to_keys_and_unknown_or_repeated_ids_are_dropped() {
         let inputs = [input("/Users/x/a", "a"), input("/Users/x/b", "b")];
-        let answer = r#"{"order": [{"id": "s2", "reason": "blocked — approval"}, {"id": "s9", "reason": "x"}, {"id": "s2", "reason": "dup"}, {"id": "s1", "reason": "done"}], "observations": ["Both are on ABC-1.", ""]}"#;
+        let answer = r#"{"order": [{"id": "s2", "reason": "blocked on approval"}, {"id": "s9", "reason": "x"}, {"id": "s2", "reason": "dup"}, {"id": "s1", "reason": "done"}], "observations": ["Both are on ABC-1.", ""]}"#;
         let triage = triage_with(&inputs, &Fixed(answer)).unwrap();
         assert_eq!(
             triage.order,
