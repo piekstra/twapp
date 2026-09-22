@@ -1,0 +1,18 @@
+{"type":"user","message":{"role":"user","content":"trunc
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "user", "message": {"role": "user", "content": "make the widget test pass"}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "", "signature": "sig"}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "true"}}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "attachment", "attachment": {"type": "todo"}}
+{"type": "last-prompt", "lastPrompt": "make the widget test pass", "sessionId": "sess-1"}
+{"type": "ai-title", "aiTitle": "Fix widget test", "sessionId": "sess-1"}
+{"type": "mode", "mode": "normal", "sessionId": "sess-1"}
+{"type": "permission-mode", "permissionMode": "default", "sessionId": "sess-1"}
+{"type": "pr-link", "prNumber": 7, "prUrl": "https://github.com/example/app/pull/7", "prRepository": "example/app", "sessionId": "sess-1"}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "thinking", "thinking": "", "signature": "sig"}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "The widget test now passes."}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "system", "subtype": "turn_duration", "durationMs": 1200, "messageCount": 6, "isMeta": false}
+{"type": "last-prompt", "lastPrompt": "make the widget test pass", "sessionId": "sess-1"}
+{"type": "ai-title", "aiTitle": "Fix widget test", "sessionId": "sess-1"}
+{"type": "mode", "mode": "normal", "sessionId": "sess-1"}
+{"type": "permission-mode", "permissionMode": "default", "sessionId": "sess-1"}
