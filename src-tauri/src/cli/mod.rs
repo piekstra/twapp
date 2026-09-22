@@ -196,8 +196,8 @@ pub enum Commands {
     ///
     /// Writes fenced-frontmatter markdown into `<mailbox>/inbox/` and tolerates
     /// both the new shape and bare legacy files on read. The mailbox directory
-    /// is taken from `TWAPP_MAILBOX_DIR` (preferred), or `TWAPP_SHARED_DIR/mailbox/`
-    /// as a fallback. See `docs/designs/agent-messaging.md`.
+    /// is taken from `TWAPP_MAILBOX_DIR` (preferred), `TWAPP_SHARED_DIR/mailbox/`,
+    /// or the current session's persisted mailbox. See `docs/designs/agent-messaging.md`.
     #[command(after_help = "Examples:\n  twapp msg send reviewer \"PR-1 is up\"\n  twapp msg broadcast --priority urgent \"merge freeze\"\n  twapp msg fetch --for reviewer --since 20260420T120000Z --limit 20")]
     Msg {
         #[command(subcommand)]
@@ -655,6 +655,7 @@ pub fn create_session_core(
     role: Option<String>,
     provenance: Option<String>,
     colab_group: Option<String>,
+    mailbox_dir: Option<String>,
 ) -> Result<SessionCreationResult, String> {
     if let Some(ref r) = role {
         if r.trim().is_empty() {
@@ -788,6 +789,7 @@ pub fn create_session_core(
         role,
         provenance,
         colab_group,
+        mailbox_dir,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -944,12 +946,21 @@ fn cmd_work(
         }
     };
 
-    let colab_group = match resolve_colab_group(colab_group_arg, from_file.is_some()) {
+    let has_from_file = from_file.is_some();
+    let colab_group = match resolve_colab_group(colab_group_arg, has_from_file) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("Error: {}", e);
             return 1;
         }
+    };
+
+    let mailbox_dir = if has_from_file || colab_group.is_some() {
+        msg::resolve_mailbox_dir()
+            .ok()
+            .map(|path| path.to_string_lossy().to_string())
+    } else {
+        None
     };
 
     // Feature: --from-file. Resolve to an absolute path and verify the file
@@ -1006,6 +1017,7 @@ fn cmd_work(
         role,
         Some(provenance),
         colab_group,
+        mailbox_dir,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -1197,6 +1209,7 @@ fn cmd_resume(fork: bool) -> i32 {
             role: session_data.role.clone(),
             provenance: session_data.provenance.clone(),
             colab_group: session_data.colab_group.clone(),
+            mailbox_dir: session_data.mailbox_dir.clone(),
         };
         session_id = new_id;
         if let Err(e) = session::write_session(&work_dir, &session_data) {
@@ -2986,6 +2999,7 @@ mod colab_group_tests {
             role: Some("implementer".to_string()),
             provenance: Some("spawned".to_string()),
             colab_group: Some("feature-x".to_string()),
+            mailbox_dir: None,
         };
         session::write_session(&tmp, &data).expect("write_session");
 

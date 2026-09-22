@@ -56,6 +56,9 @@ pub fn spawn_shell(
 
     // Set working directory
     if let Some(dir) = cwd {
+        if let Ok(mailbox) = crate::cli::msg::resolve_mailbox_dir_from(std::path::Path::new(&dir)) {
+            cmd.env("TWAPP_MAILBOX_DIR", mailbox);
+        }
         cmd.cwd(dir);
     }
 

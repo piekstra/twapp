@@ -306,6 +306,16 @@ pub enum MsgCommands {
 // --- Mailbox discovery ------------------------------------------------------
 
 pub fn resolve_mailbox_dir() -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("Could not resolve current directory: {}", e))?;
+    resolve_mailbox_dir_from(&cwd)
+}
+
+/// Resolve a mailbox for a specific session directory. Environment variables
+/// remain the explicit overrides, followed by the mailbox persisted in the
+/// nearest `.twapp-session.json`. Existing local mailbox layouts are retained
+/// as compatibility fallbacks for sessions created before mailbox persistence.
+pub fn resolve_mailbox_dir_from(start: &Path) -> Result<PathBuf, String> {
     if let Ok(v) = std::env::var("TWAPP_MAILBOX_DIR") {
         if !v.trim().is_empty() {
             return Ok(PathBuf::from(v));
@@ -316,6 +326,34 @@ pub fn resolve_mailbox_dir() -> Result<PathBuf, String> {
             return Ok(PathBuf::from(v).join("mailbox"));
         }
     }
+
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        let session_file = dir.join(".twapp-session.json");
+        if session_file.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&session_file) {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(mailbox) = value
+                        .get("mailbox_dir")
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Ok(PathBuf::from(mailbox));
+                    }
+                }
+            }
+
+            for candidate in [dir.join("mailbox"), dir.join("collab").join("mailbox")] {
+                if candidate.join("inbox").is_dir() {
+                    return Ok(candidate);
+                }
+            }
+            break;
+        }
+        current = dir.parent();
+    }
+
     Err("No mailbox directory configured. Set TWAPP_MAILBOX_DIR (preferred) or TWAPP_SHARED_DIR."
         .to_string())
 }
@@ -2208,6 +2246,40 @@ new\n";
         let got = resolve_mailbox_dir().unwrap();
         assert_eq!(got, PathBuf::from("/tmp/twapp-shared-test/mailbox"));
 
+        match prev_mailbox {
+            Some(v) => std::env::set_var("TWAPP_MAILBOX_DIR", v),
+            None => std::env::remove_var("TWAPP_MAILBOX_DIR"),
+        }
+        match prev_shared {
+            Some(v) => std::env::set_var("TWAPP_SHARED_DIR", v),
+            None => std::env::remove_var("TWAPP_SHARED_DIR"),
+        }
+    }
+
+    #[test]
+    fn resolve_mailbox_reads_persisted_session_mailbox() {
+        let _lock = test_env::lock();
+        let prev_mailbox = std::env::var("TWAPP_MAILBOX_DIR").ok();
+        let prev_shared = std::env::var("TWAPP_SHARED_DIR").ok();
+        std::env::remove_var("TWAPP_MAILBOX_DIR");
+        std::env::remove_var("TWAPP_SHARED_DIR");
+
+        let session_dir = std::env::temp_dir()
+            .join(format!("twapp-msg-session-{}", uuid::Uuid::new_v4()));
+        let nested = session_dir.join("nested");
+        let mailbox = session_dir.join("shared-mailbox");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(mailbox.join("inbox")).unwrap();
+        std::fs::write(
+            session_dir.join(".twapp-session.json"),
+            serde_json::json!({ "mailbox_dir": mailbox }).to_string(),
+        )
+        .unwrap();
+
+        let got = resolve_mailbox_dir_from(&nested).unwrap();
+        assert_eq!(got, session_dir.join("shared-mailbox"));
+
+        let _ = std::fs::remove_dir_all(&session_dir);
         match prev_mailbox {
             Some(v) => std::env::set_var("TWAPP_MAILBOX_DIR", v),
             None => std::env::remove_var("TWAPP_MAILBOX_DIR"),

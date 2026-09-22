@@ -113,6 +113,11 @@ pub struct SessionData {
     /// unset, per-group bucket when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colab_group: Option<String>,
+    /// Absolute path to the filesystem mailbox shared by this co-lab.
+    /// Persisted so GUI processes and resumed/claimed sessions do not depend
+    /// on macOS propagating `TWAPP_MAILBOX_DIR` through app launches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_dir: Option<String>,
 }
 
 impl SessionData {
@@ -693,6 +698,7 @@ mod tests {
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         }
     }
 
@@ -707,6 +713,15 @@ mod tests {
         let back: SessionData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.role.as_deref(), Some("implementer"));
         assert_eq!(back.provenance.as_deref(), Some("spawned"));
+    }
+
+    #[test]
+    fn session_serde_roundtrip_with_mailbox_dir() {
+        let mut data = base_session();
+        data.mailbox_dir = Some("/tmp/shared-mailbox".to_string());
+        let json = serde_json::to_string(&data).unwrap();
+        let back: SessionData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mailbox_dir.as_deref(), Some("/tmp/shared-mailbox"));
     }
 
     #[test]
@@ -832,6 +847,7 @@ mod tests {
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         };
 
         assert_eq!(
@@ -868,6 +884,7 @@ mod tests {
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         };
 
         assert!(data.needs_migration(AgentProvider::Codex));

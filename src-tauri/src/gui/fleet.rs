@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::cli::msg::{direct_dir, inbox_dir, resolve_mailbox_dir, urgent_dir};
+use crate::cli::msg::{direct_dir, resolve_mailbox_dir_from, urgent_dir};
 use crate::cli::msg_presence::{is_dormant, list_presence, PresenceFile, PresenceStatus};
 use crate::cli::session::{list_sessions, SessionData};
+use crate::gui::types::GuiArgs;
 
 /// One row in the coordinator fleet pane.
 ///
@@ -219,9 +220,13 @@ pub struct ListFleetArgs {
 }
 
 #[tauri::command]
-pub fn list_fleet(args: ListFleetArgs) -> Result<Vec<FleetAgent>, String> {
-    let mailbox = resolve_mailbox_dir()?;
-    let inbox = inbox_dir()?;
+pub fn list_fleet(
+    args: ListFleetArgs,
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<Vec<FleetAgent>, String> {
+    let cwd = config.cwd.as_deref().map(Path::new).unwrap_or_else(|| Path::new("."));
+    let mailbox = resolve_mailbox_dir_from(cwd)?;
+    let inbox = mailbox.join("inbox");
     let presence = list_presence(&mailbox);
 
     // Session index is best-effort: if the global config can't load (e.g.
@@ -292,6 +297,7 @@ mod tests {
             role: role.map(String::from),
             provenance: Some("spawned".to_string()),
             colab_group: group.map(String::from),
+            mailbox_dir: None,
         }
     }
 

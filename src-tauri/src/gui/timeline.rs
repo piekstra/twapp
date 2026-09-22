@@ -32,10 +32,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::cli::msg::{parse_message_file, resolve_mailbox_dir};
+use crate::cli::msg::{parse_message_file, resolve_mailbox_dir_from};
 use crate::cli::msg_claim::{ClaimOwner, ClaimRelease};
 use crate::cli::msg_presence::{list_presence, PresenceFile};
 use crate::cli::session::list_sessions;
+use crate::gui::types::GuiArgs;
 
 // --- Event model -----------------------------------------------------------
 
@@ -511,8 +512,12 @@ pub fn assemble_events(
 // --- Tauri command ---------------------------------------------------------
 
 #[tauri::command]
-pub fn list_timeline_events(args: ListTimelineArgs) -> Result<Vec<TimelineEvent>, String> {
-    let mailbox = resolve_mailbox_dir()?;
+pub fn list_timeline_events(
+    args: ListTimelineArgs,
+    config: tauri::State<'_, GuiArgs>,
+) -> Result<Vec<TimelineEvent>, String> {
+    let cwd = config.cwd.as_deref().map(Path::new).unwrap_or_else(|| Path::new("."));
+    let mailbox = resolve_mailbox_dir_from(cwd)?;
     let now = chrono::Utc::now();
     let since = match args.since_ts.as_deref().and_then(parse_rfc3339) {
         Some(t) => t,

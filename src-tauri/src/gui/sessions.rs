@@ -11,17 +11,17 @@ use crate::cli::session::{
 };
 use crate::cli::session_attribution;
 
-/// Read `(role, provenance, colab_group)` from the parent session file so a
-/// GUI fork can inherit them. Returns `(None, None, None)` if the file is
+/// Read `(role, provenance, colab_group, mailbox_dir)` from the parent session file so a
+/// GUI fork can inherit them. Returns four `None` values if the file is
 /// missing or unreadable — a fork off an unknown session is treated as a
 /// plain session.
 pub fn read_fork_inherited_metadata(
     parent_cwd: &str,
-) -> (Option<String>, Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
     crate::cli::session::read_session(std::path::Path::new(parent_cwd))
         .ok()
-        .map(|s| (s.role, s.provenance, s.colab_group))
-        .unwrap_or((None, None, None))
+        .map(|s| (s.role, s.provenance, s.colab_group, s.mailbox_dir))
+        .unwrap_or((None, None, None, None))
 }
 
 pub fn sanitize_instance_name(name: &str) -> String {
@@ -418,6 +418,7 @@ pub async fn create_and_launch_session(
         chrome,
         None,
         Some("user".to_string()),
+        None,
         None,
     )?;
 
@@ -1198,6 +1199,7 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
@@ -1228,11 +1230,11 @@ pub async fn fork_session(
     }
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
-    // Fork inherits role + provenance + colab_group from the parent session so CLI
+    // Fork inherits role + provenance + colab_group + mailbox from the parent session so CLI
     // `twapp resume --fork` and the GUI fork button agree. A fork is a derivative of
     // the parent's context, not a fresh launch — resetting these would drop the agent
     // tag (or colab membership) on every fork.
-    let (parent_role, parent_provenance, parent_colab_group) =
+    let (parent_role, parent_provenance, parent_colab_group, parent_mailbox_dir) =
         read_fork_inherited_metadata(&original_cwd);
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
@@ -1348,6 +1350,7 @@ pub async fn fork_session(
                 role: parent_role.clone(),
                 provenance: parent_provenance.clone(),
                 colab_group: parent_colab_group.clone(),
+                mailbox_dir: parent_mailbox_dir.clone(),
             },
         )
     } else {
@@ -1396,6 +1399,7 @@ pub async fn fork_session(
                 role: parent_role,
                 provenance: parent_provenance,
                 colab_group: parent_colab_group,
+                mailbox_dir: parent_mailbox_dir,
             },
         )
     };
@@ -1465,10 +1469,11 @@ mod fork_inheritance_tests {
         )
         .unwrap();
 
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab, mailbox) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role.as_deref(), Some("implementer"));
         assert_eq!(prov.as_deref(), Some("spawned"));
         assert_eq!(colab, None);
+        assert_eq!(mailbox, None);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1477,10 +1482,11 @@ mod fork_inheritance_tests {
     fn missing_parent_returns_none_pair() {
         let dir = std::env::temp_dir().join(format!("twapp-fork-missing-{}", uuid::Uuid::new_v4()));
         // Intentionally do not create the directory; fork against a path with no session file.
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab, mailbox) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role, None);
         assert_eq!(prov, None);
         assert_eq!(colab, None);
+        assert_eq!(mailbox, None);
     }
 
     #[test]
@@ -1501,10 +1507,11 @@ mod fork_inheritance_tests {
         )
         .unwrap();
 
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (role, prov, colab, mailbox) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(role, None);
         assert_eq!(prov, None);
         assert_eq!(colab, None);
+        assert_eq!(mailbox, None);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1524,13 +1531,15 @@ mod fork_inheritance_tests {
                 "created": "2026-01-01T00:00:00Z",
                 "last_resumed": null,
                 "colab_group": "feature-x",
+                "mailbox_dir": "/tmp/feature-x-mailbox",
             })
             .to_string(),
         )
         .unwrap();
 
-        let (_role, _prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
+        let (_role, _prov, colab, mailbox) = read_fork_inherited_metadata(dir.to_str().unwrap());
         assert_eq!(colab.as_deref(), Some("feature-x"));
+        assert_eq!(mailbox.as_deref(), Some("/tmp/feature-x-mailbox"));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1564,6 +1573,7 @@ mod launcher_propagation_tests {
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         }
     }
 

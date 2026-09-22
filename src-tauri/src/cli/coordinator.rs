@@ -206,6 +206,7 @@ pub fn launch_core(
         Some(COORDINATOR_ROLE.to_string()),
         Some("spawned".to_string()),
         Some(colab_group),
+        Some(mailbox.to_string_lossy().to_string()),
     ) {
         Ok(r) => r,
         Err(e) => return LaunchOutcome::Err(e),
@@ -301,8 +302,9 @@ pub fn resolve_briefing_path(
 /// Resolve the shared mailbox directory per the briefing's precedence:
 /// 1. `--shared-dir <dir>` → use it directly.
 /// 2. `$TWAPP_MAILBOX_DIR` (if set) → inherit.
-/// 3. `<work_dir>/mailbox/` with an `inbox/` subdir already populated → reuse.
-/// 4. Create `<work_dir>/collab/mailbox/`.
+/// 3. `$TWAPP_SHARED_DIR/mailbox` (if set) → inherit.
+/// 4. `<work_dir>/mailbox/` with an `inbox/` subdir already populated → reuse.
+/// 5. Create `<work_dir>/collab/mailbox/`.
 pub fn resolve_mailbox(
     shared_dir: Option<&str>,
     work_dir: &Path,
@@ -334,6 +336,11 @@ pub fn resolve_mailbox(
                 );
             }
             return Ok(inherited);
+        }
+    }
+    if let Ok(v) = std::env::var("TWAPP_SHARED_DIR") {
+        if !v.trim().is_empty() {
+            return Ok(PathBuf::from(v).join("mailbox"));
         }
     }
     let local = work_dir.join("mailbox");
@@ -463,9 +470,13 @@ pub(crate) fn claim_at(
         _ => {}
     }
 
-    // Nothing to change when the target is already coordinator and no colab
-    // group tweak was requested.
-    if already_coordinator && colab_group.is_none() {
+    let has_mailbox = obj
+        .get("mailbox_dir")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty());
+
+    // Nothing to change when the target is already fully configured.
+    if already_coordinator && colab_group.is_none() && has_mailbox {
         println!(
             "Session at {} is already role=coordinator. Nothing to do.",
             target_dir.display()
@@ -473,9 +484,21 @@ pub(crate) fn claim_at(
         return 0;
     }
 
+    let mailbox = match resolve_mailbox(None, target_dir) {
+        Ok(mailbox) => mailbox,
+        Err(error) => {
+            eprintln!("Error configuring coordinator mailbox: {}", error);
+            return 1;
+        }
+    };
+
     obj.insert(
         "role".to_string(),
         Value::String(COORDINATOR_ROLE.to_string()),
+    );
+    obj.insert(
+        "mailbox_dir".to_string(),
+        Value::String(mailbox.to_string_lossy().to_string()),
     );
     if let Some(group) = colab_group {
         obj.insert(
@@ -545,14 +568,26 @@ fn claim_at_result(
         _ => {}
     }
 
-    // Already-coordinator + no colab_group change → no-op success.
-    if already_coordinator && colab_group.is_none() {
+    let has_mailbox = obj
+        .get("mailbox_dir")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty());
+
+    // Already-coordinator + no colab_group or mailbox change → no-op success.
+    if already_coordinator && colab_group.is_none() && has_mailbox {
         return Ok(target_dir.to_string_lossy().to_string());
     }
+
+    let mailbox = resolve_mailbox(None, target_dir)
+        .map_err(|error| format!("configuring coordinator mailbox: {}", error))?;
 
     obj.insert(
         "role".to_string(),
         Value::String(COORDINATOR_ROLE.to_string()),
+    );
+    obj.insert(
+        "mailbox_dir".to_string(),
+        Value::String(mailbox.to_string_lossy().to_string()),
     );
     if let Some(group) = colab_group {
         obj.insert(
@@ -711,6 +746,7 @@ mod tests {
             role: Some(COORDINATOR_ROLE.to_string()),
             provenance: Some("spawned".to_string()),
             colab_group: None,
+            mailbox_dir: Some(tmp.join("collab/mailbox").to_string_lossy().to_string()),
         };
         session::write_session(&tmp, &data).expect("write_session");
 
@@ -726,6 +762,10 @@ mod tests {
         assert_eq!(
             raw.get("role").and_then(|v| v.as_str()),
             Some(COORDINATOR_ROLE)
+        );
+        assert_eq!(
+            raw.get("mailbox_dir").and_then(|v| v.as_str()),
+            tmp.join("collab/mailbox").to_str()
         );
 
         let _ = fs::remove_dir_all(&tmp);
@@ -945,6 +985,41 @@ mod tests {
         assert_eq!(read_role(&work_dir).as_deref(), Some(COORDINATOR_ROLE));
 
         let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    #[test]
+    fn claim_core_persists_a_reusable_mailbox() {
+        let _lock = test_env::lock();
+        let prev_mailbox = std::env::var("TWAPP_MAILBOX_DIR").ok();
+        let prev_shared = std::env::var("TWAPP_SHARED_DIR").ok();
+        std::env::remove_var("TWAPP_MAILBOX_DIR");
+        std::env::remove_var("TWAPP_SHARED_DIR");
+
+        let work_dir = unique_tmp("twapp-coord-claim-mailbox");
+        write_session(&work_dir, "some-worker", None);
+
+        claim_at_result(&work_dir, false, None).expect("claim should configure mailbox");
+
+        let value: Value = serde_json::from_str(
+            &fs::read_to_string(work_dir.join(".twapp-session.json")).unwrap(),
+        )
+        .unwrap();
+        let expected = work_dir.join("collab").join("mailbox");
+        assert_eq!(
+            value.get("mailbox_dir").and_then(Value::as_str),
+            expected.to_str()
+        );
+        assert!(expected.join("inbox").is_dir());
+
+        let _ = fs::remove_dir_all(&work_dir);
+        match prev_mailbox {
+            Some(v) => std::env::set_var("TWAPP_MAILBOX_DIR", v),
+            None => std::env::remove_var("TWAPP_MAILBOX_DIR"),
+        }
+        match prev_shared {
+            Some(v) => std::env::set_var("TWAPP_SHARED_DIR", v),
+            None => std::env::remove_var("TWAPP_SHARED_DIR"),
+        }
     }
 
     #[test]

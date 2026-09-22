@@ -586,9 +586,9 @@ twapp coordinator claim                        # flip an existing session's role
 
 `launch` refuses to overwrite an existing session at the target
 directory — use `twapp coordinator claim` to take over in place, or
-`twapp stop` the old session first. `claim` rewrites only the `role`
-field in `.twapp-session.json` and refuses to overwrite an existing
-non-coordinator role without `--force`.
+`twapp stop` the old session first. `claim` records both the coordinator
+role and its resolved mailbox in `.twapp-session.json`; it refuses to
+overwrite an existing non-coordinator role without `--force`.
 
 `--model <name>` is pass-through to the spawned `claude` CLI — same
 semantics as `twapp work --model`. Use `twapp models list` to see
@@ -605,10 +605,10 @@ when no session is eligible — single-session users see no new UI
 demands.
 
 `--shared-dir` precedence for the mailbox: the flag wins; otherwise
-`TWAPP_MAILBOX_DIR` is inherited from the parent env; otherwise
-`./mailbox/` under the coordinator cwd is reused if it already exists;
-otherwise `./collab/mailbox/` is created under the cwd and the path is
-printed to stderr.
+`TWAPP_MAILBOX_DIR` is inherited from the parent env; then
+`TWAPP_SHARED_DIR/mailbox`; otherwise `./mailbox/` under the coordinator
+cwd is reused if it already exists; otherwise `./collab/mailbox/` is
+created under the cwd and the path is printed to stderr.
 
 The bundled bootstrap
 ([`templates/coordinator-bootstrap.md`](templates/coordinator-bootstrap.md))
@@ -650,6 +650,11 @@ export TWAPP_MAILBOX_DIR="$HOME/collab/mailbox"
 # Alternative: point at a shared dir; the mailbox is <shared>/mailbox/.
 export TWAPP_SHARED_DIR="$HOME/collab"
 ```
+
+Coordinator sessions also persist the resolved mailbox path in
+`.twapp-session.json`. This lets claimed, resumed, GUI-launched, and spawned
+sessions share the mailbox even when macOS does not propagate shell
+environment variables into an app process.
 
 Messages land under the per-recipient split layout (design §2.1):
 
@@ -746,10 +751,10 @@ trace, not a crash.
 
 Inside the session window, the sidebar shows an **Urgent** panel directly
 above Notes whenever the session has a handle **and a mailbox is
-configured** (i.e. `TWAPP_MAILBOX_DIR`, `TWAPP_SHARED_DIR/mailbox/`, or
-a `./mailbox/inbox/` directory under the session cwd resolves to an
-existing directory). It polls `twapp msg fetch --for <self> --priority
-urgent|blocker` every 10s, renders each message as a row (from + subject
+configured** (i.e. `TWAPP_MAILBOX_DIR`, `TWAPP_SHARED_DIR/mailbox/`, the
+session's persisted `mailbox_dir`, or a local mailbox under the session cwd
+resolves to an existing directory). It polls `twapp msg fetch --for <self>
+--priority urgent|blocker` every 10s, renders each message as a row (from + subject
 + priority chip + relative time), and auto-collapses after the queue has
 been empty for a minute. Click a row to open a read-only message view.
 Blockers get the strongest red accent, urgents a muted one.

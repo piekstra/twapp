@@ -449,6 +449,7 @@ mod restore_tests {
             role: None,
             provenance: None,
             colab_group: None,
+            mailbox_dir: None,
         }
     }
 

@@ -270,7 +270,8 @@ pub struct MailboxStatus {
 }
 
 /// Pure helper: given env lookups + cwd, decide whether a mailbox is reachable.
-/// The briefing says: TWAPP_MAILBOX_DIR → TWAPP_SHARED_DIR/mailbox → `<cwd>/mailbox/inbox`.
+/// Resolution includes explicit environment variables, the session's persisted
+/// mailbox, and legacy local mailbox directories under the session cwd.
 /// A path counts as "configured" only if it actually exists on disk — empty
 /// env strings, missing dirs, and non-dir files all fall through.
 ///
@@ -312,6 +313,16 @@ pub fn get_mailbox_status(config: tauri::State<'_, GuiArgs>) -> MailboxStatus {
     let mailbox_env = std::env::var("TWAPP_MAILBOX_DIR").ok();
     let shared_env = std::env::var("TWAPP_SHARED_DIR").ok();
     let cwd = config.cwd.as_deref().map(Path::new);
+    if let Some(cwd) = cwd {
+        if let Ok(mailbox) = crate::cli::msg::resolve_mailbox_dir_from(cwd) {
+            if mailbox.is_dir() {
+                return MailboxStatus {
+                    configured: true,
+                    source: Some("session".into()),
+                };
+            }
+        }
+    }
     probe_mailbox_status(mailbox_env.as_deref(), shared_env.as_deref(), cwd)
 }
 
