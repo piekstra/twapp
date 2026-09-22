@@ -96,49 +96,6 @@ impl Default for TabManager {
 // Backwards-compatible alias — single-pty commands still use this
 pub type PtyState = TabManager;
 
-// Shared monitor state for background process
-pub struct MonitorState {
-    pub child: Option<std::process::Child>,
-    pub command: String,
-    pub log_path: Option<std::path::PathBuf>,
-    pub started_at: Option<String>,
-    pub status: MonitorStatus,
-}
-
-#[derive(Clone, serde::Serialize)]
-#[serde(tag = "status")]
-pub enum MonitorStatus {
-    #[serde(rename = "idle")]
-    Idle,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "stopped")]
-    Stopped,
-    #[serde(rename = "crashed")]
-    Crashed { exit_code: Option<i32> },
-}
-
-impl Default for MonitorState {
-    fn default() -> Self {
-        Self {
-            child: None,
-            command: String::new(),
-            log_path: None,
-            started_at: None,
-            status: MonitorStatus::Idle,
-        }
-    }
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct MonitorStatusInfo {
-    #[serde(flatten)]
-    pub status: MonitorStatus,
-    pub command: String,
-    pub started_at: Option<String>,
-    pub log_path: Option<String>,
-}
-
 #[derive(Clone, serde::Serialize)]
 pub struct TabOutputEvent {
     pub tab_id: String,
@@ -162,9 +119,6 @@ pub struct LauncherSession {
     pub message_count: Option<u32>,
     pub imported: bool,
     pub forked_from: Option<String>,
-    pub role: Option<String>,
-    pub provenance: Option<String>,
-    pub colab_group: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -224,14 +178,6 @@ pub struct ImportRequest {
 pub struct ImportResult {
     pub imported: u32,
     pub directories_created: Vec<String>,
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct MonitorLogEntry {
-    pub filename: String,
-    pub path: String,
-    pub size: u64,
-    pub modified: String,
 }
 
 // Theme palette matching the Python CLI

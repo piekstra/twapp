@@ -44,21 +44,6 @@ export interface QuickPrompt {
   text: string;
 }
 
-export interface MonitorStatusInfo {
-  status: "idle" | "running" | "stopped" | "crashed";
-  command: string;
-  started_at: string | null;
-  log_path: string | null;
-  exit_code?: number | null;
-}
-
-export interface MonitorLogEntry {
-  filename: string;
-  path: string;
-  size: number;
-  modified: string;
-}
-
 export interface PromptSection {
   id: string;
   title: string;
@@ -140,9 +125,6 @@ export interface LauncherSession {
   message_count: number | null;
   imported: boolean;
   forked_from: string | null;
-  role: string | null;
-  provenance: string | null;
-  colab_group: string | null;
 }
 
 export interface LauncherResponse {
@@ -208,18 +190,6 @@ export interface DeletePreflight {
   last_active: string | null;
   conversation_size_bytes: number;
   forked_from: string | null;
-}
-
-export interface ClaimableSession {
-  name: string;
-  directory: string;
-  role: string | null;
-}
-
-export interface CoordinatorModel {
-  name: string;
-  tier: string;
-  description: string;
 }
 
 export interface SessionHistoryEvent {

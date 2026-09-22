@@ -35,7 +35,7 @@ src/              # React/TypeScript frontend
   components/     # Extracted components (SessionLauncher, FilePreview, PromptSections)
 src-tauri/        # Rust backend
   src/cli/        # CLI subcommands (work, resume, note, prompt, etc.)
-  src/gui/        # Tauri commands split into modules (pty, sessions, tickets, monitor, etc.)
+  src/gui/        # Tauri commands split into modules (pty, sessions, tickets, etc.)
   src/lib.rs      # Clap routing between CLI and GUI modes
 ```
 
