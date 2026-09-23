@@ -1,0 +1,7 @@
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "user", "message": {"role": "user", "content": "run the build"}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "text", "text": "Running the build."}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "true"}}]}}
+{"type": "last-prompt", "lastPrompt": "make the widget test pass", "sessionId": "sess-1"}
+{"type": "ai-title", "aiTitle": "Fix widget test", "sessionId": "sess-1"}
+{"type": "mode", "mode": "normal", "sessionId": "sess-1"}
+{"type": "permission-mode", "permissionMode": "default", "sessionId": "sess-1"}
