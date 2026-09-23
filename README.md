@@ -157,7 +157,7 @@ Drag rows in the session list to reorder them; the order is kept between launche
 
 ### Notes, tickets and prompts
 
-The details below the session list hold the session's summary, its linked ticket, its notes, and your quick prompts.
+The sidebar shows the selected session's details first (its state, summary, ticket, notes and your quick prompts) and the session list below them; the layout menu can put the list on top instead. The summary starts collapsed to its state line in the session you are working in; click it to expand.
 
 - **Notes** are Markdown and belong to the session. `↵` on a note types it into the terminal and removes it from the list.
 - **Tickets** accept a Jira key (`ABC-1234`), a bare number (prefixed with your configured Jira project), or a GitHub issue (`owner/repo#42` or `#42`). Change or unlink them from the panel, or with `twapp ticket link <ref>`.
@@ -181,9 +181,12 @@ Summaries run with the harness you choose, headless, with tools disabled and wit
 summaries:
   provider: auto    # auto | claude | codex | off
   model: haiku      # optional; defaults to a small, fast model for the provider
+  daily_limit: 150  # optional; most summary and triage calls per day
 ```
 
-`auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes.
+`auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes. The session you are looking at is not summarized while you work in it; its summary is written when you switch away or leave the window.
+
+These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
 ### Importing sessions
 

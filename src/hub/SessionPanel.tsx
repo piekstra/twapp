@@ -300,6 +300,19 @@ export default function SessionPanel({
     invoke("update_session_color", { directory, color, overrideTerminalTheme }).catch(console.error);
   };
 
+  // The summary is for sessions the user steps away from; in the session
+  // they are working in it starts collapsed to its state line.
+  const [summaryOpen, setSummaryOpen] = useState(() => localStorage.getItem("twapp-summary-open") === "1");
+  const toggleSummary = () =>
+    setSummaryOpen((open) => {
+      try {
+        localStorage.setItem("twapp-summary-open", open ? "0" : "1");
+      } catch {
+        // Only the remembered choice is lost.
+      }
+      return !open;
+    });
+
   const isDark = document.documentElement.classList.contains("dark");
   const summary = session.summary;
   const status = session.status;
@@ -333,18 +346,30 @@ export default function SessionPanel({
         )}
       </header>
 
-      <section className={`summary-card state-${status.state}${session.attention ? " attention" : ""}`}>
-        <div className="summary-state">
+      <section className={`summary-card state-${status.state}${session.attention ? " attention" : ""}${summaryOpen ? "" : " collapsed"}`}>
+        <div className="summary-state" onClick={() => toggleSummary()} role="button">
+          <Chevron open={summaryOpen} />
           <span className={`state-dot state-${status.state}`} />
           <span className="summary-state-label">{STATE_LABELS[status.state]}</span>
           {status.state !== "suspended" && <span className="summary-since">{sinceLabel(status.since, now)}</span>}
           {status.detail && <span className="summary-detail">{status.detail}</span>}
-          <button className="icon-button small" title="Summarize again" onClick={() => hubApi.summarize(session.key).catch(console.error)}>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
-            </svg>
-          </button>
+          {summaryOpen && (
+            <button
+              className="icon-button small"
+              title="Summarize again"
+              onClick={(e) => {
+                e.stopPropagation();
+                hubApi.summarize(session.key).catch(console.error);
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
+              </svg>
+            </button>
+          )}
         </div>
+        {summaryOpen && (
+          <>
         {(status.background_agents?.length ?? 0) > 0 && (
           <ul className="summary-agents">
             {status.background_agents!.map((a, i) => (
@@ -368,6 +393,8 @@ export default function SessionPanel({
           </>
         ) : (
           (status.title || status.last_message) && <div className="summary-doing">{status.title || status.last_message}</div>
+        )}
+          </>
         )}
         <div className="summary-actions">
           <button className="button ghost" onClick={onRestart} title="Restart the harness">Restart</button>

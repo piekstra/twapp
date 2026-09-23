@@ -30,6 +30,8 @@ interface Props {
   onLayout: () => void;
   /** The side of the window this list sits on, for the collapse arrow. */
   side: "left" | "right";
+  /** Render only the header (the sidebar's toolbar) or only the list. */
+  part?: "all" | "header" | "list";
 }
 
 export default function SessionRail({
@@ -47,6 +49,7 @@ export default function SessionRail({
   onCollapse,
   onLayout,
   side,
+  part = "all",
 }: Props) {
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
@@ -61,7 +64,8 @@ export default function SessionRail({
   };
 
   return (
-    <nav className={`rail rail-${variant}`}>
+    <nav className={`rail rail-${variant} rail-part-${part}`}>
+      {part !== "list" && (
       <div className="rail-header">
         <button
           className={`rail-home${overviewActive ? " active" : ""}`}
@@ -101,7 +105,9 @@ export default function SessionRail({
           </button>
         </div>
       </div>
+      )}
 
+      {part !== "header" && (
       <div className="rail-list">
         {sessions.length === 0 && (
           <div className="rail-empty">
@@ -157,6 +163,7 @@ export default function SessionRail({
           );
         })}
       </div>
+      )}
     </nav>
   );
 }

@@ -8,12 +8,14 @@ pub mod condense;
 pub mod queue;
 pub mod runner;
 pub mod triage;
+pub mod usage;
 
 pub use cache::SummaryCache;
 pub use condense::{condense_claude, condense_codex, Condensed, TurnOutcome, DEFAULT_BUDGET};
 pub use queue::{Summarizer, SummarizerConfig, SummaryProvider, SummaryRequest};
 pub use runner::{HarnessRunner, RunOutput, Runner, SummaryHarness};
 pub use triage::{triage, triage_with, Triage, TriageInput, TriageItem};
+pub use usage::{claude_session_tokens, UsageLedger, UsageReport};
 
 use serde::{Deserialize, Serialize};
 

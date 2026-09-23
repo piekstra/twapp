@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
-import { STATE_LABELS, headlineOf, hubApi, sinceLabel, type SessionView, type Triage } from "./api";
+import { STATE_LABELS, compactNumber, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot } from "./SessionRail";
 
 interface Props {
@@ -26,6 +26,11 @@ export default function Overview({
   const [triage, setTriage] = useState<Triage | null>(null);
   const [triaging, setTriaging] = useState(false);
   const [triageError, setTriageError] = useState<string | null>(null);
+
+  const [usage, setUsage] = useState<UsageReport | null>(null);
+  useEffect(() => {
+    hubApi.usage(7).then(setUsage).catch(() => setUsage(null));
+  }, [triage]);
 
   const running = sessions.filter((s) => s.status.state !== "suspended");
   const needing = sessions.filter((s) => s.attention);
@@ -80,6 +85,17 @@ export default function Overview({
             </div>
           </div>
 
+          {usage && (
+            <div className="usage-line" title="Summaries and Triage run your configured harness headless with a small model. Tokens count input, cache writes and output, the same way for twapp and for your sessions; cache reads are left out. Set summaries.provider: off or summaries.daily_limit in config.yaml to change this.">
+              <span className="eyebrow">Smart features, last {usage.days} days</span>
+              <span>
+                {usage.summaries} summaries, {usage.triages} triage · {compactNumber(usage.tokens)} tokens
+                {usageShare(usage) && <> · <strong>{usageShare(usage)}</strong> of your Claude tokens ({compactNumber(usage.claude_session_tokens ?? 0)})</>}
+                {" "}· today {usage.calls_today} of {usage.daily_limit} calls
+                {usage.cost_usd > 0 && <> · about ${usage.cost_usd.toFixed(2)} at API rates</>}
+              </span>
+            </div>
+          )}
           {triageError && <div className="triage-error">{triageError}</div>}
           {triage && (
             <div className="triage-result">

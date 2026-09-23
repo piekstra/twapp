@@ -63,6 +63,8 @@ pub struct SummarizerConfig {
     pub path_env: Option<String>,
     pub cache_root: PathBuf,
     pub min_interval: Duration,
+    pub daily_limit: u32,
+    pub ledger_path: PathBuf,
 }
 
 impl SummarizerConfig {
@@ -85,7 +87,24 @@ impl SummarizerConfig {
             path_env,
             cache_root: SummaryCache::default_root(),
             min_interval: DEFAULT_MIN_INTERVAL,
+            daily_limit: crate::cli::config::get_summaries_daily_limit()
+                .unwrap_or(super::usage::DEFAULT_DAILY_LIMIT),
+            ledger_path: super::usage::UsageLedger::default_path(),
         }
+    }
+
+    /// The configured harness, metered: each call is recorded in the usage
+    /// ledger and calls past the daily limit are refused.
+    pub fn metered_runner(&self, kind: &'static str) -> Option<super::usage::MeteredRunner> {
+        let runner = self.runner()?;
+        Some(super::usage::MeteredRunner::new(
+            Arc::new(runner.clone()),
+            super::usage::UsageLedger::new(self.ledger_path.clone()),
+            kind,
+            format!("{:?}", runner.harness).to_lowercase(),
+            Some(runner.model.clone()),
+            self.daily_limit,
+        ))
     }
 
     pub fn runner(&self) -> Option<HarnessRunner> {
@@ -181,7 +200,9 @@ pub struct Summarizer {
 
 impl Summarizer {
     pub fn new(cfg: SummarizerConfig, on_ready: OnReady) -> Self {
-        let runner = cfg.runner().map(|r| Arc::new(r) as Arc<dyn Runner>);
+        let runner = cfg
+            .metered_runner("summary")
+            .map(|r| Arc::new(r) as Arc<dyn Runner>);
         Self::with_runner(cfg, runner, on_ready)
     }
 
@@ -397,6 +418,7 @@ mod tests {
             self.answer.clone().map(|text| RunOutput {
                 text,
                 cost_usd: None,
+                tokens: None,
             })
         }
     }
@@ -414,6 +436,8 @@ mod tests {
             cache_root: std::env::temp_dir()
                 .join(format!("twapp-summary-q-{}", uuid::Uuid::new_v4())),
             min_interval,
+            daily_limit: u32::MAX,
+            ledger_path: std::env::temp_dir().join("twapp-test-usage.jsonl"),
         }
     }
 

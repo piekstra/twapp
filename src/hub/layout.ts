@@ -21,6 +21,9 @@ export interface LayoutPrefs {
   railWidth: number;
   /** Share of the sidebar height given to the session switcher. */
   switcherShare: number;
+  /** Where the session list sits in a single sidebar: below the selected
+   * session's details (the default) or above them. */
+  listPosition: "bottom" | "top";
 }
 
 const KEY = "twapp-layout";
@@ -31,7 +34,8 @@ export const DEFAULT_LAYOUT: LayoutPrefs = {
   railThin: false,
   sidebarWidth: 340,
   railWidth: 264,
-  switcherShare: 0.36,
+  switcherShare: 0.3,
+  listPosition: "bottom",
 };
 
 export function loadLayout(): LayoutPrefs {
@@ -44,6 +48,7 @@ export function loadLayout(): LayoutPrefs {
       ...DEFAULT_LAYOUT,
       ...parsed,
       mode,
+      listPosition: parsed.listPosition === "top" ? "top" : "bottom",
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth, 260, 640),
       railWidth: clamp(parsed.railWidth ?? DEFAULT_LAYOUT.railWidth, 200, 420),
       switcherShare: clamp(parsed.switcherShare ?? DEFAULT_LAYOUT.switcherShare, 0.15, 0.8),
