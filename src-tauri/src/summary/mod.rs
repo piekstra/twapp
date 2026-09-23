@@ -44,7 +44,25 @@ pub struct Summary {
     /// work, offered to the user to accept or dismiss.
     #[serde(default)]
     pub suggested_name: Option<String>,
+    /// What the session as a whole is for, as opposed to the task at hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_effort: Option<String>,
+    /// The detour the current work is on, when it is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tangent: Option<Tangent>,
 }
+
+/// Work the session took on away from its main effort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tangent {
+    pub title: String,
+    /// The tangent is finished and the session can go back to its effort.
+    #[serde(default)]
+    pub done: bool,
+}
+
+pub const MAIN_EFFORT_MAX_CHARS: usize = 80;
+pub const TANGENT_MAX_CHARS: usize = 60;
 
 pub const SUGGESTED_NAME_MAX_CHARS: usize = 48;
 
@@ -77,6 +95,8 @@ pub fn free_summary(condensed: &Condensed) -> Summary {
         source: SummarySource::Free,
         for_state: None,
         suggested_name: None,
+        main_effort: None,
+        tangent: None,
     }
 }
 
@@ -124,6 +144,9 @@ mod tests {
             title: None,
             away_summary: None,
             last_user_prompt: Some("Fix the flaky login test".to_string()),
+            opening_prompt: None,
+            earlier_prompts: vec![],
+            compact_recap: None,
             assistant_messages: vec!["I found the race. The retry loop was wrong.".to_string()],
             recent_tools: vec![],
             outcome: TurnOutcome::Finished,

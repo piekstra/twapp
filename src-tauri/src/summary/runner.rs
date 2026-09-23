@@ -6,7 +6,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+/// A summary of a long session can take over half a minute; a call cut off
+/// at the limit still spends the tokens it used.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryHarness {

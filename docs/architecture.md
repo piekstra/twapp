@@ -148,6 +148,17 @@ itself.
   selects another one or the window loses focus. The cached summary is reused when
   the transcript has not grown and the state is the one it was written for.
   Requests are debounced per session and run one at a time.
+- **Main effort and tangents.** The summarizer names the session's main
+  effort and, when the current work is a detour from it, the tangent, reusing
+  the title of a tangent it saw before (the known titles go in the input). For
+  a transcript longer than the tail, one pass over its user lines supplies the
+  opening prompt, up to six prompts spread across the session, and the
+  harness's latest compaction summary; when the excerpt budget is tight, the
+  newest assistant message outranks them, and the earlier prompts go first,
+  then the recap, then the opening prompt. Each model summary is folded into
+  `.twapp-yaks.json`: a tangent seen again is the same yak; one the work left
+  unfinished is set aside; one reported done is shaved; transcript growth
+  since the previous summary counts toward the current tangent.
 - **Name suggestions.** The same call returns a suggested name when the
   session's name no longer describes its work. The panel offers it with Rename
   and Dismiss; a suggestion matching the current name or one the user

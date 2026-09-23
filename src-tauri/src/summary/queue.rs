@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use super::cache::SummaryCache;
 use super::condense::{condense_claude, condense_codex, Condensed, DEFAULT_BUDGET};
 use super::runner::{extract_json_object, HarnessRunner, Runner, SummaryHarness};
-use super::{clean_text, free_summary, Summary, SummarySource, HEADLINE_MAX_CHARS, SUGGESTED_NAME_MAX_CHARS};
+use super::{
+    clean_text, free_summary, Summary, SummarySource, Tangent, HEADLINE_MAX_CHARS, MAIN_EFFORT_MAX_CHARS,
+    SUGGESTED_NAME_MAX_CHARS, TANGENT_MAX_CHARS,
+};
 use crate::cli::session::AgentProvider;
 
 pub const DEFAULT_MIN_INTERVAL: Duration = Duration::from_secs(20);
@@ -20,13 +23,26 @@ can see at a glance what it is doing and whether it needs them. You are reading 
 session, not taking part in it. Describe what the agent is working on and, precisely, what it is \
 waiting on from the user, if anything: a question it asked, an approval, a decision, or a review. \
 If the turn finished with no question, needs_user is null. Do not give the agent advice and do not \
-suggest next steps. Use plain language, no em dashes, no filler. The session's name is the user's \
-label for it; when the work has moved to something the name no longer describes, suggest a short \
-name for what the session is about now, in the same style as the current name; otherwise \
-suggested_name is null. Reply with only a JSON object: \
-{\"headline\": \"<at most 80 characters naming the task>\", \"doing\": \"<one or two sentences on \
-where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" or null, \
-\"suggested_name\": \"<at most 48 characters>\" or null}.";
+suggest next steps. Use plain language, no em dashes, no filler.
+
+A session has a main effort: what it was opened for (the opening prompt) and what most of its \
+requests serve. Sessions take tangents: detours away from that effort, such as fixing a tool that \
+broke, chasing an unrelated bug found along the way, or a side question. Judge the main effort from \
+the whole excerpt, not only the latest request, which is often a tangent.
+
+The session's name is the user's label for its main effort. When the name no longer describes the \
+main effort, suggest a short name for the main effort (never for a tangent), in the same style as \
+the current name; otherwise suggested_name is null. When the current work is a tangent, describe \
+it in tangent; if it matches one of the known tangents listed in the input, use that title exactly. \
+tangent.done is true when the tangent is finished and the work can return to the main effort. When \
+the current work serves the main effort, tangent is null.
+
+Reply with only a JSON object: \
+{\"headline\": \"<at most 80 characters naming the task at hand>\", \"doing\": \"<one or two \
+sentences on where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" \
+or null, \"main_effort\": \"<at most 80 characters naming what the session is for>\", \
+\"suggested_name\": \"<at most 48 characters>\" or null, \"tangent\": {\"title\": \"<at most 60 \
+characters>\", \"done\": false} or null}.";
 
 const INSTRUCTION: &str = "Summarize the session excerpt on stdin.";
 
@@ -173,6 +189,9 @@ pub struct SummaryRequest {
     /// What the session is doing right now, in words, when the transcript
     /// alone cannot tell (a permission prompt is open, the turn errored).
     pub state: Option<String>,
+    /// Titles of tangents already seen in this session, so the summarizer
+    /// names a returning one the same way.
+    pub tangents: Vec<String>,
 }
 
 type OnReady = Box<dyn Fn(String, Summary) + Send + Sync>;
@@ -366,6 +385,12 @@ pub(crate) fn model_summary(
     if let Some(state) = &request.state {
         input.push_str(&format!("Current state: {}\n", state));
     }
+    if !request.tangents.is_empty() {
+        input.push_str("Known tangents:\n");
+        for title in &request.tangents {
+            input.push_str(&format!("- {}\n", title));
+        }
+    }
     input.push_str(&condensed.excerpt);
     let output = runner.run(SYSTEM_PROMPT, INSTRUCTION, &input)?;
     let value = extract_json_object(&output.text).ok_or("the answer held no JSON object")?;
@@ -386,6 +411,24 @@ pub(crate) fn model_summary(
                 && !n.eq_ignore_ascii_case("null")
                 && !n.eq_ignore_ascii_case(request.name.trim())
         });
+    let main_effort = value["main_effort"]
+        .as_str()
+        .map(|m| clean_text(m, MAIN_EFFORT_MAX_CHARS))
+        .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("null"));
+    let tangent = value["tangent"]["title"]
+        .as_str()
+        .map(|t| clean_text(t, TANGENT_MAX_CHARS))
+        .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("null"))
+        .map(|title| Tangent {
+            // A returning tangent keeps its known title, whatever the casing.
+            title: request
+                .tangents
+                .iter()
+                .find(|known| known.eq_ignore_ascii_case(&title))
+                .cloned()
+                .unwrap_or(title),
+            done: value["tangent"]["done"].as_bool().unwrap_or(false),
+        });
     Ok(Summary {
         headline: clean_text(
             headline.ok_or("the answer had no headline")?,
@@ -398,6 +441,8 @@ pub(crate) fn model_summary(
         source: SummarySource::Model,
         for_state: request.state.clone(),
         suggested_name,
+        main_effort,
+        tangent,
     })
 }
 
@@ -463,6 +508,7 @@ mod tests {
             name: "login-fix".into(),
             force,
             state: None,
+            tangents: Vec::new(),
         }
     }
 
@@ -640,5 +686,34 @@ mod tests {
             Some(SummaryProvider::Codex)
         );
         assert_eq!(SummaryProvider::parse("bogus"), None);
+    }
+}
+
+#[cfg(test)]
+mod live {
+    /// `TWAPP_LIVE_TRANSCRIPT=<path> TWAPP_LIVE_NAME=<name> cargo test
+    /// live_main_effort -- --ignored --nocapture`: one real summary call,
+    /// printing the main effort, tangent and name suggestion it returns.
+    #[test]
+    #[ignore]
+    fn live_main_effort() {
+        let path = std::env::var("TWAPP_LIVE_TRANSCRIPT").expect("TWAPP_LIVE_TRANSCRIPT");
+        let condensed = super::condense_claude(std::path::Path::new(&path), super::DEFAULT_BUDGET).unwrap();
+        let request = super::SummaryRequest {
+            key: "/live".into(),
+            harness: crate::cli::session::AgentProvider::Claude,
+            transcript_path: path.clone().into(),
+            ticket: None,
+            name: std::env::var("TWAPP_LIVE_NAME").unwrap_or_default(),
+            force: true,
+            state: None,
+            tangents: Vec::new(),
+        };
+        let runner = super::HarnessRunner::new(super::SummaryHarness::Claude, None, None);
+        println!("input {} chars", condensed.excerpt.chars().count());
+        let started = std::time::Instant::now();
+        let summary = super::model_summary(&runner, &request, &condensed).unwrap();
+        println!("took {:.1}s", started.elapsed().as_secs_f64());
+        println!("{}", serde_json::to_string_pretty(&summary).unwrap());
     }
 }

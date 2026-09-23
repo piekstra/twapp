@@ -194,7 +194,9 @@ summaries:
 
 `auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes. The session you are looking at is not summarized while you work in it; its summary is written when you switch away or leave the window.
 
-When a session's work has drifted from its name, the summary also suggests a new one. The session panel shows it with **Rename** and **Dismiss**; a dismissed suggestion is not offered again. The suggestion comes from the same call as the summary, so it costs nothing extra.
+Each summary also names the session's main effort (what it was opened for and what most of its work serves) and whether the current work is a tangent from it. The summarizer reads the session's opening prompt, a spread of the prompts since, and the harness's compaction recap along with the latest turn, so a detour in the last few messages is not mistaken for the whole session. The session panel shows the main effort and the current tangent, and a folded **Yaks** section lists every tangent seen: **shaving** (the current work), **shaved** (finished) or **set aside** (the work moved on first), with when it started and how many summaries caught the session on it. `twapp yaks` prints the same.
+
+When a session's name no longer describes its main effort, the summary also suggests a new one for the main effort, never for a tangent. The session panel shows it with **Rename** and **Dismiss**; a dismissed suggestion is not offered again. The suggestion comes from the same call as the summary, so it costs nothing extra.
 
 These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
@@ -263,6 +265,7 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp close` | Stop the session and remove it from the window; its files stay |
 | `twapp blocker add\|list\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |
+| `twapp yaks [--json]` | The session's main effort and the tangents it took |
 | `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
 | `twapp note add\|list\|remove` | Session notes |
