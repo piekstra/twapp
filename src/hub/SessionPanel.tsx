@@ -14,6 +14,7 @@ import { markdownComponents } from "../components/markdown";
 import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
 import BlockerList from "./BlockerList";
+import Linkify from "./Linkify";
 
 export const SESSION_COLORS = [
   { hex: "#ffe0e0", name: "Rose" },
@@ -500,17 +501,17 @@ export default function SessionPanel({
                 On a tangent: {summary.tangent.title}
               </div>
             )}
-            <div className="summary-headline">{summary.headline}</div>
-            {summary.doing && <div className="summary-doing">{summary.doing}</div>}
+            <div className="summary-headline"><Linkify text={summary.headline} /></div>
+            {summary.doing && <div className="summary-doing"><Linkify text={summary.doing} /></div>}
             {summary.needs_user && (
               <div className="summary-needs">
                 <span className="eyebrow">Needs from you</span>
-                {summary.needs_user}
+                <Linkify text={summary.needs_user} />
               </div>
             )}
           </>
         ) : (
-          (status.title || status.last_message) && <div className="summary-doing">{status.title || status.last_message}</div>
+          (status.title || status.last_message) && <div className="summary-doing"><Linkify text={status.title || status.last_message || ""} /></div>
         )}
           </>
         )}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import Linkify, { ExternalLink } from "./Linkify";
 import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
 
 interface Props {
@@ -28,23 +28,27 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
   };
   const updated = blocker.status === "updated";
   const link = blocker.reference && /^https?:\/\//.test(blocker.reference) ? blocker.reference : null;
+  const age = (
+    <span className="blocker-age" title={`Recorded ${new Date(blocker.created_at).toLocaleString()}`}>
+      {sinceLabel(blocker.created_at, now)}
+    </span>
+  );
   return (
     <div className={`blocker-row${updated ? " updated" : ""}`}>
       <div className="blocker-top">
         <span className={`blocker-dot${updated ? " updated" : ""}`} />
-        <span className="blocker-title" onClick={() => setOpen((v) => !v)}>{blocker.title}</span>
-        {updated && <span className="blocker-badge">Updated</span>}
-        <span className="spacer" />
-        <span className="blocker-age" title={`Recorded ${new Date(blocker.created_at).toLocaleString()}`}>
-          {sinceLabel(blocker.created_at, now)}
+        <span className="blocker-title" onClick={() => setOpen((v) => !v)}>
+          <Linkify text={blocker.title} />
+          {updated && <span className="blocker-badge">Updated</span>}
         </span>
+        {age}
       </div>
       <div className="blocker-meta">
         {blocker.party && <span className="chip">{blocker.party}</span>}
         {blocker.kind && <span className="blocker-kind">{blocker.kind}</span>}
         {blocker.reference &&
           (link ? (
-            <button className="link-button" onClick={() => openUrl(link).catch(console.error)}>{blocker.reference}</button>
+            <ExternalLink url={link} />
           ) : (
             <span className="chip chip-mono">{blocker.reference}</span>
           ))}
@@ -67,8 +71,12 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
           ) : (
             <div className="blocker-checked">No check command; the session's agent can add one.</div>
           )}
-          {blocker.check_error && <div className="blocker-error">Last check failed: {blocker.check_error}</div>}
-          {blocker.excerpt && <pre className="blocker-excerpt">{blocker.excerpt}</pre>}
+          {blocker.check_error && <div className="blocker-error">Last check failed: <Linkify text={blocker.check_error} /></div>}
+          {blocker.excerpt && (
+            <pre className="blocker-excerpt">
+              <Linkify text={blocker.excerpt} />
+            </pre>
+          )}
         </div>
       )}
       {error && <div className="blocker-error">{error}</div>}
