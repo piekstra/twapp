@@ -102,6 +102,7 @@ function App() {
   const [linkingTicket, setLinkingTicket] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [refreshingTicket, setRefreshingTicket] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // Fork dialog state
   const [showForkDialog, setShowForkDialog] = useState(false);
@@ -1180,6 +1181,7 @@ function App() {
 
   const handleRefreshTicket = async () => {
     setRefreshingTicket(true);
+    setRefreshError(null);
     try {
       if (!ticket) {
         // No ticket in UI — try reading from disk (CLI may have linked one)
@@ -1190,14 +1192,16 @@ function App() {
           try {
             const updated = await invoke<TicketInfo>("refresh_ticket");
             setTicket(updated);
-          } catch (_) { /* disk version is fine */ }
+          } catch (e) {
+            setRefreshError(e instanceof Error ? e.message : String(e));
+          }
         }
       } else {
         const info = await invoke<TicketInfo>("refresh_ticket");
         setTicket(info);
       }
     } catch (e) {
-      console.error("Failed to refresh ticket:", e);
+      setRefreshError(e instanceof Error ? e.message : String(e));
     } finally {
       setRefreshingTicket(false);
     }
@@ -2101,7 +2105,7 @@ function App() {
               {ticket && (
                 <button
                   className="ticket-change-button"
-                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); setRefreshError(null); }}
                   title="Change ticket"
                 >
                   Change
@@ -2109,6 +2113,9 @@ function App() {
               )}
             </div>
           </div>
+          {ticketSectionExpanded && refreshError && (
+            <div className="ticket-link-error">{refreshError}</div>
+          )}
           {ticketSectionExpanded && (ticket ? (
             <div className="ticket-content">
               <div className="ticket-badges">

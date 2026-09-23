@@ -97,6 +97,7 @@ npx tsc --noEmit
 
 ## Key Patterns
 
+- **Ticket fetching**: `cli/ticket.rs` owns every jtk/gh call (`fetch_ticket`, `refresh_ticket_info`, `create_jira_ticket`); GUI commands call it through `tickets::fetch_blocking`. jtk 1.3+ has no JSON output, so Jira fields come from `jtk issues get --fields ... --fulltext` text, parsed by `parse_jtk_issue` (fixtures in `src-tauri/tests/fixtures/jtk/`).
 - **CLI/GUI parity**: The CLI (`src-tauri/src/cli/`) and GUI (`src-tauri/src/gui/` + `src/`) often implement the same operations. When modifying one, check if the other needs a matching change. Examples: fork, ticket link/refresh, session management. Not all features need parity (some are UI-only like theme switching) but session-related operations should stay in sync.
 - **Tauri commands**: `invoke<ReturnType>("command_name", { args })` from frontend, `#[tauri::command]` in Rust
 - **State persistence**: `useEffect` hooks auto-save to disk on state change, guarded by `loaded` refs to skip initial empty state

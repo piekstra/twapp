@@ -443,27 +443,8 @@ pub fn create_session_core(
     let dir_already_existed;
 
     if let Some(ref tid) = ticket_id {
-        let is_github = tid.contains('#') || github;
-
-        let fetched = if is_github {
-            ticket::fetch_github_issue(tid, global_config.github_repo.as_deref())
-        } else {
-            let resolved_key = if tid.chars().all(|c| c.is_ascii_digit()) {
-                if let Some(ref proj) = global_config.jira_project {
-                    format!("{}-{}", proj, tid)
-                } else {
-                    tid.clone()
-                }
-            } else {
-                tid.clone()
-            };
-            ticket::fetch_jira_ticket(&resolved_key)
-        };
-
-        let ti = match fetched {
-            Some(t) => t,
-            None => return Err(format!("Failed to fetch ticket: {}", tid)),
-        };
+        let ti = ticket::fetch_ticket(tid, github)
+            .map_err(|e| format!("Failed to fetch ticket {}: {}", tid, e))?;
 
         let dir_name = ti.key.replace('/', "-").replace('#', "-");
         work_dir = global_config.work_directory.join(&dir_name);
@@ -1306,31 +1287,17 @@ fn cmd_sessions(path: Option<String>) -> i32 {
 }
 
 fn cmd_ticket_link(ticket_key: &str, dir: Option<&str>, github: bool) -> i32 {
-    let global_config = match config::GlobalConfig::load() {
-        Ok(cfg) => cfg,
+    if let Err(e) = config::GlobalConfig::load() {
+        eprintln!("Error loading config: {}", e);
+        return 1;
+    }
+
+    let ti = match ticket::fetch_ticket(ticket_key, github) {
+        Ok(t) => t,
         Err(e) => {
-            eprintln!("Error loading config: {}", e);
+            eprintln!("{}", e);
             return 1;
         }
-    };
-
-    let mut key = ticket_key.to_string();
-    let is_github = key.contains('#') || github;
-
-    let ti = if is_github {
-        ticket::fetch_github_issue(&key, global_config.github_repo.as_deref())
-    } else {
-        if key.chars().all(|c| c.is_ascii_digit()) {
-            if let Some(ref proj) = global_config.jira_project {
-                key = format!("{}-{}", proj, key);
-            }
-        }
-        ticket::fetch_jira_ticket(&key)
-    };
-
-    let ti = match ti {
-        Some(t) => t,
-        None => return 1,
     };
 
     let target_dir = if let Some(d) = dir {
@@ -1369,53 +1336,10 @@ fn cmd_ticket_create(summary: &str, dir: Option<&str>, issue_type: &str) -> i32 
         }
     };
 
-    let result = std::process::Command::new("jtk")
-        .args([
-            "issues",
-            "create",
-            "--project",
-            &project,
-            "--summary",
-            summary,
-            "--type",
-            issue_type,
-            "-o",
-            "json",
-        ])
-        .output();
-
-    let output = match result {
-        Ok(o) => o,
+    let new_key = match ticket::create_jira_ticket(&project, summary, issue_type) {
+        Ok(k) => k,
         Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                eprintln!("Error: 'jtk' not found. Install jira-ticket-cli first.");
-            } else {
-                eprintln!("Error creating ticket: {}", e);
-            }
-            return 1;
-        }
-    };
-
-    if !output.status.success() {
-        eprintln!(
-            "Error creating ticket: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        return 1;
-    }
-
-    let create_data: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error parsing response: {}", e);
-            return 1;
-        }
-    };
-
-    let new_key = match create_data.get("key").and_then(|k| k.as_str()) {
-        Some(k) => k.to_string(),
-        None => {
-            eprintln!("Error: Could not parse created ticket key from response");
+            eprintln!("{}", e);
             return 1;
         }
     };
@@ -1424,9 +1348,9 @@ fn cmd_ticket_create(summary: &str, dir: Option<&str>, issue_type: &str) -> i32 
 
     // Fetch full details and write ticket file
     let ti = match ticket::fetch_jira_ticket(&new_key) {
-        Some(t) => t,
-        None => {
-            eprintln!("Warning: Created {} but could not fetch details.", new_key);
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Warning: Created {} but could not fetch details: {}", new_key, e);
             return 1;
         }
     };
@@ -1479,20 +1403,12 @@ fn cmd_ticket_refresh(dir: Option<&str>) -> i32 {
 
     println!("Refreshing {} ({})...", old_ticket.key, old_ticket.source);
 
-    let ti = match old_ticket.source.as_str() {
-        "github" => {
-            let global_config = config::GlobalConfig::load().ok();
-            ticket::fetch_github_issue(
-                &old_ticket.key,
-                global_config.as_ref().and_then(|c| c.github_repo.as_deref()),
-            )
+    let ti = match ticket::refresh_ticket_info(&old_ticket) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 1;
         }
-        _ => ticket::fetch_jira_ticket(&old_ticket.key),
-    };
-
-    let ti = match ti {
-        Some(t) => t,
-        None => return 1,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&ti) {
