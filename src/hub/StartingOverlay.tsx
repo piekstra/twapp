@@ -18,7 +18,13 @@ export default function StartingOverlay({ session, tab }: { session: SessionView
   const main = tab === "main";
   const harness = HARNESS[session.provider] ?? "the harness";
   const title = main ? `Starting ${harness}` : "Starting the shell";
-  const detail = main && session.session_id ? "Resuming the conversation. A long conversation takes longer to load." : null;
+  const detail = !main
+    ? null
+    : session.launch_kind === "resume"
+      ? "Resuming the conversation. A long conversation takes longer to load."
+      : session.launch_kind === "new"
+        ? "Starting a new conversation."
+        : null;
   return (
     <div className="starting-overlay" role="status" aria-live="polite">
       <div className="starting-card">

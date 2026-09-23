@@ -87,6 +87,8 @@ export interface SessionView {
   epic?: string | null;
   /** The session id this one was forked from. */
   forked_from?: string | null;
+  /** What the main tab's last start did: resumed a conversation or began one. */
+  launch_kind?: "resume" | "new" | null;
 }
 
 /** Something the session waits on outside itself (`twapp blocker`). */

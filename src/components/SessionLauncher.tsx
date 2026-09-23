@@ -1539,20 +1539,36 @@ function SessionLauncher({
       </div>
       ) : launcherView === "new-session" ? (
       <div className="launcher-new-session">
-        <p className="launcher-settings-hint">
-          Create a new work session and launch it immediately. Provide a ticket to auto-fetch details, or just a name.
-        </p>
-        <div className="launcher-new-session-fields">
-          <fieldset className="launcher-harness-picker">
-            <legend>Agent harness</legend>
-            <div className="launcher-sort" role="radiogroup" aria-label="Agent harness">
+        <div className="new-session-field">
+          <label htmlFor="new-session-name">Name</label>
+          <input
+            id="new-session-name"
+            className="new-session-name"
+            type="text"
+            value={newSessionName}
+            onChange={(e) => setNewSessionName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
+            placeholder={newSessionTicket.trim() ? "Optional: named after the ticket when empty" : "What are you working on?"}
+            autoFocus
+          />
+          <span className="new-session-hint">
+            {newSessionTicket.trim()
+              ? "The session's directory in your work directory is named after the ticket."
+              : "Also names the session's directory in your work directory."}
+          </span>
+        </div>
+
+        {configuredProviders.length > 1 && (
+          <div className="new-session-field">
+            <label title="The coding agent that runs in the session. You can switch it later in the session's settings.">Harness</label>
+            <div className="segmented" role="radiogroup" aria-label="Agent harness">
               {configuredProviders.map((provider) => (
                 <button
                   key={provider}
                   type="button"
                   role="radio"
                   aria-checked={newSessionProvider === provider}
-                  className={`launcher-sort-btn${newSessionProvider === provider ? " active" : ""}`}
+                  className={`segment${newSessionProvider === provider ? " active" : ""}`}
                   onClick={() => {
                     setNewSessionProvider(provider);
                     if (provider !== "claude") setNewSessionChrome(false);
@@ -1562,58 +1578,62 @@ function SessionLauncher({
                 </button>
               ))}
             </div>
-          </fieldset>
-          <div className="launcher-settings-field">
-            <label>Ticket</label>
+          </div>
+        )}
+
+        <details className="new-session-more" open={!!newSessionTicket || undefined}>
+          <summary>Link a ticket <span className="new-session-hint">optional</span></summary>
+          <div className="new-session-field">
             <input
               type="text"
               value={newSessionTicket}
               onChange={(e) => setNewSessionTicket(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
-              placeholder="ABC-1234 or owner/repo#42"
-              autoFocus
+              placeholder="ABC-1234, owner/repo#42 or #42"
             />
+            <span className="new-session-hint">
+              {/^\d+$/.test(newSessionTicket.trim())
+                ? newSessionGithub
+                  ? "Read as an issue in your configured GitHub repository."
+                  : "Read as a Jira ticket in your configured project."
+                : newSessionTicket.includes("#")
+                  ? "A GitHub issue. twapp reads its title and details with gh."
+                  : "A Jira key or a GitHub issue. twapp reads its title and details, and the session shows them."}
+            </span>
+            {/^\d+$/.test(newSessionTicket.trim()) && (
+              <label className="launcher-checkbox-field" title="A bare number is a Jira ticket in your configured project unless this is on.">
+                <input type="checkbox" checked={newSessionGithub} onChange={(e) => setNewSessionGithub(e.target.checked)} />
+                <span>It's a GitHub issue number</span>
+              </label>
+            )}
           </div>
-          <div className="launcher-settings-field">
-            <label>Name <span className="launcher-field-hint">(optional if ticket provided)</span></label>
-            <input
-              type="text"
-              value={newSessionName}
-              onChange={(e) => setNewSessionName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
-              placeholder="Session name"
-            />
-          </div>
-          <label className="launcher-checkbox-field">
-            <input
-              type="checkbox"
-              checked={newSessionGithub}
-              onChange={(e) => setNewSessionGithub(e.target.checked)}
-            />
-            <span>GitHub issue</span>
+        </details>
+
+        {newSessionProvider === "claude" && (
+          <label className="new-session-option">
+            <input type="checkbox" checked={newSessionChrome} onChange={(e) => setNewSessionChrome(e.target.checked)} />
+            <span>
+              <span className="new-session-option-title">Connect Claude to Chrome</span>
+              <span className="new-session-hint">
+                Starts Claude with <code>--chrome</code>, so it can open, read and click pages in your Chrome browser
+                through the Claude in Chrome extension. Leave it off unless the work needs a browser.
+              </span>
+            </span>
           </label>
-          {newSessionProvider === "claude" && (
-            <label className="launcher-checkbox-field">
-              <input
-                type="checkbox"
-                checked={newSessionChrome}
-                onChange={(e) => setNewSessionChrome(e.target.checked)}
-              />
-              <span>Use Chrome</span>
-            </label>
-          )}
-        </div>
+        )}
+
         {createError && <div className="launcher-create-error">{createError}</div>}
         <div className="launcher-new-session-actions">
           <button
             className="launcher-create-btn"
             onClick={handleCreateSession}
             disabled={creating || (!newSessionTicket.trim() && !newSessionName.trim())}
+            title={!newSessionTicket.trim() && !newSessionName.trim() ? "Give the session a name or link a ticket" : undefined}
           >
             {creating ? (
-              <><div className="launcher-spinner small" /> Creating...</>
+              <><div className="launcher-spinner small" /> Starting...</>
             ) : (
-              "Create & Launch"
+              "Start session"
             )}
           </button>
         </div>
