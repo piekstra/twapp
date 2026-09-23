@@ -215,6 +215,36 @@ fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) 
     Some(suggested.to_string())
 }
 
+/// Told to every harness twapp starts, so the agent knows its session is
+/// one of the user's twapp sessions and where the conventions are. No quotes
+/// of either kind, since it goes inside quoted shell and TOML strings.
+pub const SESSION_CONTEXT: &str = "This session runs in twapp, the window that hosts every coding-agent session of this user. \
+When the work waits on someone outside the session (a support case, a ticket, an email, a review), record \
+it with twapp blocker and follow the twapp skill; twapp note adds a note the user sees in the session panel. twapp \
+--help lists the commands. Leave other sessions alone: they belong to the user.";
+
+/// A harness command with twapp's session context added: Claude takes it as
+/// an appended system prompt, Codex as developer instructions. Other
+/// harnesses have no such option and run unchanged.
+fn with_session_context(command: &str) -> String {
+    let insert = |command: &str, program: &str, args: &str| -> Option<String> {
+        // The program starts the command or follows the `cd ... && ` prefix
+        // a conversation begun elsewhere resumes with.
+        let at = if command.starts_with(program) {
+            0
+        } else {
+            command.find(&format!("&& {}", program)).map(|i| i + 3)?
+        };
+        let end = at + program.len();
+        Some(format!("{}{}{}", &command[..end], args, &command[end..]))
+    };
+    let claude = format!(" --append-system-prompt '{}'", SESSION_CONTEXT);
+    let codex = format!(" -c 'developer_instructions=\"{}\"'", SESSION_CONTEXT);
+    insert(command, "claude", &claude)
+        .or_else(|| insert(command, "codex", &codex))
+        .unwrap_or_else(|| command.to_string())
+}
+
 /// Whether a harness command resumes a conversation (`claude --resume`,
 /// `codex resume`) or begins one (`claude --session-id`, a bare harness).
 fn launch_kind(command: Option<&str>) -> &'static str {
@@ -521,6 +551,12 @@ impl Hub {
         std::thread::spawn(move || listener.socket_loop());
         let checker = Arc::clone(&hub);
         std::thread::spawn(move || super::blockers::check_loop(checker));
+        // Sessions are told to follow the twapp skill, so it is kept current
+        // with the window's version.
+        std::thread::spawn(|| match crate::cli::install_skill() {
+            Ok(written) => written.iter().for_each(|f| log::info!("installed {}", f.display())),
+            Err(e) => log::warn!("twapp skill: {}", e),
+        });
         hub
     }
 
@@ -1088,7 +1124,7 @@ impl Hub {
                 session_key: key.to_string(),
                 tab: MAIN_TAB.to_string(),
                 cwd: key.to_string(),
-                command: args.command.clone(),
+                command: args.command.as_deref().map(with_session_context),
                 prefill: args.prefill.clone(),
                 env: session_env(key),
                 rows,
@@ -2221,6 +2257,18 @@ mod tests {
         let dismissed = vec!["Session cookie rewrite".to_string()];
         assert_eq!(name_suggestion("login fix", Some(&summary("session cookie rewrite ")), &dismissed), None);
         assert_eq!(name_suggestion("login fix", None, &none), None);
+    }
+
+    #[test]
+    fn harness_commands_carry_the_session_context() {
+        let claude = with_session_context("cd '/w' && claude --resume abc --chrome");
+        assert!(claude.starts_with("cd '/w' && claude --append-system-prompt 'This session runs in twapp"), "{}", claude);
+        assert!(claude.ends_with("' --resume abc --chrome"), "{}", claude);
+        let codex = with_session_context("codex resume t1 -C '/w'");
+        assert!(codex.starts_with("codex -c 'developer_instructions=\"This session runs in twapp"), "{}", codex);
+        assert!(codex.ends_with("\"' resume t1 -C '/w'"), "{}", codex);
+        assert_eq!(with_session_context("agy --workspace /w"), "agy --workspace /w");
+        assert!(!SESSION_CONTEXT.contains('\'') && !SESSION_CONTEXT.contains('"'));
     }
 
     #[test]

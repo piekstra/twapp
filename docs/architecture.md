@@ -274,6 +274,16 @@ over a `user` effort); and links the frontend computes on every render, which
 join sessions sharing an epic or a ticket, or a fork and its parent. A link
 needs two sessions to make a group.
 
+## Session context
+
+Every main-tab launch goes through `Hub::main_spawn_request`, which adds
+`SESSION_CONTEXT` to the harness command: `--append-system-prompt` for
+Claude, `-c developer_instructions=...` for Codex; Antigravity has no such
+option and runs unchanged. The text tells the agent it runs in twapp and
+points at `twapp blocker`, `twapp note` and the twapp skill, which the window
+writes to `~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start when
+their content differs from the built-in copy.
+
 ## Blockers
 
 A session records what it waits on outside itself in `.twapp-blockers.json`

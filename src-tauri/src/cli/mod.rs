@@ -1964,23 +1964,48 @@ fn cmd_rename_suggested() -> i32 {
 
 const SKILL: &str = include_str!("../../../skills/twapp/SKILL.md");
 
-fn cmd_install_skill() -> i32 {
+/// Write the twapp skill for each installed harness, skipping files that
+/// already match. Returns the files written.
+pub fn install_skill() -> Result<Vec<std::path::PathBuf>, String> {
     let home = dirs::home_dir().unwrap_or_default();
-    let mut targets = vec![home.join(".claude/skills/twapp")];
+    let mut targets = Vec::new();
+    if home.join(".claude").is_dir() {
+        targets.push(home.join(".claude/skills/twapp"));
+    }
     if home.join(".codex").is_dir() {
         targets.push(home.join(".codex/skills/twapp"));
     }
+    let mut written = Vec::new();
     for dir in targets {
-        let result = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("SKILL.md"), SKILL));
-        match result {
-            Ok(()) => println!("Installed {}", dir.join("SKILL.md").display()),
-            Err(e) => {
-                eprintln!("Error writing {}: {}", dir.display(), e);
-                return 1;
+        let file = dir.join("SKILL.md");
+        if std::fs::read_to_string(&file).is_ok_and(|current| current == SKILL) {
+            continue;
+        }
+        std::fs::create_dir_all(&dir)
+            .and_then(|_| std::fs::write(&file, SKILL))
+            .map_err(|e| format!("writing {}: {}", file.display(), e))?;
+        written.push(file);
+    }
+    Ok(written)
+}
+
+fn cmd_install_skill() -> i32 {
+    match install_skill() {
+        Ok(written) if written.is_empty() => {
+            println!("The twapp skill is current.");
+            0
+        }
+        Ok(written) => {
+            for file in written {
+                println!("Installed {}", file.display());
             }
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
         }
     }
-    0
 }
 
 fn cmd_rename(new_name: &str) -> i32 {
