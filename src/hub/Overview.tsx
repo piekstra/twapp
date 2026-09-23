@@ -4,6 +4,9 @@ import { LANES, STATE_LABELS, compactNumber, headlineOf, hubApi, sinceLabel, usa
 import { StateDot, blockedLabel } from "./SessionRail";
 
 interface Props {
+  /** The session that was showing before the overview opened. */
+  returnTo: SessionView | null;
+  onReturn: () => void;
   sessions: SessionView[];
   isDark: boolean;
   now: number;
@@ -15,6 +18,8 @@ interface Props {
 }
 
 export default function Overview({
+  returnTo,
+  onReturn,
   sessions,
   isDark,
   now,
@@ -31,6 +36,17 @@ export default function Overview({
   useEffect(() => {
     hubApi.usage(7).then(setUsage).catch(() => setUsage(null));
   }, [triage]);
+
+  useEffect(() => {
+    if (!returnTo || showLibrary) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Only a bare Escape on the page itself, not one closing a dialog or
+      // clearing an input.
+      if (e.key === "Escape" && !e.defaultPrevented && e.target === document.body) onReturn();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [returnTo, showLibrary, onReturn]);
 
   const running = sessions.filter((s) => s.status.state !== "suspended");
   const needing = sessions.filter((s) => s.attention);
@@ -58,6 +74,14 @@ export default function Overview({
         <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => setShowLibrary(true)}>
           All sessions
         </button>
+        {returnTo && (
+          <button className="overview-return" onClick={onReturn} title="Back to the session you were viewing (⌘0 or Esc)">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9.5 3.5L5 8l4.5 4.5" />
+            </svg>
+            Back to <strong>{returnTo.name}</strong>
+          </button>
+        )}
       </div>
 
       {showLibrary ? (

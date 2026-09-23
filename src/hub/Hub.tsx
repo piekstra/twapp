@@ -16,6 +16,7 @@ import { isNewerVersion } from "../utils/version";
 import FilePreviewOverlay, { type FilePreviewHandle } from "../components/FilePreview/FilePreviewOverlay";
 import { markdownComponents } from "../components/markdown";
 import SessionLauncher from "../components/SessionLauncher";
+import DeleteSessionDialog from "../components/DeleteSessionDialog";
 import type { LauncherView } from "../types";
 import { byLane, hubApi, type Lane, type SessionView } from "./api";
 import { TerminalManager } from "./terminals";
@@ -73,6 +74,7 @@ export default function Hub() {
   const [forkError, setForkError] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
   const [confirmClose, setConfirmClose] = useState<SessionView | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SessionView | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const isDark = useIsDark(themeMode);
   const [now, setNow] = useState(Date.now());
@@ -420,6 +422,7 @@ export default function Hub() {
       { id: "layout-split", label: "Layout: sessions left, details right", run: () => setMode("split") },
       { id: "import", label: "Import sessions", run: () => openLibrary("import") },
       { id: "settings", label: "Settings", hint: "⌘,", run: () => openLibrary("settings") },
+      ...(current ? [{ id: "delete", label: `Delete ${current.name}`, run: () => setDeleteTarget(current) }] : []),
       {
         id: "update",
         label: updateInfo ? `Update twapp to ${updateInfo.latestVersion}` : "Check for twapp updates",
@@ -593,9 +596,11 @@ export default function Hub() {
       ...l,
       [field]: l[field].includes(lane) ? l[field].filter((x) => x !== lane) : [...l[field], lane],
     }));
+  // The header's Sessions button toggles, so a second click returns to the
+  // session that was showing.
   const goOverview = () => {
     setShowLibrary(false);
-    setOverview(true);
+    setOverview((v) => !v || !current);
   };
   const needingCount = sessions.filter((s) => s.attention).length;
   const split = layout.mode === "split";
@@ -769,6 +774,11 @@ export default function Hub() {
         )}
         {overview || !current ? (
           <Overview
+            returnTo={overview ? current : null}
+            onReturn={() => {
+              setShowLibrary(false);
+              setOverview(false);
+            }}
             sessions={sessions}
             isDark={isDark}
             now={now}
@@ -1026,6 +1036,17 @@ export default function Hub() {
                 stay on disk; open it again from All sessions or ⌘K.
               </p>
               <div className="fork-actions">
+                <button
+                  className="fork-cancel delete-instead"
+                  onClick={() => {
+                    setDeleteTarget(confirmClose);
+                    setConfirmClose(null);
+                  }}
+                  title="Delete the session's conversation and files instead"
+                >
+                  Delete instead...
+                </button>
+                <span className="spacer" />
                 <button className="fork-cancel" onClick={() => setConfirmClose(null)}>Cancel</button>
                 <button className="fork-submit danger" onClick={() => closeSession(confirmClose)} autoFocus>
                   Close session
@@ -1034,6 +1055,17 @@ export default function Hub() {
             </div>
           </div>
         </div>
+      )}
+
+      {deleteTarget && (
+        <DeleteSessionDialog
+          directory={deleteTarget.key}
+          name={deleteTarget.name}
+          color={deleteTarget.color}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => setDeleteTarget(null)}
+          stopFirst={sessions.some((s) => s.key === deleteTarget.key) ? () => closeSession(deleteTarget) : undefined}
+        />
       )}
 
       {paletteOpen && (

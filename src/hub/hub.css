@@ -2236,6 +2236,8 @@ kbd {
   display: flex;
   justify-content: center;
   cursor: pointer;
+}
+
 .name-suggestion {
   display: flex;
   align-items: center;
@@ -2257,4 +2259,44 @@ kbd {
 .name-suggestion-text strong {
   color: var(--text-1);
   font-weight: 600;
+}
+
+.overview-return {
+  -webkit-app-region: no-drag;
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font: 500 12px var(--font-ui);
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-return:hover {
+  color: var(--text-1);
+  border-color: var(--accent);
+}
+
+.overview-return strong {
+  color: var(--text-1);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fork-actions .spacer {
+  flex: 1;
+}
+
+.fork-actions .delete-instead {
+  color: var(--danger, var(--state-error));
 }
