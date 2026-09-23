@@ -286,6 +286,9 @@ socket to answer and then sends the request over it.
 | `{"open_background": [...]}` | Put the session in the rail without selecting it or raising the window (`twapp work --background`). |
 | `"running"` | Keys of the sessions with a live terminal. |
 | `"snapshot"` | The rail as the window sees it, including state and summary (`twapp status`). |
+| `{"set_lane": {"key": "<dir>", "lane": "blocked"}}` | File a hosted session in a lane (`twapp lane`). |
+| `{"close": "<dir>"}` | Stop a hosted session and remove it from the window (`twapp close`, `twapp delete`). |
+| `"changed"` | Session files changed on disk; the window redraws its list (`twapp rename`). |
 | `"ping"` | Liveness check. |
 
 A session opened with a command (new, forked or resumed from the CLI) starts
