@@ -2785,3 +2785,91 @@ kbd {
   flex: 1;
   min-width: 0;
 }
+
+/* --- New session ----------------------------------------------------------- */
+
+.launcher-new-session {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 560px;
+  padding: 20px 24px;
+}
+
+.new-session-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.new-session-field > label {
+  font: 600 12px var(--font-ui);
+  color: var(--text-2);
+}
+
+.new-session-field input[type="text"] {
+  font: 13px var(--font-ui);
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface-0);
+  color: var(--text-1);
+}
+
+.new-session-field input.new-session-name {
+  font-size: 16px;
+  padding: 10px 12px;
+}
+
+.new-session-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.new-session-hint code {
+  font-size: 11px;
+}
+
+.new-session-more {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.new-session-more > summary {
+  cursor: pointer;
+  font: 600 12px var(--font-ui);
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+
+.new-session-more > summary .new-session-hint {
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.new-session-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.new-session-option > input {
+  margin-top: 2px;
+}
+
+.new-session-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.new-session-option-title {
+  font: 500 12.5px var(--font-ui);
+  color: var(--text-1);
+}
+
+.new-session-field .segmented {
+  align-self: flex-start;
+}

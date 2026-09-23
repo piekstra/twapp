@@ -168,6 +168,8 @@ pub struct SessionView {
     pub epic: Option<String>,
     /// The session id this session was forked from.
     pub forked_from: Option<String>,
+    /// `resume` or `new`: what the main tab's last start did.
+    pub launch_kind: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -211,6 +213,15 @@ fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) 
         return None;
     }
     Some(suggested.to_string())
+}
+
+/// Whether a harness command resumes a conversation (`claude --resume`,
+/// `codex resume`) or begins one (`claude --session-id`, a bare harness).
+fn launch_kind(command: Option<&str>) -> &'static str {
+    match command {
+        Some(c) if c.contains("--resume") || c.contains("codex resume") => "resume",
+        _ => "new",
+    }
 }
 
 // --- Registry --------------------------------------------------------------
@@ -267,6 +278,8 @@ struct HubSession {
     /// Blockers whose check output changed since the user last looked.
     blocker_updates: usize,
     effort: Option<EffortInfo>,
+    /// Whether the main tab's last start resumed a conversation or began one.
+    launch_kind: Option<String>,
 }
 
 impl HubSession {
@@ -286,6 +299,7 @@ impl HubSession {
             dismissed_names: Vec::new(),
             blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
             effort: None,
+            launch_kind: None,
         }
     }
 
@@ -344,6 +358,7 @@ impl HubSession {
                 .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok())
                 .and_then(|t| t.epic),
             forked_from: data.as_ref().and_then(|d| d.forked_from.clone()),
+            launch_kind: self.launch_kind.clone(),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
@@ -952,6 +967,11 @@ impl Hub {
             .unwrap_or(DEFAULT_SIZE);
         let (spawn, capture) = if tab == MAIN_TAB {
             let (spawn, args) = self.main_spawn_request(key, rows, cols)?;
+            let kind = launch_kind(spawn.command.as_deref());
+            if let Some(session) = self.inner.lock().session(key) {
+                session.launch_kind = Some(kind.to_string());
+            }
+            self.emit_changed();
             let capture = args.capture_started_at.clone().map(|at| {
                 (args.provider, at, args.capture_previous_session_id.clone())
             });
@@ -2163,6 +2183,15 @@ mod tests {
         let dismissed = vec!["Session cookie rewrite".to_string()];
         assert_eq!(name_suggestion("login fix", Some(&summary("session cookie rewrite ")), &dismissed), None);
         assert_eq!(name_suggestion("login fix", None, &none), None);
+    }
+
+    #[test]
+    fn a_launch_says_whether_it_resumes_or_begins_a_conversation() {
+        assert_eq!(launch_kind(Some("cd '/w' && claude --resume abc")), "resume");
+        assert_eq!(launch_kind(Some("codex resume t1 -C '/w'")), "resume");
+        assert_eq!(launch_kind(Some("claude --session-id abc")), "new");
+        assert_eq!(launch_kind(Some("codex -C '/w'")), "new");
+        assert_eq!(launch_kind(None), "new");
     }
 
     #[test]
