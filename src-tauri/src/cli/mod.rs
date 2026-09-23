@@ -2,6 +2,7 @@ pub mod app_bundle;
 pub mod blockers;
 pub mod yaks;
 pub mod config;
+pub mod fsutil;
 pub mod harness;
 pub mod hub_link;
 pub mod models;

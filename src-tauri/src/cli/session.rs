@@ -578,7 +578,7 @@ pub fn write_session(work_dir: &Path, data: &SessionData) -> Result<(), String> 
     let session_file = work_dir.join(".twapp-session.json");
     let content = serde_json::to_string_pretty(data)
         .map_err(|e| format!("Failed to serialize session: {}", e))?;
-    std::fs::write(&session_file, content)
+    super::fsutil::write_atomic(&session_file, content)
         .map_err(|e| format!("Failed to write session file: {}", e))
 }
 

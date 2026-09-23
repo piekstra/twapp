@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Markdown from "react-markdown";
@@ -79,10 +79,9 @@ export default function SessionPanel({
 
   // --- Notes ---------------------------------------------------------------
   // Notes can also change on disk while the panel is open (`twapp note add`
-  // from an agent), so every save merges with what is on disk, keeping notes
-  // this panel has not seen and dropping only the ones deleted here.
+  // or `remove` from an agent), so the file is the source of truth: every
+  // change here is an edit by note id, applied to what is on disk.
   const [notes, setNotes] = useState<Note[]>([]);
-  const deletedNotes = useRef<Set<string>>(new Set());
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
   const [yaksOpen, setYaksOpen] = useState(false);
   const [editingEffort, setEditingEffort] = useState(false);
@@ -100,34 +99,26 @@ export default function SessionPanel({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
 
-  const mergeWithDisk = (local: Note[], disk: Note[]): Note[] => {
-    const known = new Set(local.map((n) => n.id));
-    const added = disk.filter((n) => !known.has(n.id) && !deletedNotes.current.has(n.id));
-    return [...added, ...local].sort((a, b) => b.timestamp - a.timestamp);
-  };
+  const byNewest = (list: Note[]) => [...list].sort((a, b) => b.timestamp - a.timestamp);
 
   const reloadNotes = () => {
     invoke<Note[]>("load_notes", { directory })
-      .then((saved) => setNotes((local) => mergeWithDisk(local, saved || [])))
+      .then((saved) => setNotes(byNewest(saved || [])))
       .catch(console.error);
   };
 
   const updateNotes = (change: (prev: Note[]) => Note[]) => {
-    setNotes((prev) => {
-      const next = change(prev);
-      invoke<Note[]>("load_notes", { directory })
-        .then((disk) => {
-          const merged = mergeWithDisk(next, disk || []);
-          invoke("save_notes", { directory, notes: merged }).catch(console.error);
-          if (merged.length !== next.length) setNotes(merged);
-        })
-        .catch(console.error);
-      return next;
-    });
+    setNotes((prev) => byNewest(change(prev)));
+    invoke<Note[]>("load_notes", { directory })
+      .then((disk) => {
+        const next = byNewest(change(disk || []));
+        setNotes(next);
+        return invoke("save_notes", { directory, notes: next });
+      })
+      .catch(console.error);
   };
 
   useEffect(() => {
-    deletedNotes.current = new Set();
     setNotes([]);
     reloadNotes();
     const id = setInterval(reloadNotes, 10000);
@@ -144,7 +135,6 @@ export default function SessionPanel({
     setComposing(false);
   };
   const deleteNote = (id: string) => {
-    deletedNotes.current.add(id);
     updateNotes((prev) => prev.filter((n) => n.id !== id));
   };
   const saveEditNote = () => {

@@ -152,12 +152,19 @@ export default function Hub() {
       .catch(console.error);
   }, []);
   useEffect(reloadPrompts, [reloadPrompts]);
+  // quick-prompts.json is also written by the library's settings and by
+  // `twapp prompt`, so a change here is applied to the file's current
+  // contents rather than to this window's copy, which may be stale.
   const setGlobalPrompts = useCallback((update: (prev: PromptStore) => PromptStore) => {
-    setGlobalPromptsState((prev) => {
-      const next = update(prev);
-      if (promptsLoaded.current) invoke("save_global_prompts", { data: next }).catch(console.error);
-      return next;
-    });
+    setGlobalPromptsState((prev) => update(prev));
+    if (!promptsLoaded.current) return;
+    invoke<PromptStore>("load_global_prompts")
+      .then((disk) => {
+        const next = update(disk || { sections: [] });
+        setGlobalPromptsState(next);
+        return invoke("save_global_prompts", { data: next });
+      })
+      .catch(console.error);
   }, []);
 
   // --- Updates ---------------------------------------------------------------

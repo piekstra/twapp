@@ -155,7 +155,7 @@ pub fn load(dir: &Path) -> YakLog {
 
 pub fn save(dir: &Path, log: &YakLog) -> Result<(), String> {
     let json = serde_json::to_string_pretty(log).map_err(|e| e.to_string())?;
-    std::fs::write(path_in(dir), json).map_err(|e| e.to_string())
+    super::fsutil::write_atomic(&path_in(dir), json).map_err(|e| e.to_string())
 }
 
 pub fn cmd_yaks(dir: Option<&str>, json: bool) -> i32 {

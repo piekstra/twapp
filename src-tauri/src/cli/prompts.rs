@@ -66,7 +66,7 @@ fn save_store(path: &Path, store: &PromptStore) -> Result<(), String> {
     }
     let json =
         serde_json::to_string_pretty(store).map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(path, json).map_err(|e| format!("Failed to write: {}", e))
+    super::fsutil::write_atomic(path, json).map_err(|e| format!("Failed to write: {}", e))
 }
 
 fn resolve_dir(dir: Option<&str>) -> PathBuf {
