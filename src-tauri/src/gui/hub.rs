@@ -1554,6 +1554,30 @@ impl Hub {
                 snapshot: serde_json::to_value(self.snapshot()).ok(),
                 ..Default::default()
             },
+            Ok(HubRequest::SetLane { key, lane }) => {
+                let key = session_key(&key);
+                if self.is_hosted(&key) {
+                    self.set_lane(&key, lane);
+                    HubReply::ok(Some(key))
+                } else {
+                    HubReply::err("the session is not open in the window".to_string())
+                }
+            }
+            Ok(HubRequest::Close(key)) => {
+                let key = session_key(&key);
+                if !self.is_hosted(&key) {
+                    HubReply::err("the session is not open in the window".to_string())
+                } else {
+                    match self.close(&key) {
+                        Ok(()) => HubReply::ok(Some(key)),
+                        Err(e) => HubReply::err(e),
+                    }
+                }
+            }
+            Ok(HubRequest::Changed) => {
+                self.emit_changed();
+                HubReply::ok(None)
+            }
             Err(e) => HubReply::err(e.to_string()),
         };
         let mut stream = stream;
@@ -1681,6 +1705,12 @@ pub enum HubRequest {
     OpenBackground(Vec<String>),
     Running,
     Snapshot,
+    /// File a session the window hosts in a lane.
+    SetLane { key: String, lane: Lane },
+    /// Stop a session and remove it from the window.
+    Close(String),
+    /// Session files changed on disk (a rename from the CLI); redraw.
+    Changed,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1839,6 +1869,9 @@ mod tests {
     fn socket_requests_have_a_stable_wire_shape() {
         assert_eq!(serde_json::to_string(&HubRequest::Ping).unwrap(), "\"ping\"");
         assert_eq!(serde_json::to_string(&HubRequest::Snapshot).unwrap(), "\"snapshot\"");
+        let lane: HubRequest = serde_json::from_str(r#"{"set_lane":{"key":"/w","lane":"blocked"}}"#).unwrap();
+        assert!(matches!(lane, HubRequest::SetLane { key, lane: Lane::Blocked } if key == "/w"));
+        assert!(matches!(serde_json::from_str(r#"{"close":"/w"}"#).unwrap(), HubRequest::Close(k) if k == "/w"));
         assert_eq!(
             serde_json::to_string(&HubRequest::OpenBackground(vec!["--cwd".into(), "/w".into()]))
                 .unwrap(),

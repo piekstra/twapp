@@ -118,10 +118,41 @@ pub enum Commands {
     #[command(name = "setup-cert")]
     SetupCert,
     /// Rename the current session
-    #[command(after_help = "Examples:\n  twapp rename \"ABC-5678 Better Name\"    Rename session in current directory")]
+    #[command(after_help = "Examples:\n  twapp rename \"ABC-5678 Better Name\"    Rename session in current directory\n  twapp rename --suggested                Take the name the window suggests")]
     Rename {
         /// New session name
-        name: String,
+        #[arg(required_unless_present = "suggested")]
+        name: Option<String>,
+        /// Use the name the window's summary suggests for this session
+        #[arg(long, conflicts_with = "name")]
+        suggested: bool,
+    },
+    /// Show or set the session's lane in the window: priority, background or blocked
+    #[command(after_help = "Examples:\n  twapp lane                 Show this session's lane\n  twapp lane blocked         Mark it blocked (waiting on someone else)\n  twapp lane priority --dir ~/work/ABC-12")]
+    Lane {
+        lane: Option<LaneArg>,
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Stop the session and remove it from the window; its files stay
+    Close {
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Delete a session: its conversation and twapp's files, or with
+    /// --everything its whole directory
+    Delete {
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+        /// Also delete the session's directory
+        #[arg(long)]
+        everything: bool,
+        /// Confirm; without it the command only says what it would delete
+        #[arg(long)]
+        yes: bool,
     },
     /// Inspect or refresh the provider model cache used by --model.
     ///
@@ -373,7 +404,13 @@ pub fn run(cmd: Commands) -> i32 {
         } => cmd_set_session(&session_id, cwd.as_deref(), dir.as_deref()),
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
-        Commands::Rename { name } => cmd_rename(&name),
+        Commands::Rename { name, suggested } => match (name, suggested) {
+            (Some(name), false) => cmd_rename(&name),
+            _ => cmd_rename_suggested(),
+        },
+        Commands::Lane { lane, dir } => cmd_lane(lane, dir.as_deref()),
+        Commands::Close { dir } => cmd_close(dir.as_deref()),
+        Commands::Delete { dir, everything, yes } => cmd_delete(dir.as_deref(), everything, yes),
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
             ModelsCommands::Refresh { provider } => models::cmd_refresh(provider),
@@ -1282,9 +1319,24 @@ fn cmd_status(json: bool) -> i32 {
         println!("No sessions are open in twapp.");
         return 0;
     }
-    for s in sessions {
+    let lane_of = |s: &serde_json::Value| s.get("lane").and_then(|v| v.as_str()).unwrap_or("background").to_string();
+    for lane in ["priority", "background", "blocked"] {
+        let in_lane: Vec<_> = sessions.iter().filter(|s| lane_of(s) == lane).collect();
+        if in_lane.is_empty() {
+            continue;
+        }
+        println!("{}", lane.to_uppercase());
+        for s in in_lane {
+            print_status_row(s);
+        }
+    }
+    0
+}
+
+fn print_status_row(s: &serde_json::Value) {
+    {
         let get = |path: &[&str]| -> String {
-            let mut v = &s;
+            let mut v = s;
             for p in path {
                 v = match v.get(p) {
                     Some(next) => next,
@@ -1310,8 +1362,14 @@ fn cmd_status(json: bool) -> i32 {
         if !needs.is_empty() {
             println!("  {:<40} needs you: {}", "", needs);
         }
+        if let Some(detail) = lane_detail(s) {
+            println!("  {:<40} {}", "", detail);
+        }
+        let suggestion = get(&["name_suggestion"]);
+        if !suggestion.is_empty() {
+            println!("  {:<40} suggested name: {} (twapp rename --suggested)", "", suggestion);
+        }
     }
-    0
 }
 
 fn truncate_display(text: &str, max: usize) -> String {
@@ -1598,6 +1656,153 @@ fn cmd_set_session(session_id: &str, cwd: Option<&str>, dir: Option<&str>) -> i3
     0
 }
 
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum LaneArg {
+    Priority,
+    Background,
+    Blocked,
+}
+
+impl From<LaneArg> for crate::gui::hub::Lane {
+    fn from(lane: LaneArg) -> Self {
+        match lane {
+            LaneArg::Priority => Self::Priority,
+            LaneArg::Background => Self::Background,
+            LaneArg::Blocked => Self::Blocked,
+        }
+    }
+}
+
+fn target_dir(dir: Option<&str>) -> String {
+    let path = dir
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    crate::gui::hub::session_key(&path.to_string_lossy())
+}
+
+/// This session's entry in the window's snapshot.
+fn hosted_view(key: &str) -> Option<serde_json::Value> {
+    hub_link::snapshot()?
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|s| s.get("key").and_then(|k| k.as_str()) == Some(key))
+        .cloned()
+}
+
+fn cmd_lane(lane: Option<LaneArg>, dir: Option<&str>) -> i32 {
+    let key = target_dir(dir);
+    if let Some(lane) = lane {
+        return match hub_link::set_lane(&key, lane.into()) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                1
+            }
+        };
+    }
+    let Some(view) = hosted_view(&key) else {
+        eprintln!("Error: the session is not open in the window");
+        return 1;
+    };
+    let lane = view.get("lane").and_then(|v| v.as_str()).unwrap_or("background");
+    match lane_detail(&view) {
+        Some(detail) => println!("{} ({})", lane, detail),
+        None => println!("{}", lane),
+    }
+    0
+}
+
+/// "blocked 3d, checked 2h ago" for a blocked session.
+fn lane_detail(view: &serde_json::Value) -> Option<String> {
+    let since = |field: &str| {
+        let at = view.get(field)?.as_str()?;
+        let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
+        Some(ago(chrono::Utc::now().signed_duration_since(at)))
+    };
+    let blocked = since("blocked_since")?;
+    match (view.get("checked_at"), view.get("blocked_since")) {
+        (Some(c), Some(b)) if c != b => Some(format!("blocked {}, checked {} ago", blocked, since("checked_at")?)),
+        _ => Some(format!("blocked {}", blocked)),
+    }
+}
+
+fn ago(d: chrono::Duration) -> String {
+    let mins = d.num_minutes().max(0);
+    if mins < 60 {
+        format!("{}m", mins)
+    } else if mins < 48 * 60 {
+        format!("{}h", mins / 60)
+    } else {
+        format!("{}d", mins / (24 * 60))
+    }
+}
+
+fn cmd_close(dir: Option<&str>) -> i32 {
+    match hub_link::close(&target_dir(dir)) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_delete(dir: Option<&str>, everything: bool, yes: bool) -> i32 {
+    let key = target_dir(dir);
+    let data = match session::read_session(std::path::Path::new(&key)) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+    let hosted = hosted_view(&key).is_some();
+    if !yes {
+        println!("Would delete \"{}\" ({}):", data.name, key);
+        if hosted {
+            println!("  - stop it and remove it from the window");
+        }
+        println!("  - its Claude conversation and project entry");
+        if everything {
+            println!("  - the whole directory");
+        } else {
+            println!("  - twapp's files and .claude/ in the directory");
+        }
+        println!("Run again with --yes to delete.");
+        return 0;
+    }
+    if hosted {
+        if let Err(e) = hub_link::close(&key) {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    }
+    match crate::gui::sessions::delete_session_files(&key, everything) {
+        Ok(()) => {
+            hub_link::notify_changed();
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_rename_suggested() -> i32 {
+    let key = target_dir(None);
+    let suggestion = hosted_view(&key)
+        .and_then(|v| v.get("name_suggestion").and_then(|n| n.as_str()).map(str::to_string));
+    match suggestion {
+        Some(name) => cmd_rename(&name),
+        None => {
+            eprintln!("Error: the window has no name suggestion for this session");
+            1
+        }
+    }
+}
+
 fn cmd_rename(new_name: &str) -> i32 {
     let work_dir = std::env::current_dir().unwrap_or_default();
     let mut data = match session::read_session(&work_dir) {
@@ -1645,6 +1850,7 @@ fn cmd_rename(new_name: &str) -> i32 {
     }
 
     println!("Renamed: \"{}\" -> \"{}\"", old_name, new_name);
+    hub_link::notify_changed();
     0
 }
 

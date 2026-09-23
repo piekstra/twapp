@@ -678,13 +678,19 @@ pub async fn get_session_history(
 
 #[tauri::command]
 pub async fn delete_session(directory: String, delete_everything: bool) -> Result<(), String> {
-    let work_dir = std::path::PathBuf::from(&directory);
-    let session_data = crate::cli::session::read_session(&work_dir)?;
-
     // Server-side safety gate: refuse to delete running sessions
-    if session_running(&work_dir) {
+    if session_running(std::path::Path::new(&directory)) {
         return Err("Session is currently running. Close it before deleting.".to_string());
     }
+    delete_session_files(&directory, delete_everything)
+}
+
+/// Delete a session that is not running: its Claude conversation and project
+/// entry, then twapp's files in the directory, or the whole directory.
+pub fn delete_session_files(directory: &str, delete_everything: bool) -> Result<(), String> {
+    let directory = directory.to_string();
+    let work_dir = std::path::PathBuf::from(&directory);
+    let session_data = crate::cli::session::read_session(&work_dir)?;
 
     // 1. Delete conversation JSONL
     let home = dirs::home_dir().unwrap_or_default();
