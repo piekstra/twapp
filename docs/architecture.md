@@ -240,10 +240,12 @@ Only the user moves a session out of Blocked.
 
 Resuming a session can take seconds before the harness draws: the resume
 arguments are rebuilt from the session file and transcripts, and the harness
-loads its conversation. From the moment a tab starts until its first output
-byte, the terminal manager marks it waiting and the window covers it with a
-"Starting" card and a running count of seconds; the card fades in only after a
-short delay, so a tab that draws at once never shows it. Keys typed before the
+loads its conversation. A shell tab is covered by a "Starting" card with a
+running count of seconds from the moment it starts until its first output
+byte. The main tab keeps the card until the status engine leaves `starting`,
+because its first bytes come from the login shell `ptyd` types the harness
+command into. The card fades in only after a short delay, so a tab that draws
+at once never shows it. Keys typed before the
 PTY exists are dropped, not queued. Opening a session that is not yet in the
 window (the palette, the library) shows "Opening" until the backend returns
 it, and neither path runs twice on repeated Enter.

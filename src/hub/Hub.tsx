@@ -867,7 +867,12 @@ export default function Hub() {
           )}
           <div className="hub-terminal-stack">
             <div className="hub-terminal-host" ref={hostRef} />
-            {current && manager.isWaiting(current.key, activeTab) && (
+            {/* ptyd types the harness command into a login shell, so the
+                main tab's first bytes are the shell's; it counts as started
+                once the harness itself reports. */}
+            {current &&
+              (manager.isWaiting(current.key, activeTab) ||
+                (activeTab === "main" && current.status.state === "starting")) && (
               <StartingOverlay key={`${current.key}:${activeTab}`} session={current} tab={activeTab} />
             )}
           </div>
