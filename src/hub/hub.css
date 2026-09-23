@@ -2300,3 +2300,8 @@ kbd {
 .fork-actions .delete-instead {
   color: var(--danger, var(--state-error));
 }
+
+.section-empty {
+  font-size: 11px;
+  color: var(--text-3);
+}
