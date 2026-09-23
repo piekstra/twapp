@@ -214,7 +214,7 @@ Each blocker keeps notes and a history: the agent adds notes with `twapp blocker
 
 For a blocker with a check command, the window runs the command hourly, one at a time, and marks the blocker **Updated** when its output changes. An updated blocker brings its session to your attention even in the Blocked lane, and **Mark seen** makes the new output the baseline. The first time you press **Run check** for a command, the window shows the command and asks: **Run once**, or **Run now and every hour**, which allows that exact command from then on. It asks because any agent or repository can write a blocker file; approved commands are kept in `~/.config/twapp/approved-checks.json` and every run is logged. Checking costs no model calls.
 
-`twapp install-skill` installs a skill that teaches Claude (and Codex, when installed) when to record blockers and how to write a check command whose output changes only when the blocker does.
+Every session twapp starts knows it runs in twapp: Claude gets a short appended system prompt and Codex the same text as developer instructions, pointing the agent at `twapp blocker`, `twapp note` and the twapp skill. The window installs that skill for Claude and Codex when it starts, and refreshes it when a new version changes it (`twapp install-skill` does the same by hand). The skill teaches when to record blockers and how to write a check command whose output changes only when the blocker does.
 
 ### Sessions whose conversation is gone
 
