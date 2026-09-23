@@ -13,6 +13,7 @@ import type { EditingPromptState } from "../components/PromptSections";
 import { markdownComponents } from "../components/markdown";
 import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
+import BlockerList from "./BlockerList";
 
 export const SESSION_COLORS = [
   { hex: "#ffe0e0", name: "Rose" },
@@ -75,6 +76,7 @@ export default function SessionPanel({
   // this panel has not seen and dropping only the ones deleted here.
   const [notes, setNotes] = useState<Note[]>([]);
   const deletedNotes = useRef<Set<string>>(new Set());
+  const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
   // Until the user toggles it, the section is open only when it has notes.
   const [notesOpen, setNotesExpanded] = useState<boolean | null>(null);
   const [newNote, setNewNote] = useState("");
@@ -321,6 +323,8 @@ export default function SessionPanel({
   const isDark = document.documentElement.classList.contains("dark");
   const ticketExpanded = ticketOpen ?? !!ticket;
   const notesExpanded = notesOpen ?? notes.length > 0;
+  const blockers = session.blockers ?? [];
+  const blockersExpanded = blockersOpen ?? blockers.length > 0;
   const summary = session.summary;
   const status = session.status;
 
@@ -546,6 +550,24 @@ export default function SessionPanel({
             )}
           </div>
         )}
+      </section>
+
+      <section className="panel-section">
+        <div className="section-head" onClick={() => setBlockersOpen(!blockersExpanded)}>
+          <Chevron open={blockersExpanded} />
+          <span className="section-title">Waiting on</span>
+          {blockers.length > 0 && <span className="count">{blockers.length}</span>}
+          {blockers.some((b) => b.status === "updated") && <span className="blocker-badge">Updated</span>}
+          {!blockersExpanded && blockers.length === 0 && <span className="section-empty">Nothing</span>}
+        </div>
+        {blockersExpanded &&
+          (blockers.length > 0 ? (
+            <BlockerList items={blockers.map((blocker) => ({ blocker, session }))} now={now} />
+          ) : (
+            <div className="section-empty blocker-empty">
+              Nothing recorded. The session's agent can add what it waits on with <code>twapp blocker add</code>.
+            </div>
+          ))}
       </section>
 
       <section className="panel-section grow">

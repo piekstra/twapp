@@ -250,6 +250,27 @@ PTY exists are dropped, not queued. Opening a session that is not yet in the
 window (the palette, the library) shows "Opening" until the backend returns
 it, and neither path runs twice on repeated Enter.
 
+## Blockers
+
+A session records what it waits on outside itself in `.twapp-blockers.json`
+(`twapp blocker`). A blocker is `waiting`, `updated` or `resolved`, and may
+carry a check command. The window lists the open blockers of every hosted
+session in each `SessionView`.
+
+A thread wakes every minute and runs, one at a time with a pause between
+them, the checks that are approved and have not run for an hour. A check
+runs under `/bin/sh -c` in the session directory with a 60-second limit. Its
+standard output, with trailing whitespace dropped, is hashed: the first result
+is the baseline, and a different one marks the blocker `updated`, which gives
+the session attention in any lane until the user marks it seen (the latest
+output becomes the baseline) or resolves it. A failing check records its error
+and changes nothing else. An updated blocker is not checked again until seen.
+
+Blocker files are written by agents in any directory, so the window runs only
+commands the user approved, matched exactly, from
+`~/.config/twapp/approved-checks.json`. `twapp blocker check` runs checks
+directly, as any command the user or agent runs in the terminal would.
+
 ## Rendering cost
 
 Every hosted session keeps an xterm instance so its screen and scrollback

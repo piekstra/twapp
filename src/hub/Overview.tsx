@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
 import { LANES, STATE_LABELS, compactNumber, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot, blockedLabel } from "./SessionRail";
+import BlockerList, { blockersOf } from "./BlockerList";
 
 interface Props {
   /** The session that was showing before the overview opened. */
@@ -148,6 +149,21 @@ export default function Overview({
                 </ul>
               )}
             </div>
+          )}
+
+          {blockersOf(sessions).length > 0 && (
+            <section className="overview-waiting">
+              <div className="overview-lane-head">
+                Waiting on
+                <span className="count">{blockersOf(sessions).length}</span>
+                {blockersOf(sessions).some((b) => b.blocker.status === "updated") && (
+                  <span className="blocker-badge">
+                    {blockersOf(sessions).filter((b) => b.blocker.status === "updated").length} updated
+                  </span>
+                )}
+              </div>
+              <BlockerList items={blockersOf(sessions)} now={now} showSession onSelect={onSelect} />
+            </section>
           )}
 
           {sessions.length === 0 ? (
