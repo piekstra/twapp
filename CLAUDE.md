@@ -10,7 +10,9 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp note add|list|remove`: notes for the current session (the panel shows them).
 - `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`).
 - `twapp prompt add|list|remove`: quick prompts, shared by every session.
-- `twapp status [--json]`: the sessions open in the window, their state and summary.
+- `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
+- `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
+- `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
 
 Run `twapp <command> --help` for flags.
@@ -70,7 +72,7 @@ CI derives the version from `version.txt` (major.minor) plus the run number, inj
 - **Terminal output**: ptyd output reaches the frontend through one Tauri `Channel` per tab as raw bytes; the backend also feeds the main tab's bytes to the status tracker. A terminal that attaches to a running PTY gets a replay, then a one-column resize so the harness redraws.
 - **Status and summaries**: `Hub::poll_once` runs every two seconds. Transitions into `your_turn`, `needs_approval` or `errored` request a summary; the summarizer debounces and caches.
 - **Ticket fetching**: `cli/ticket.rs` owns every jtk and gh call; GUI commands call it through `tickets::fetch_blocking`. jtk 1.3+ has no JSON output, so Jira fields come from `jtk issues get --fields ... --fulltext`, parsed by `parse_jtk_issue` (fixtures in `src-tauri/tests/fixtures/jtk/`).
-- **CLI/GUI parity**: session operations (create, fork, ticket link, rename) exist in both; change them together.
+- **CLI/GUI parity**: session operations (create, fork, ticket link, rename, lanes, close, delete) exist in both; change them together. Window-state operations go over `hub.sock` (`HubRequest`), file operations are shared functions.
 - **Tauri commands**: `invoke<T>("command_name", { camelCaseArgs })` from the frontend, `#[tauri::command]` in Rust. Snake_case argument keys are silently dropped.
 - **Design tokens**: `hub/hub.css` defines the surfaces, lines, text, accent and state colors for light and dark, and maps App.css's older variables onto them; session colors appear as swatches, not painted surfaces.
 - **Color palette**: 9 named colors in `cli/theme.rs` and `hub/SessionPanel.tsx`; `getDarkModeAccentColor()` in `color.ts` derives dark-mode variants.

@@ -244,9 +244,12 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp` | Open the window |
 | `twapp work <ticket\|--name>` | Start a new session (`--provider`, `--model`, `--background`, `-s` to fork) |
 | `twapp resume [--fork]` | Open or fork the session in the current directory |
-| `twapp status [--json]` | Show the open sessions and their state |
+| `twapp status [--json]` | Show the open sessions by lane, their state, blocked time and name suggestions |
 | `twapp sessions` | List every session on disk |
-| `twapp rename <name>` | Rename the session in the current directory |
+| `twapp rename <name>`, `twapp rename --suggested` | Rename the session in the current directory, or take the window's suggestion |
+| `twapp lane [priority\|background\|blocked]` | Show or set the session's lane |
+| `twapp close` | Stop the session and remove it from the window; its files stay |
+| `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
 | `twapp note add\|list\|remove` | Session notes |
 | `twapp prompt add\|list\|remove` | Quick prompts |

@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use crate::gui::hub::{hub_socket_path, HubReply, HubRequest};
+use crate::gui::hub::{hub_socket_path, HubReply, HubRequest, Lane};
 
 fn request(req: &HubRequest) -> Result<HubReply, String> {
     let mut stream = UnixStream::connect(hub_socket_path()).map_err(|e| e.to_string())?;
@@ -25,6 +25,28 @@ fn request(req: &HubRequest) -> Result<HubReply, String> {
 /// `None` when no window is running.
 pub fn running_sessions() -> Option<Vec<String>> {
     request(&HubRequest::Running).ok().and_then(|r| r.running)
+}
+
+fn expect_ok(req: &HubRequest) -> Result<(), String> {
+    let reply = request(req).map_err(|_| "twapp is not running".to_string())?;
+    if reply.ok {
+        Ok(())
+    } else {
+        Err(reply.error.unwrap_or_else(|| "the window refused the request".to_string()))
+    }
+}
+
+pub fn set_lane(directory: &str, lane: Lane) -> Result<(), String> {
+    expect_ok(&HubRequest::SetLane { key: directory.to_string(), lane })
+}
+
+pub fn close(directory: &str) -> Result<(), String> {
+    expect_ok(&HubRequest::Close(directory.to_string()))
+}
+
+/// Tell a running window that session files changed; no window is fine.
+pub fn notify_changed() {
+    let _ = request(&HubRequest::Changed);
 }
 
 /// The window's session list as JSON, or `None` when no window is running.
