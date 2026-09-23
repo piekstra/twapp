@@ -3,6 +3,7 @@ import { getDarkModeAccentColor } from "../color";
 import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
+import YakReport from "./YakReport";
 
 interface Props {
   /** The session that was showing before the overview opened. */
@@ -30,6 +31,7 @@ export default function Overview({
   setShowLibrary,
 }: Props) {
   const [triage, setTriage] = useState<Triage | null>(null);
+  const [showYaks, setShowYaks] = useState(false);
   const [groupBy, setGroupByState] = useState<"lanes" | "efforts">(() => {
     try {
       return localStorage.getItem("twapp-overview-group") === "efforts" ? "efforts" : "lanes";
@@ -150,11 +152,14 @@ export default function Overview({
   return (
     <div className="overview">
       <div className="overview-tabs">
-        <button className={`overview-tab${!showLibrary ? " active" : ""}`} onClick={() => setShowLibrary(false)}>
+        <button className={`overview-tab${!showLibrary && !showYaks ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowLibrary(false); }}>
           Open sessions
         </button>
-        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => setShowLibrary(true)}>
+        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowLibrary(true); }}>
           All sessions
+        </button>
+        <button className={`overview-tab${showYaks && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(true); }} title="Tangents your sessions took, across sessions and days">
+          Yaks
         </button>
         {returnTo && (
           <button className="overview-return" onClick={onReturn} title="Back to the session you were viewing (⌘0 or Esc)">
@@ -168,6 +173,10 @@ export default function Overview({
 
       {showLibrary ? (
         <div className="overview-library">{library}</div>
+      ) : showYaks ? (
+        <div className="overview-body">
+          <YakReport onSelect={onSelect} />
+        </div>
       ) : (
         <div className="overview-body">
           <div className="overview-summary-row">
