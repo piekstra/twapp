@@ -301,8 +301,10 @@ output becomes the baseline) or resolves it. A failing check records its error
 and changes nothing else. An updated blocker is not checked again until seen.
 
 Blocker files are written by agents in any directory, so the window runs only
-commands the user approved, matched exactly (Run check's "Run now and every
-hour"; "Run once" runs a command one time without approving it), from
+commands the user approved, matched exactly and per session directory (Run
+check's "Run now and every hour"; "Run once" runs a command one time without
+approving it; both refuse a command that changed in the file since it was
+shown), from
 `~/.config/twapp/approved-checks.json`. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 

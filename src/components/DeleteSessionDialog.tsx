@@ -129,7 +129,7 @@ export default function DeleteSessionDialog({ directory, name, color, onClose, o
           <button className="delete-cancel" onClick={onClose}>Cancel</button>
           {preflight && !blocked && (
             <>
-              <button className="delete-remove" onClick={() => confirm(false)} disabled={deleting} title="Delete the conversation and twapp's files for this session; keep the directory">
+              <button className="delete-remove" onClick={() => confirm(false)} disabled={deleting} title="Delete the conversation, twapp's files and the directory's .claude/ settings; keep the rest of the directory">
                 {deleting ? "Removing..." : "Remove Session"}
               </button>
               <button className="delete-everything" onClick={() => confirm(true)} disabled={deleting} title="Also delete the session's directory">
