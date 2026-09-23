@@ -156,6 +156,16 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Show or set the larger effort the session belongs to in the window
+    #[command(after_help = "Examples:\n  twapp effort                       Show this session's effort\n  twapp effort \"Payments integration\"\n  twapp effort --clear")]
+    Effort {
+        name: Option<String>,
+        /// Take the session out of its effort
+        #[arg(long, conflicts_with = "name")]
+        clear: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Stop the session and remove it from the window; its files stay
     Close {
         /// Target session directory (default: current directory)
@@ -506,6 +516,7 @@ pub fn run(cmd: Commands) -> i32 {
         },
         Commands::Lane { lane, dir } => cmd_lane(lane, dir.as_deref()),
         Commands::Close { dir } => cmd_close(dir.as_deref()),
+        Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),
         Commands::Delete { dir, everything, yes } => cmd_delete(dir.as_deref(), everything, yes),
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
@@ -1832,6 +1843,28 @@ fn ago(d: chrono::Duration) -> String {
     } else {
         format!("{}d", mins / (24 * 60))
     }
+}
+
+fn cmd_effort(name: Option<String>, clear: bool, dir: Option<&str>) -> i32 {
+    let key = target_dir(dir);
+    if name.is_some() || clear {
+        return match hub_link::set_effort(&key, name) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                1
+            }
+        };
+    }
+    let Some(view) = hosted_view(&key) else {
+        eprintln!("Error: the session is not open in the window");
+        return 1;
+    };
+    match view["effort"]["name"].as_str() {
+        Some(name) => println!("{}", name),
+        None => println!("No effort set."),
+    }
+    0
 }
 
 fn cmd_close(dir: Option<&str>) -> i32 {

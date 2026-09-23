@@ -18,7 +18,7 @@ import { markdownComponents } from "../components/markdown";
 import SessionLauncher from "../components/SessionLauncher";
 import DeleteSessionDialog from "../components/DeleteSessionDialog";
 import type { LauncherView } from "../types";
-import { byLane, hubApi, type Lane, type SessionView } from "./api";
+import { byLane, effortsOf, hubApi, type Lane, type SessionView } from "./api";
 import { TerminalManager } from "./terminals";
 import { useHub } from "./useHub";
 import SessionRail from "./SessionRail";
@@ -679,6 +679,8 @@ export default function Hub() {
     <SessionPanel
       key={current.key}
       session={current}
+      linkedEffort={effortsOf(sessions).get(current.key) ?? null}
+      knownEfforts={[...new Set(effortsOf(sessions).values())]}
       activeTab={activeTab}
       now={now}
       globalPrompts={globalPrompts}

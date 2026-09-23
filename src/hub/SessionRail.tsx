@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
-import { LANES, STATE_LABELS, headlineOf, sinceLabel, type Lane, type SessionView } from "./api";
+import { LANES, STATE_LABELS, effortsOf, headlineOf, sinceLabel, type Lane, type SessionView } from "./api";
 
 export function StateDot({ session }: { session: SessionView }) {
   const state = session.status.state;
@@ -44,6 +44,13 @@ interface Props {
   side: "left" | "right";
   /** Render only the header (the sidebar's toolbar) or only the list. */
   part?: "all" | "header" | "list";
+}
+
+/** Sessions' efforts, computed once per render of the list. */
+let effortCache: { sessions: SessionView[]; efforts: Map<string, string> } | null = null;
+function effortMap(sessions: SessionView[]) {
+  if (effortCache?.sessions !== sessions) effortCache = { sessions, efforts: effortsOf(sessions) };
+  return effortCache.efforts;
 }
 
 export default function SessionRail({
@@ -172,6 +179,7 @@ export default function SessionRail({
             <div className="rail-row-meta">
               {s.ticket_key && <span className="chip chip-mono">{s.ticket_key}</span>}
               <span className="rail-state">{STATE_LABELS[s.status.state]}</span>
+              {effortMap(sessions).get(s.key) && <span className="rail-effort">{effortMap(sessions).get(s.key)}</span>}
             </div>
           )}
           {headline && <div className={`rail-headline${compact ? " one-line" : ""}`}>{headline}</div>}

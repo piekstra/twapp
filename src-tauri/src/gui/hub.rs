@@ -75,6 +75,17 @@ struct PersistedHub {
     /// not offered again.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     dismissed_names: HashMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    efforts: HashMap<String, EffortInfo>,
+}
+
+/// The larger effort a session serves, set by the user or found by
+/// "Find related sessions".
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EffortInfo {
+    pub name: String,
+    /// `user` or `auto`. An effort the user set is never replaced by one found.
+    pub source: String,
 }
 
 /// How the user files a session: what they are focused on today, what they
@@ -152,6 +163,11 @@ pub struct SessionView {
     pub blockers: Vec<super::blockers::BlockerView>,
     /// Tangents the session took, and its main effort, as summaries saw them.
     pub yaks: crate::cli::yaks::YakLog,
+    pub effort: Option<EffortInfo>,
+    /// The linked ticket's epic, which groups sessions with no effort set.
+    pub epic: Option<String>,
+    /// The session id this session was forked from.
+    pub forked_from: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -250,6 +266,7 @@ struct HubSession {
     dismissed_names: Vec<String>,
     /// Blockers whose check output changed since the user last looked.
     blocker_updates: usize,
+    effort: Option<EffortInfo>,
 }
 
 impl HubSession {
@@ -268,6 +285,7 @@ impl HubSession {
             lane: LaneInfo::default(),
             dismissed_names: Vec::new(),
             blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
+            effort: None,
         }
     }
 
@@ -320,6 +338,12 @@ impl HubSession {
             name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
             blockers: super::blockers::open_blockers(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
+            effort: self.effort.clone(),
+            epic: std::fs::read_to_string(Path::new(&self.key).join(".twapp-ticket.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok())
+                .and_then(|t| t.epic),
+            forked_from: data.as_ref().and_then(|d| d.forked_from.clone()),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
@@ -391,6 +415,11 @@ impl HubInner {
                 .iter()
                 .filter(|s| !s.dismissed_names.is_empty())
                 .map(|s| (s.key.clone(), s.dismissed_names.clone()))
+                .collect(),
+            efforts: self
+                .sessions
+                .iter()
+                .filter_map(|s| s.effort.clone().map(|e| (s.key.clone(), e)))
                 .collect(),
         }
     }
@@ -620,6 +649,7 @@ impl Hub {
             session.last_viewed = persisted.last_viewed.get(&key).cloned();
             session.lane = persisted.lanes.get(&key).cloned().unwrap_or_default();
             session.dismissed_names = persisted.dismissed_names.get(&key).cloned().unwrap_or_default();
+            session.effort = persisted.efforts.get(&key).cloned();
             session.summary = self.summarizer.cached(&key);
             for info in live.iter().filter(|i| i.session_key == key && i.alive) {
                 if info.tab == MAIN_TAB {
@@ -1046,6 +1076,70 @@ impl Hub {
             },
             args,
         ))
+    }
+
+    /// Put a session in an effort, or take it out with `None`.
+    pub fn set_effort(&self, key: &str, name: Option<&str>) {
+        {
+            let mut inner = self.inner.lock();
+            let Some(session) = inner.session(key) else { return };
+            session.effort = name
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(|n| EffortInfo { name: n.to_string(), source: "user".into() });
+        }
+        self.persist();
+        self.emit_changed();
+    }
+
+    /// Group the hosted sessions by effort with one model call. Efforts the
+    /// user set stay; earlier found ones are replaced.
+    pub fn find_efforts(&self) -> Result<usize, String> {
+        let inputs: Vec<crate::summary::efforts::EffortInput> = {
+            let inner = self.inner.lock();
+            inner
+                .sessions
+                .iter()
+                .map(|s| {
+                    let view = s.view();
+                    crate::summary::efforts::EffortInput {
+                        key: s.key.clone(),
+                        name: view.name,
+                        ticket: view.ticket_key,
+                        epic: view.epic,
+                        main_effort: s
+                            .summary
+                            .as_ref()
+                            .and_then(|x| x.main_effort.clone())
+                            .or(view.yaks.main_effort),
+                        headline: s.summary.as_ref().map(|x| x.headline.clone()).unwrap_or_default(),
+                        user_effort: s.effort.as_ref().filter(|e| e.source == "user").map(|e| e.name.clone()),
+                    }
+                })
+                .collect()
+        };
+        let cfg = SummarizerConfig::from_config(std::env::var("PATH").ok());
+        let groups = crate::summary::efforts::find_efforts(&inputs, &cfg)?;
+        {
+            let mut inner = self.inner.lock();
+            for session in &mut inner.sessions {
+                if session.effort.as_ref().is_some_and(|e| e.source == "auto") {
+                    session.effort = None;
+                }
+            }
+            for (name, keys) in &groups {
+                for key in keys {
+                    if let Some(session) = inner.session(key) {
+                        if session.effort.is_none() {
+                            session.effort = Some(EffortInfo { name: name.clone(), source: "auto".into() });
+                        }
+                    }
+                }
+            }
+        }
+        self.persist();
+        self.emit_changed();
+        Ok(groups.len())
     }
 
     /// Stop offering a suggested name for a session.
@@ -1624,6 +1718,15 @@ impl Hub {
                     }
                 }
             }
+            Ok(HubRequest::SetEffort { key, name }) => {
+                let key = session_key(&key);
+                if self.is_hosted(&key) {
+                    self.set_effort(&key, name.as_deref());
+                    HubReply::ok(Some(key))
+                } else {
+                    HubReply::err("the session is not open in the window".to_string())
+                }
+            }
             Ok(HubRequest::Changed) => {
                 self.refresh_blockers();
                 HubReply::ok(None)
@@ -1762,6 +1865,8 @@ pub enum HubRequest {
     Close(String),
     /// Session files changed on disk (a rename from the CLI); redraw.
     Changed,
+    /// Put a hosted session in an effort; `None` takes it out.
+    SetEffort { key: String, name: Option<String> },
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1947,6 +2052,20 @@ pub async fn hub_close(key: String) -> Result<(), String> {
 pub fn hub_summarize(key: String) -> Result<(), String> {
     require_hub()?.summarize(&key, true);
     Ok(())
+}
+
+#[tauri::command]
+pub fn hub_set_effort(key: String, name: Option<String>) -> Result<(), String> {
+    require_hub()?.set_effort(&key, name.as_deref());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hub_find_efforts() -> Result<usize, String> {
+    let hub = require_hub()?;
+    tauri::async_runtime::spawn_blocking(move || hub.find_efforts())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

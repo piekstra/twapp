@@ -82,6 +82,11 @@ export interface SessionView {
   /** Open blockers recorded in the session directory. */
   blockers?: Blocker[];
   yaks?: YakLog;
+  /** The effort the user put the session in, or one "Find related" found. */
+  effort?: { name: string; source: "user" | "auto" } | null;
+  epic?: string | null;
+  /** The session id this one was forked from. */
+  forked_from?: string | null;
 }
 
 /** Something the session waits on outside itself (`twapp blocker`). */
@@ -136,6 +141,7 @@ export interface UsageReport {
   days: number;
   summaries: number;
   triages: number;
+  efforts?: number;
   failed: number;
   tokens: number;
   cost_usd: number;
@@ -167,6 +173,8 @@ export const hubApi = {
   reorder: (keys: string[]) => invoke("hub_reorder", { keys }),
   setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
+  setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),
+  findEfforts: () => invoke<number>("hub_find_efforts"),
   blockerCheck: (key: string, id: string, approve: boolean) => invoke("hub_blocker_check", { key, id, approve }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
@@ -229,4 +237,58 @@ export function sinceLabel(iso: string, now = Date.now()): string {
   const hours = Math.floor(mins / 60);
   if (hours < 48) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * The effort each session belongs to: the one the user set, else one "Find
+ * related sessions" found, else a group the sessions' own links make (the same
+ * epic or ticket, or one forked from the other). A link needs two sessions.
+ */
+export function effortsOf(sessions: SessionView[]): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const s of sessions) if (s.effort?.name) result.set(s.key, s.effort.name);
+
+  const loose = sessions.filter((s) => !result.has(s.key));
+  const parent = new Map(loose.map((s) => [s.key, s.key]));
+  const find = (k: string): string => {
+    while (parent.get(k) !== k) k = parent.get(k)!;
+    return k;
+  };
+  const join = (a: string, b: string) => parent.set(find(a), find(b));
+  const byId = new Map(sessions.filter((s) => s.session_id).map((s) => [s.session_id!, s]));
+  const label = new Map<string, string>();
+  const seen = new Map<string, string>();
+  for (const s of loose) {
+    for (const [kind, value] of [["epic", s.epic], ["ticket", s.ticket_key]] as const) {
+      if (!value) continue;
+      const id = `${kind}:${value}`;
+      const other = seen.get(id);
+      if (other) {
+        join(s.key, other);
+        label.set(s.key, value);
+        label.set(other, value);
+      } else seen.set(id, s.key);
+    }
+    const from = s.forked_from ? byId.get(s.forked_from) : undefined;
+    if (from) {
+      const name = result.get(from.key);
+      if (name) result.set(s.key, name);
+      else if (parent.has(from.key)) {
+        join(s.key, from.key);
+        label.set(from.key, label.get(from.key) ?? from.name);
+      }
+    }
+  }
+  const groups = new Map<string, SessionView[]>();
+  for (const s of loose) {
+    if (result.has(s.key)) continue;
+    const root = find(s.key);
+    groups.set(root, [...(groups.get(root) ?? []), s]);
+  }
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    const name = members.map((m) => label.get(m.key)).find(Boolean) ?? members[0].name;
+    for (const m of members) result.set(m.key, name);
+  }
+  return result;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byLane, headlineOf, railGroup, sinceLabel, type SessionView } from "./api";
+import { byLane, effortsOf, headlineOf, railGroup, sinceLabel, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
 import { fuzzyScore } from "./CommandPalette";
 
@@ -101,5 +101,38 @@ describe("lanes", () => {
       blockedLabel(session({ lane: "blocked", blocked_since: since, checked_at: "2026-09-23T10:00:00Z" }), now),
     ).toBe("blocked 3d · checked 2h ago");
     expect(blockedLabel(session({ lane: "priority", blocked_since: since }), now)).toBeNull();
+  });
+});
+
+describe("effortsOf", () => {
+  it("links sessions by epic, ticket and fork, and needs two to make a group", () => {
+    const list = [
+      session({ key: "a", name: "A", epic: "ABC-1 Payments" }),
+      session({ key: "b", name: "B", epic: "ABC-1 Payments" }),
+      session({ key: "c", name: "C", session_id: "c-id" }),
+      session({ key: "d", name: "D", forked_from: "c-id" }),
+      session({ key: "e", name: "E", ticket_key: "ABC-9" }),
+      session({ key: "f", name: "F" }),
+    ];
+    const efforts = effortsOf(list);
+    expect(efforts.get("a")).toBe("ABC-1 Payments");
+    expect(efforts.get("b")).toBe("ABC-1 Payments");
+    expect(efforts.get("c")).toBe("C");
+    expect(efforts.get("d")).toBe("C");
+    expect(efforts.has("e")).toBe(false);
+    expect(efforts.has("f")).toBe(false);
+  });
+
+  it("puts an effort the user set before any link, and a fork follows its parent's", () => {
+    const list = [
+      session({ key: "a", epic: "ABC-1 Payments", effort: { name: "Checkout revamp", source: "user" } }),
+      session({ key: "b", epic: "ABC-1 Payments" }),
+      session({ key: "c", session_id: "c-id", effort: { name: "Checkout revamp", source: "auto" } }),
+      session({ key: "d", forked_from: "c-id" }),
+    ];
+    const efforts = effortsOf(list);
+    expect(efforts.get("a")).toBe("Checkout revamp");
+    expect(efforts.has("b")).toBe(false);
+    expect(efforts.get("d")).toBe("Checkout revamp");
   });
 });
