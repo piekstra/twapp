@@ -132,6 +132,9 @@ impl Blocker {
                 self.latest_hash = Some(hash.clone());
                 match &self.seen_hash {
                     None => self.seen_hash = Some(hash),
+                    // A check still running when the blocker was resolved
+                    // leaves it resolved.
+                    Some(_) if self.status == BlockerStatus::Resolved => {}
                     Some(seen) if *seen != hash => {
                         if self.status == BlockerStatus::Waiting {
                             self.changed_at = Some(now);
@@ -184,22 +187,34 @@ pub fn path_in(dir: &Path) -> PathBuf {
     dir.join(FILE_NAME)
 }
 
+/// The session's blockers, for showing. A file that does not parse reads
+/// as none; changes go through `load_for_update`, which refuses it.
 pub fn load(dir: &Path) -> Vec<Blocker> {
-    std::fs::read_to_string(path_in(dir))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    load_for_update(dir).unwrap_or_default()
+}
+
+/// The session's blockers for a change to be saved back: no file is an empty
+/// list, a file that does not parse is an error, so a save never replaces
+/// blockers it could not read.
+pub fn load_for_update(dir: &Path) -> Result<Vec<Blocker>, String> {
+    let path = path_in(dir);
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("reading {}: {}", path.display(), e)),
+        Ok(c) if c.trim().is_empty() => Ok(Vec::new()),
+        Ok(c) => serde_json::from_str(&c).map_err(|e| format!("{} does not parse ({}); fix or remove it", path.display(), e)),
+    }
 }
 
 pub fn save(dir: &Path, blockers: &[Blocker]) -> Result<(), String> {
     let json = serde_json::to_string_pretty(blockers).map_err(|e| e.to_string())?;
-    std::fs::write(path_in(dir), json).map_err(|e| e.to_string())
+    super::fsutil::write_atomic(&path_in(dir), json).map_err(|e| e.to_string())
 }
 
 /// Change one blocker by id (or unique id prefix), re-reading the file first
 /// so a change another process made meanwhile is kept.
 pub fn update(dir: &Path, id: &str, change: impl FnOnce(&mut Blocker)) -> Result<Blocker, String> {
-    let mut blockers = load(dir);
+    let mut blockers = load_for_update(dir)?;
     let matches: Vec<usize> = blockers
         .iter()
         .enumerate()
@@ -290,55 +305,7 @@ pub fn approve(command: &str) -> Result<(), String> {
         approved.push(command.to_string());
     }
     let json = serde_json::to_string_pretty(&approved).map_err(|e| e.to_string())?;
-    std::fs::write(approved_path(), json).map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_changed_output_marks_the_blocker_until_seen() {
-        let mut b = Blocker::new("vendor reply");
-        b.record_check(Ok("status: open\n".into()));
-        assert_eq!(b.status, BlockerStatus::Waiting, "the first result is the baseline");
-        b.record_check(Ok("status: open   \n\n".into()));
-        assert_eq!(b.status, BlockerStatus::Waiting, "trailing whitespace is not a change");
-        b.record_check(Err("exited with 1".into()));
-        assert_eq!(b.status, BlockerStatus::Waiting, "a failed check changes nothing but its error");
-        assert!(b.check_error.is_some());
-        b.record_check(Ok("status: answered\n".into()));
-        assert_eq!(b.status, BlockerStatus::Updated);
-        assert!(b.check_error.is_none() && b.changed_at.is_some());
-        b.mark_seen();
-        assert_eq!(b.status, BlockerStatus::Waiting);
-        b.record_check(Ok("status: answered\n".into()));
-        assert_eq!(b.status, BlockerStatus::Waiting, "the seen output is the new baseline");
-    }
-
-    #[test]
-    fn a_check_runs_in_the_session_directory_and_reports_failures() {
-        let dir = std::env::temp_dir();
-        assert_eq!(run_check("printf ok", &dir).unwrap(), "ok");
-        assert!(run_check("echo nope >&2; exit 3", &dir).unwrap_err().contains("exited with 3: nope"));
-    }
-
-    #[test]
-    fn updates_address_a_blocker_by_id_prefix_and_keep_the_others() {
-        let dir = std::env::temp_dir().join(format!("twapp-blockers-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut a = Blocker::new("a");
-        a.id = "aaaa1111".into();
-        let mut b = Blocker::new("b");
-        b.id = "bbbb2222".into();
-        save(&dir, &[a, b]).unwrap();
-        update(&dir, "bbbb", |b| b.status = BlockerStatus::Resolved).unwrap();
-        let loaded = load(&dir);
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[1].status, BlockerStatus::Resolved);
-        assert!(update(&dir, "zz", |_| {}).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    super::fsutil::write_atomic(&approved_path(), json).map_err(|e| e.to_string())
 }
 
 // --- CLI ---------------------------------------------------------------------
@@ -395,7 +362,10 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             blocker.reference = reference;
             blocker.check = check;
             let id = blocker.id.clone();
-            let mut all = load(&dir);
+            let mut all = match load_for_update(&dir) {
+                Ok(all) => all,
+                Err(e) => return finish(Err(e)),
+            };
             all.push(blocker);
             let code = finish(save(&dir, &all));
             if code == 0 {
@@ -493,7 +463,10 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
         }
         C::Remove { id, dir } => {
             let dir = session_dir(dir.as_deref());
-            let mut all = load(&dir);
+            let mut all = match load_for_update(&dir) {
+                Ok(all) => all,
+                Err(e) => return finish(Err(e)),
+            };
             let before = all.len();
             all.retain(|b| !b.id.starts_with(&id));
             match before - all.len() {
@@ -502,5 +475,69 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 _ => finish(Err(format!("{} matches more than one blocker", id))),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_changed_output_marks_the_blocker_until_seen() {
+        let mut b = Blocker::new("vendor reply");
+        b.record_check(Ok("status: open\n".into()));
+        assert_eq!(b.status, BlockerStatus::Waiting, "the first result is the baseline");
+        b.record_check(Ok("status: open   \n\n".into()));
+        assert_eq!(b.status, BlockerStatus::Waiting, "trailing whitespace is not a change");
+        b.record_check(Err("exited with 1".into()));
+        assert_eq!(b.status, BlockerStatus::Waiting, "a failed check changes nothing but its error");
+        assert!(b.check_error.is_some());
+        b.record_check(Ok("status: answered\n".into()));
+        assert_eq!(b.status, BlockerStatus::Updated);
+        assert!(b.check_error.is_none() && b.changed_at.is_some());
+        b.mark_seen();
+        assert_eq!(b.status, BlockerStatus::Waiting);
+        b.resolve(None);
+        b.record_check(Ok("status: reopened by a late check\n".into()));
+        assert_eq!(b.status, BlockerStatus::Resolved);
+        b.status = BlockerStatus::Waiting;
+        b.record_check(Ok("status: answered\n".into()));
+        assert_eq!(b.status, BlockerStatus::Waiting, "the seen output is the new baseline");
+    }
+
+    #[test]
+    fn a_check_runs_in_the_session_directory_and_reports_failures() {
+        let dir = std::env::temp_dir();
+        assert_eq!(run_check("printf ok", &dir).unwrap(), "ok");
+        assert!(run_check("echo nope >&2; exit 3", &dir).unwrap_err().contains("exited with 3: nope"));
+    }
+
+    #[test]
+    fn a_blocker_file_that_does_not_parse_is_never_saved_over() {
+        let dir = std::env::temp_dir().join(format!("twapp-blockers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(path_in(&dir), "[{\"id\": \"a\", \"title\": \"half-writ").unwrap();
+        assert!(load_for_update(&dir).is_err());
+        assert!(load(&dir).is_empty(), "showing still works");
+        assert!(update(&dir, "a", |_| {}).is_err());
+        assert!(std::fs::read_to_string(path_in(&dir)).unwrap().contains("half-writ"), "the file is left for the user");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn updates_address_a_blocker_by_id_prefix_and_keep_the_others() {
+        let dir = std::env::temp_dir().join(format!("twapp-blockers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut a = Blocker::new("a");
+        a.id = "aaaa1111".into();
+        let mut b = Blocker::new("b");
+        b.id = "bbbb2222".into();
+        save(&dir, &[a, b]).unwrap();
+        update(&dir, "bbbb", |b| b.status = BlockerStatus::Resolved).unwrap();
+        let loaded = load(&dir);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[1].status, BlockerStatus::Resolved);
+        assert!(update(&dir, "zz", |_| {}).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

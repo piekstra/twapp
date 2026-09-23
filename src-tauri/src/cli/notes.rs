@@ -53,7 +53,7 @@ fn load_notes(path: &Path) -> Vec<Note> {
 fn save_notes(path: &Path, notes: &[Note]) -> Result<(), String> {
     let json =
         serde_json::to_string_pretty(notes).map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(path, json).map_err(|e| format!("Failed to write: {}", e))
+    super::fsutil::write_atomic(path, json).map_err(|e| format!("Failed to write: {}", e))
 }
 
 pub fn cmd_note_add(text: &str, dir: Option<&str>) -> i32 {
@@ -75,8 +75,8 @@ pub fn cmd_note_add(text: &str, dir: Option<&str>) -> i32 {
         return 1;
     }
 
-    let preview = if text.len() > 80 {
-        format!("{}...", &text[..80])
+    let preview = if text.chars().count() > 80 {
+        format!("{}...", text.chars().take(80).collect::<String>())
     } else {
         text.to_string()
     };
@@ -98,12 +98,12 @@ pub fn cmd_note_list(dir: Option<&str>) -> i32 {
         let ts = chrono::DateTime::from_timestamp_millis(note.timestamp as i64)
             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "?".to_string());
-        let preview = if note.text.len() > 100 {
-            format!("{}...", &note.text[..100])
+        let preview = if note.text.chars().count() > 100 {
+            format!("{}...", note.text.chars().take(100).collect::<String>())
         } else {
             note.text.clone()
         };
-        println!("  [{}] {}  {}", &note.id[..8], ts, preview);
+        println!("  [{}] {}  {}", note.id.get(..8).unwrap_or(&note.id), ts, preview);
     }
     0
 }
@@ -146,8 +146,8 @@ pub fn cmd_note_remove(note_id: &str, dir: Option<&str>) -> i32 {
         return 1;
     }
 
-    let preview = if removed_text.len() > 80 {
-        format!("{}...", &removed_text[..80])
+    let preview = if removed_text.chars().count() > 80 {
+        format!("{}...", removed_text.chars().take(80).collect::<String>())
     } else {
         removed_text
     };

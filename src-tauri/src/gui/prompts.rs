@@ -21,6 +21,6 @@ pub fn save_global_prompts(data: serde_json::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(&data).unwrap())
+    crate::cli::fsutil::write_atomic(&path, serde_json::to_string_pretty(&data).unwrap())
         .map_err(|e| e.to_string())
 }

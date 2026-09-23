@@ -29,6 +29,6 @@ pub fn load_notes(directory: String) -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn save_notes(directory: String, notes: serde_json::Value) -> Result<(), String> {
     let path = resolve_notes_path(&directory);
-    std::fs::write(&path, serde_json::to_string_pretty(&notes).unwrap())
+    crate::cli::fsutil::write_atomic(&path, serde_json::to_string_pretty(&notes).unwrap())
         .map_err(|e| e.to_string())
 }

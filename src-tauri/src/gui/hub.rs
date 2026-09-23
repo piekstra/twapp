@@ -2040,7 +2040,7 @@ pub fn hub_blocker_set(key: String, id: String, action: String) -> Result<(), St
         "seen" => crate::cli::blockers::update(dir, &id, crate::cli::blockers::Blocker::mark_seen).map(|_| ())?,
         "resolve" => crate::cli::blockers::update(dir, &id, |b| b.resolve(Some("user"))).map(|_| ())?,
         "remove" => {
-            let mut all = crate::cli::blockers::load(dir);
+            let mut all = crate::cli::blockers::load_for_update(dir)?;
             all.retain(|b| b.id != id);
             crate::cli::blockers::save(dir, &all)?
         }

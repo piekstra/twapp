@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::session::AgentProvider;
 
@@ -71,6 +71,17 @@ pub fn get_theme_preference() -> String {
     "system".to_string()
 }
 
+/// The config for a change to be written back. A file that does not parse
+/// is refused rather than treated as empty, which would replace the user's
+/// whole config with the one setting being saved.
+fn parse_for_update(path: &Path, content: &str) -> Result<serde_yaml::Value, String> {
+    if content.trim().is_empty() {
+        return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    }
+    serde_yaml::from_str::<serde_yaml::Value>(content)
+        .map_err(|e| format!("{} does not parse ({}); fix it before changing settings", path.display(), e))
+}
+
 pub fn set_theme_preference(mode: &str) -> Result<(), String> {
     let path = config_file();
     if let Some(parent) = path.parent() {
@@ -79,8 +90,7 @@ pub fn set_theme_preference(mode: &str) -> Result<(), String> {
 
     let mut yaml = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        parse_for_update(&path, &content)?
     } else {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     };
@@ -92,7 +102,7 @@ pub fn set_theme_preference(mode: &str) -> Result<(), String> {
         );
     }
 
-    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+    super::fsutil::write_atomic(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
 
@@ -239,8 +249,7 @@ pub fn set_agent_provider_preference(provider: AgentProvider) -> Result<(), Stri
 
     let mut yaml = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        parse_for_update(&path, &content)?
     } else {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     };
@@ -252,7 +261,7 @@ pub fn set_agent_provider_preference(provider: AgentProvider) -> Result<(), Stri
         );
     }
 
-    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+    super::fsutil::write_atomic(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
 
@@ -264,8 +273,7 @@ pub fn set_session_color_preference(mode: &str) -> Result<(), String> {
 
     let mut yaml = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        parse_for_update(&path, &content)?
     } else {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     };
@@ -277,7 +285,7 @@ pub fn set_session_color_preference(mode: &str) -> Result<(), String> {
         );
     }
 
-    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+    super::fsutil::write_atomic(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
 
@@ -295,8 +303,7 @@ pub fn save_global_config(
 
     let mut yaml = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_yaml::from_str::<serde_yaml::Value>(&content)
-            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        parse_for_update(&path, &content)?
     } else {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     };
@@ -349,7 +356,7 @@ pub fn save_global_config(
         }
     }
 
-    std::fs::write(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
+    super::fsutil::write_atomic(&path, serde_yaml::to_string(&yaml).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
 
@@ -453,5 +460,18 @@ mod summaries_settings_tests {
         assert_eq!(parse_summaries_settings(&yaml), (None, None));
         let yaml = serde_yaml::from_str("summaries:\n  provider: \"  \"\n").unwrap();
         assert_eq!(parse_summaries_settings(&yaml), (None, None));
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn a_config_that_does_not_parse_is_not_replaced() {
+        let path = Path::new("/tmp/config.yaml");
+        assert!(parse_for_update(path, "work_directory: ~/Dev\ntheme: [broken").is_err());
+        assert!(parse_for_update(path, "   \n").unwrap().is_mapping());
+        assert!(parse_for_update(path, "theme: dark\n").unwrap().is_mapping());
     }
 }
