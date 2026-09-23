@@ -3138,3 +3138,133 @@ kbd {
 .blocker-excerpt .text-link {
   font: inherit;
 }
+
+/* --- Blocker detail -------------------------------------------------------- */
+
+.blocker-detail-panel {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+}
+
+.blocker-detail-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.blocker-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.blocker-facts dt {
+  color: var(--text-3);
+}
+
+.blocker-facts dd {
+  margin: 0;
+  color: var(--text-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.blocker-detail-code {
+  font: 11.5px var(--font-mono, Menlo, monospace);
+  word-break: break-all;
+}
+
+.blocker-note-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.blocker-note-box textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  font: 12.5px var(--font-ui);
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface-0);
+  color: var(--text-1);
+  box-sizing: border-box;
+}
+
+.blocker-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blocker-event {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 10px;
+}
+
+.blocker-event.kind-note {
+  border-left-color: var(--accent);
+}
+
+.blocker-event.kind-check_changed {
+  border-left-color: var(--viz-tangent, var(--state-your-turn));
+}
+
+.blocker-event-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.blocker-event-kind {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.blocker-event-by,
+.blocker-event-at {
+  color: var(--text-3);
+}
+
+.blocker-event-at {
+  margin-left: auto;
+}
+
+.blocker-event-text {
+  font-size: 12.5px;
+  color: var(--text-1);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.blocker-last-note {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.35;
+  cursor: pointer;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.note-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
