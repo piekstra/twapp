@@ -2873,3 +2873,219 @@ kbd {
 .new-session-field .segmented {
   align-self: flex-start;
 }
+
+/* --- Yak report ------------------------------------------------------------ */
+
+:root {
+  --viz-main: #3867f5;
+  --viz-tangent: #c46f1c;
+}
+
+:root.dark {
+  --viz-main: #5b7cf0;
+  --viz-tangent: #c77a2c;
+}
+
+.yak-report {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.yak-report-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.yak-report-note {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.45;
+  max-width: 640px;
+}
+
+.yak-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.yak-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface-raised);
+}
+
+.yak-tile-value {
+  font: 600 22px var(--font-ui);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.yak-tile-of {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.yak-tile-label {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.yak-chart {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface-raised);
+  padding: 12px 14px 8px;
+}
+
+.yak-chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.yak-chart-unit {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.yak-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.yak-swatch.main,
+.yak-bar-seg.main {
+  background: var(--viz-main);
+}
+
+.yak-swatch.tangent,
+.yak-bar-seg.tangent {
+  background: var(--viz-tangent);
+}
+
+.yak-chart-plot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.yak-bar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  min-width: 2px;
+  cursor: default;
+}
+
+.yak-bar.hover {
+  background: color-mix(in srgb, var(--text-1) 5%, transparent);
+}
+
+.yak-bar-seg {
+  display: block;
+  width: 100%;
+  max-width: 28px;
+  margin: 0 auto;
+}
+
+.yak-bar-seg:last-child {
+  border-radius: 4px 4px 0 0;
+}
+
+.yak-tooltip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: var(--radius-s);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  color: var(--text-1);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.yak-tooltip .muted {
+  color: var(--text-3);
+}
+
+.yak-chart-axis {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.yak-chart-axis span {
+  flex: 1;
+  min-width: 2px;
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.yak-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.yak-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.yak-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-3);
+  font-size: 11px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.yak-table td {
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  color: var(--text-1);
+}
+
+.yak-table td.num,
+.yak-table th:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.yak-table-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+}

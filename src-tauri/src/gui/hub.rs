@@ -2074,6 +2074,31 @@ pub fn hub_summarize(key: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Tangents across every session on disk and every hosted session over the
+/// last `days` days.
+#[tauri::command]
+pub async fn hub_yak_report(days: u32) -> Result<crate::cli::yaks::YakReport, String> {
+    let hosted: Vec<String> = hub().map(|h| h.hosted_keys()).unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions: Vec<(PathBuf, String)> = Vec::new();
+        if let Ok(cfg) = crate::cli::config::GlobalConfig::load() {
+            crate::cli::session::visit_sessions(&cfg.work_directory, 0, &mut |data, path| {
+                sessions.push((path, data.name));
+            });
+        }
+        for key in hosted {
+            let path = PathBuf::from(&key);
+            if !sessions.iter().any(|(p, _)| *p == path) {
+                let name = read_session(&path).map(|d| d.name).unwrap_or_else(|_| key.clone());
+                sessions.push((path, name));
+            }
+        }
+        Ok(crate::cli::yaks::report(&sessions, days.clamp(1, 366)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn hub_set_effort(key: String, name: Option<String>) -> Result<(), String> {
     require_hub()?.set_effort(&key, name.as_deref());

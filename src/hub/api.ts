@@ -177,6 +177,7 @@ export const hubApi = {
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
   setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),
   findEfforts: () => invoke<number>("hub_find_efforts"),
+  yakReport: (days: number) => invoke<YakReport>("hub_yak_report", { days }),
   blockerCheck: (key: string, id: string, approve: boolean) => invoke("hub_blocker_check", { key, id, approve }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
@@ -293,4 +294,25 @@ export function effortsOf(sessions: SessionView[]): Map<string, string> {
     for (const m of members) result.set(m.key, name);
   }
   return result;
+}
+
+export interface DayStat {
+  summaries: number;
+  tangent_summaries: number;
+  bytes: number;
+  tangent_bytes: number;
+}
+
+export interface YakReport {
+  days: [string, DayStat][];
+  total: DayStat;
+  sessions: { key: string; name: string; main_effort: string | null; stat: DayStat; yaks_started: number }[];
+  yaks: { key: string; session: string; title: string; status: Yak["status"]; first_seen: string; sightings: number; transcript_bytes: number }[];
+  first_day: string | null;
+}
+
+export function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
 }

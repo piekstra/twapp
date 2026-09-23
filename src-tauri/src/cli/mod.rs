@@ -133,6 +133,12 @@ pub enum Commands {
         json: bool,
         #[arg(long)]
         dir: Option<String>,
+        /// Report across every session in the work directory instead
+        #[arg(long)]
+        all: bool,
+        /// Days the --all report covers
+        #[arg(long, default_value_t = 7)]
+        days: u32,
     },
     /// Install the twapp skill for agents (~/.claude/skills/twapp, and
     /// ~/.codex/skills/twapp when Codex is installed)
@@ -509,7 +515,13 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
         Commands::InstallSkill => cmd_install_skill(),
-        Commands::Yaks { json, dir } => yaks::cmd_yaks(dir.as_deref(), json),
+        Commands::Yaks { json, dir, all, days } => {
+            if all {
+                yaks::cmd_yak_report(days, json)
+            } else {
+                yaks::cmd_yaks(dir.as_deref(), json)
+            }
+        }
         Commands::Rename { name, suggested } => match (name, suggested) {
             (Some(name), false) => cmd_rename(&name),
             _ => cmd_rename_suggested(),

@@ -158,7 +158,10 @@ itself.
   then the recap, then the opening prompt. Each model summary is folded into
   `.twapp-yaks.json`: a tangent seen again is the same yak; one the work left
   unfinished is set aside; one reported done is shaved; transcript growth
-  since the previous summary counts toward the current tangent.
+  since the previous summary counts toward the current tangent. The log also keeps, per local day,
+  the number of summaries and the transcript growth, split by whether the
+  summary found a tangent; the Yaks report (`hub_yak_report`) sums those days
+  across every session on disk and every hosted session.
 - **Name suggestions.** The same call returns a suggested name when the
   session's name no longer describes its work. The panel offers it with Rename
   and Dismiss; a suggestion matching the current name or one the user
