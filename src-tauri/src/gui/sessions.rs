@@ -1,4 +1,4 @@
-use super::tickets::{normalize_jtk_ticket, read_session_id};
+use super::tickets::read_session_id;
 use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
@@ -1253,40 +1253,20 @@ pub async fn fork_session(
 
     // If ticket provided, fetch and set up directory
     if let Some(ref key) = ticket_key {
-        // Fetch ticket via jtk
-        let output = super::shell_env::run_tool(
-            &super::shell_env::TOOL_JTK,
-            &["issues", "get", key, "-o", "json"],
-        )
+        let requested = key.clone();
+        let ticket = super::tickets::fetch_blocking(move || {
+            crate::cli::ticket::fetch_ticket(&requested, false)
+        })
         .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("jtk failed: {}", stderr));
-        }
-
-        let raw: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("Failed to parse jtk output: {}", e))?;
-        let data = if raw.is_array() {
-            raw.as_array()
-                .and_then(|a| a.first())
-                .cloned()
-                .unwrap_or(serde_json::Value::Null)
-        } else {
-            raw
-        };
-
-        let ticket = normalize_jtk_ticket(&data, key);
-        let ticket_key_str = ticket["key"].as_str().unwrap_or(key);
-        let ticket_title = ticket["title"].as_str().unwrap_or("");
-        window_name = crate::cli::format_session_name(ticket_key_str, ticket_title);
+        let ticket_key_str = ticket.key.as_str();
+        window_name = crate::cli::format_session_name(ticket_key_str, &ticket.title);
         ticket_key_for_session = Some(ticket_key_str.to_string());
 
         // Create work directory under parent of current cwd
         let parent = std::path::Path::new(&work_dir)
             .parent()
             .unwrap_or(std::path::Path::new(&work_dir));
-        let dir_name = ticket_key_str.replace('/', "-");
+        let dir_name = ticket_key_str.replace(['/', '#'], "-");
         let new_dir = parent.join(&dir_name);
         std::fs::create_dir_all(&new_dir)
             .map_err(|e| format!("Failed to create directory: {}", e))?;

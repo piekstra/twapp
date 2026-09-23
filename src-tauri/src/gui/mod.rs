@@ -15,7 +15,7 @@ pub mod timeline;
 pub mod title;
 pub mod types;
 
-pub use tickets::{extract_adf_text, truncate_str};
+pub use tickets::truncate_str;
 pub use types::GuiArgs;
 
 use parking_lot::Mutex;

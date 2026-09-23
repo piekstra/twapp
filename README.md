@@ -86,6 +86,8 @@ twapp ticket link owner/repo#42        # link a GitHub issue
 twapp ticket create "Fix the thing"    # create a new Jira ticket
 ```
 
+The CLI and the sidebar's Link box accept the same input: `owner/repo#42` (or `#42` with `github_repo` set) is a GitHub issue, a bare number gets the `jira_project` prefix, and anything else is used as a Jira key. The "Open in Jira" link uses `jira_base_url` when set, otherwise the site jtk is configured for (`jtk config show`).
+
 ### Terminal Tabs
 
 Need to run a quick `git log`, check a port, or tail a log without leaving your session? Open a tab.
@@ -285,7 +287,7 @@ Ticket integration requires external CLIs:
 | Tool | Used for | Tested with |
 |------|----------|-------------|
 | [gh](https://cli.github.com/) | GitHub issue linking | v2.86+ |
-| [jtk](https://github.com/open-cli-collective/atlassian-cli) | Jira ticket linking/creation | v0.2+ |
+| [jtk](https://github.com/open-cli-collective/atlassian-cli) | Jira ticket linking/creation | v1.3+ (text output) |
 
 Everything else twapp uses (`curl`, `tar`, `codesign`, etc.) ships with macOS.
 
@@ -1265,6 +1267,7 @@ session_color: random  # random | hex (e.g. "#ffe0e0")
 defaults:
   work_directory: ~/projects
   jira_project: PROJ
+  jira_base_url: https://example.atlassian.net  # optional; defaults to jtk's site
   github_repo: owner/repo
   agent_providers:     # harnesses offered for each new session
     - claude

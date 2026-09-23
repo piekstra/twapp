@@ -12,6 +12,7 @@ struct ConfigYaml {
 struct ConfigDefaults {
     work_directory: Option<String>,
     jira_project: Option<String>,
+    jira_base_url: Option<String>,
     github_repo: Option<String>,
     agent_provider: Option<AgentProvider>,
     agent_providers: Option<Vec<AgentProvider>>,
@@ -21,6 +22,7 @@ struct ConfigDefaults {
 pub struct GlobalConfig {
     pub work_directory: PathBuf,
     pub jira_project: Option<String>,
+    pub jira_base_url: Option<String>,
     pub github_repo: Option<String>,
     pub agent_provider: AgentProvider,
     pub agent_providers: Vec<AgentProvider>,
@@ -484,6 +486,7 @@ impl GlobalConfig {
             return Ok(Self {
                 work_directory: home_dir().join("Dev"),
                 jira_project: None,
+                jira_base_url: None,
                 github_repo: None,
                 agent_provider: AgentProvider::Claude,
                 agent_providers: vec![AgentProvider::Claude],
@@ -498,6 +501,7 @@ impl GlobalConfig {
         let defaults = yaml.defaults.unwrap_or(ConfigDefaults {
             work_directory: None,
             jira_project: None,
+            jira_base_url: None,
             github_repo: None,
             agent_provider: None,
             agent_providers: None,
@@ -514,6 +518,10 @@ impl GlobalConfig {
         Ok(Self {
             work_directory,
             jira_project: defaults.jira_project,
+            jira_base_url: defaults
+                .jira_base_url
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty()),
             github_repo: defaults.github_repo,
             agent_provider,
             agent_providers,
