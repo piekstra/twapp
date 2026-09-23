@@ -61,7 +61,9 @@ function SessionLauncher({
   const [homeDir, setHomeDir] = useState("");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // Keyed by directory: a provider session id can be empty.
   const [launching, setLaunching] = useState<string | null>(null);
+  const [launchError, setLaunchError] = useState<{ directory: string; message: string } | null>(null);
   const [themeMode, setThemeMode] = useState<"light" | "dark" | "system">("system");
   const [scanning, setScanning] = useState(true);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
@@ -355,12 +357,14 @@ function SessionLauncher({
   }, [filteredSessions, sortMode]);
 
   const handleLaunch = async (session: LauncherSession) => {
-    setLaunching(session.session_id);
+    if (launching) return;
+    setLaunching(session.directory);
+    setLaunchError(null);
     try {
       const key = await invoke<string>("hub_open", { directory: session.directory });
       onOpened(key);
     } catch (e) {
-      console.error("Failed to launch:", e);
+      setLaunchError({ directory: session.directory, message: String(e) });
     } finally {
       setLaunching(null);
     }
@@ -523,7 +527,7 @@ function SessionLauncher({
   const handleCreateSession = async () => {
     const ticket = newSessionTicket.trim();
     const name = newSessionName.trim();
-    if (!ticket && !name) return;
+    if ((!ticket && !name) || creating) return;
     setCreating(true);
     setCreateError(null);
     try {
@@ -1057,7 +1061,7 @@ function SessionLauncher({
     const classes = [
       "launcher-session",
       session.is_running ? "running" : "",
-      launching === session.session_id ? "launching" : "",
+      launching === session.directory ? "launching" : "",
     ].filter(Boolean).join(" ");
     return (
       <div
@@ -1087,6 +1091,11 @@ function SessionLauncher({
                 {session.is_running && (
                   <span className="launcher-running-badge">Running</span>
                 )}
+                {launching === session.directory && (
+                  <span className="launcher-opening">
+                    <span className="starting-spinner" /> Opening
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -1108,6 +1117,9 @@ function SessionLauncher({
             )}
             <span className="launcher-path">{shortenPath(session.directory, homeDir)}</span>
           </div>
+          {launchError?.directory === session.directory && (
+            <div className="launcher-launch-error">Could not open: {launchError.message}</div>
+          )}
         </div>
         <div className="launcher-session-right">
           <span className="launcher-time">

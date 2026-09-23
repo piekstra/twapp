@@ -236,6 +236,20 @@ return). Its attention is muted except for `needs_approval`, so it stays out of
 `⌘J`, the attention count and the dock badge while it waits on someone else.
 Only the user moves a session out of Blocked.
 
+## Starting feedback
+
+Resuming a session can take seconds before the harness draws: the resume
+arguments are rebuilt from the session file and transcripts, and the harness
+loads its conversation. A shell tab is covered by a "Starting" card with a
+running count of seconds from the moment it starts until its first output
+byte. The main tab keeps the card until the status engine leaves `starting`,
+because its first bytes come from the login shell `ptyd` types the harness
+command into. The card fades in only after a short delay, so a tab that draws
+at once never shows it. Keys typed before the
+PTY exists are dropped, not queued. Opening a session that is not yet in the
+window (the palette, the library) shows "Opening" until the backend returns
+it, and neither path runs twice on repeated Enter.
+
 ## Rendering cost
 
 Every hosted session keeps an xterm instance so its screen and scrollback

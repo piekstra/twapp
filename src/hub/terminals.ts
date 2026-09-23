@@ -19,6 +19,8 @@ interface HostedTerminal {
   starting: Promise<void> | null;
   /** The PTY exited; the screen stays, and Enter starts it again. */
   exited: boolean;
+  /** Started, but nothing has arrived to draw yet. */
+  waiting: boolean;
   /** The last start failure shown, so the event and the rejected call that
    * both report it print it once. */
   lastFailure?: { error: string; at: number };
@@ -59,10 +61,28 @@ export class TerminalManager {
   private openFile: FileOpener = () => {};
   private resizeObserver: ResizeObserver;
   private fitTimer: ReturnType<typeof setTimeout> | null = null;
+  private waitingListeners = new Set<() => void>();
 
   constructor(theme: ITheme) {
     this.theme = theme;
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit());
+  }
+
+  /** Whether a tab started and has shown nothing yet. */
+  isWaiting(key: string, tab: string): boolean {
+    return this.terminals.get(id(key, tab))?.waiting ?? false;
+  }
+
+  /** Called whenever a tab starts or stops waiting for its first output. */
+  onWaitingChange(listener: () => void): () => void {
+    this.waitingListeners.add(listener);
+    return () => this.waitingListeners.delete(listener);
+  }
+
+  private setWaiting(hosted: HostedTerminal, waiting: boolean) {
+    if (hosted.waiting === waiting) return;
+    hosted.waiting = waiting;
+    for (const listener of this.waitingListeners) listener();
   }
 
   setFileOpener(fn: FileOpener) {
@@ -164,7 +184,7 @@ export class TerminalManager {
       hubApi.resize(key, tab, rows, cols).catch(console.error);
     });
 
-    const hosted: HostedTerminal = { key, tab, term, fit, element, started: false, starting: null, exited: false };
+    const hosted: HostedTerminal = { key, tab, term, fit, element, started: false, starting: null, exited: false, waiting: false };
     this.terminals.set(id(key, tab), hosted);
     return hosted;
   }
@@ -202,6 +222,7 @@ export class TerminalManager {
   }
 
   private begin(hosted: HostedTerminal) {
+    this.setWaiting(hosted, true);
     hosted.starting = this.start(hosted).finally(() => {
       hosted.starting = null;
     });
@@ -219,6 +240,7 @@ export class TerminalManager {
     if (!hosted) return;
     hosted.started = false;
     hosted.exited = true;
+    this.setWaiting(hosted, false);
     hosted.term.write("\r\n\x1b[2m[The terminal exited. Press Enter to start it again.]\x1b[0m\r\n");
   }
 
@@ -228,6 +250,7 @@ export class TerminalManager {
     if (!hosted) return;
     hosted.started = false;
     hosted.exited = true;
+    this.setWaiting(hosted, false);
     const now = Date.now();
     if (hosted.lastFailure && hosted.lastFailure.error === error && now - hosted.lastFailure.at < 5000) return;
     hosted.lastFailure = { error, at: now };
@@ -246,6 +269,7 @@ export class TerminalManager {
         return;
       }
       const data = toBytes(message);
+      if (hosted.waiting && (typeof data === "string" ? data.length : data.byteLength) > 0) this.setWaiting(hosted, false);
       const term = hosted.term;
       const buf = term.buffer.active;
       if (buf.viewportY >= buf.baseY) {
@@ -286,6 +310,7 @@ export class TerminalManager {
     if (!hosted) return;
     hosted.started = false;
     hosted.exited = false;
+    this.setWaiting(hosted, false);
     hosted.term.reset();
   }
 
@@ -296,6 +321,7 @@ export class TerminalManager {
         this.dropWebgl();
         this.active = null;
       }
+      this.setWaiting(hosted, false);
       hosted.term.dispose();
       hosted.element.remove();
       this.terminals.delete(k);
