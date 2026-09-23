@@ -65,6 +65,10 @@ struct PersistedHub {
     selected: Option<String>,
     #[serde(default)]
     last_viewed: HashMap<String, String>,
+    /// Sessions already adopted from older per-session windows, so a session
+    /// the user closed here is not added back while its old window runs.
+    #[serde(default)]
+    adopted: Vec<String>,
 }
 
 fn load_persisted() -> PersistedHub {
@@ -281,6 +285,7 @@ struct HubInner {
     pty_index: HashMap<u64, (String, String)>,
     tab_counter: u32,
     host_error: Option<String>,
+    adopted: Vec<String>,
 }
 
 impl HubInner {
@@ -302,6 +307,7 @@ impl HubInner {
                 .iter()
                 .filter_map(|s| s.last_viewed.clone().map(|v| (s.key.clone(), v)))
                 .collect(),
+            adopted: self.adopted.clone(),
         }
     }
 
@@ -482,19 +488,21 @@ impl Hub {
     }
 
     fn restore(&self) {
-        let first_run = !hub_state_path().exists();
         let mut persisted = load_persisted();
-        // The first run of the single window adopts the sessions open in the
-        // per-session windows of older versions, so they appear in the rail
-        // and resume here once their old window is closed.
-        if first_run {
-            for dir in crate::cli::app_bundle::running_legacy_session_dirs() {
-                let key = session_key(&dir);
-                if !persisted.order.contains(&key) {
-                    persisted.order.push(key);
-                }
+        // Sessions still open in the per-session windows of older versions
+        // join the rail once each, and resume here after their old window
+        // is closed.
+        for dir in crate::cli::app_bundle::running_legacy_session_dirs() {
+            let key = session_key(&dir);
+            if persisted.adopted.contains(&key) {
+                continue;
+            }
+            persisted.adopted.push(key.clone());
+            if !persisted.order.contains(&key) {
+                persisted.order.push(key);
             }
         }
+        self.inner.lock().adopted = persisted.adopted.clone();
         let live = self
             .ptyd()
             .and_then(|c| c.list().map_err(|e| e.to_string()))

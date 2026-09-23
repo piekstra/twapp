@@ -56,10 +56,10 @@ export interface PromptStore {
 
 export function getLightTheme(bg?: string) {
   return {
-    background: bg ?? "#f5f5f7",
-    foreground: "#1d1d1f",
-    cursor: "#1d1d1f",
-    cursorAccent: bg ?? "#f5f5f7",
+    background: bg ?? "#ffffff",
+    foreground: "#1f1f24",
+    cursor: "#1f1f24",
+    cursorAccent: bg ?? "#ffffff",
     selectionBackground: "#b4d7ff",
     black: "#1d1d1f",
     red: "#c41a16",
@@ -82,10 +82,10 @@ export function getLightTheme(bg?: string) {
 
 export function getDarkTheme(bg?: string) {
   return {
-    background: bg ?? "#1a1a2e",
-    foreground: "#eee",
-    cursor: "#eee",
-    cursorAccent: bg ?? "#1a1a2e",
+    background: bg ?? "#111217",
+    foreground: "#e6e6ec",
+    cursor: "#e6e6ec",
+    cursorAccent: bg ?? "#111217",
     selectionBackground: "#3a3a5e",
     black: "#1a1a2e",
     red: "#ff6b6b",

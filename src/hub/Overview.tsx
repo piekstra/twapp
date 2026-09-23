@@ -128,7 +128,7 @@ export default function Overview({
                     <div className="overview-card-top">
                       <StateDot session={s} />
                       <span className="overview-card-name">{s.name}</span>
-                      {s.ticket_key && <span className="rail-ticket">{s.ticket_key}</span>}
+                      {s.ticket_key && <span className="chip chip-mono">{s.ticket_key}</span>}
                     </div>
                     <div className="overview-card-state">
                       {STATE_LABELS[s.status.state]}

@@ -165,15 +165,23 @@ result is advice shown to the user; twapp takes no action from it.
 
 ## Window layout
 
-- **Rail (left).** Hosted sessions in the user's order, with the ones that need
-  attention repeated in a strip at the top. Each row shows the color, name,
-  ticket key, a state indicator, how long it has been in that state, and the
-  headline. Suspended sessions appear dimmed. Selecting a suspended session
-  starts it.
-- **Terminal (center).** The selected session's terminal, with its extra shell
-  tabs.
-- **Session panel (right, collapsible).** Summary, ticket (link, change,
-  refresh), notes, quick prompts, session settings.
+- **Layouts.** `right` (the default) puts one sidebar right of the terminal,
+  with the session list above the selected session's details; `left` puts the
+  same sidebar on the left; `split` puts the list on the left and the details
+  on the right. Widths and the list's share of the sidebar are adjustable and
+  kept per viewer.
+- **Session list.** Sessions in the user's order. Each row shows the color,
+  state, name, time in that state and the headline; the full list in `split`
+  also shows the ticket and state label. Sessions that need attention are
+  tinted and counted in the header. Selecting a suspended session starts it.
+- **Thin bar.** Each sidebar collapses to a strip a few pixels wide with one
+  tick per session, colored by what the session needs; a tick selects its
+  session and hovering the strip shows the full sidebar over the terminal.
+  While the details are collapsed, a status line above the terminal shows the
+  session's state, what it needs, and how many other sessions need attention.
+- **Terminal.** The selected session's terminal, with its extra shell tabs.
+- **Details.** Summary, restart, fork and close; ticket (link, change, unlink,
+  refresh); notes; quick prompts; session settings.
 - **Overview.** A card per hosted session with its full summary and what it
   needs, the Triage action, and the list of every known session for opening
   one that is not hosted.
@@ -190,13 +198,12 @@ Keyboard:
 | `⌘N`, `⌘⇧N` | New session, fork the selected session. |
 | `⌘T`, `⌘W` | New shell tab, close the shell tab. `⌘W` never closes the window. |
 | `⌘⇧[`, `⌘⇧]` | Previous or next tab. |
-| `⌘B` | Show or hide the session panel. |
+| `⌘\` | Collapse the sidebar to a thin bar or expand it (`⌘⇧\` for the session list in `split`). |
 | `⌘,` | Settings. |
 | `⌘=`, `⌘-`, `⌘⇧0` | Zoom in, out, reset. |
 
-The rail keeps the user's order (drag to reorder) rather than sorting by state,
-so a session's `⌘` number does not change while its state does. Sessions that
-need attention are also listed in a strip above the rail.
+The list keeps the user's order (drag to reorder) rather than sorting by state,
+so a session's `⌘` number does not change while its state does.
 
 ## Rendering cost
 

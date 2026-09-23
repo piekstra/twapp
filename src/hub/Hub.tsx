@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import "@xterm/xterm/css/xterm.css";
 import "../App.css";
 import "./hub.css";
-import { applyThemeColor, getDarkModeAccentColor } from "../color";
+import { getDarkModeAccentColor } from "../color";
 import type { PromptStore, ThemeMode } from "../types";
 import { getDarkTheme, getLightTheme } from "../types";
 import { isNewerVersion } from "../utils/version";
@@ -21,6 +21,9 @@ import { hubApi, type SessionView } from "./api";
 import { TerminalManager } from "./terminals";
 import { useHub } from "./useHub";
 import SessionRail from "./SessionRail";
+import ThinBar from "./ThinBar";
+import StatusLine from "./StatusLine";
+import { clamp, loadLayout, saveLayout, type LayoutMode, type LayoutPrefs } from "./layout";
 import SessionPanel from "./SessionPanel";
 import Overview from "./Overview";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
@@ -57,8 +60,10 @@ export default function Hub() {
   const [libraryView, setLibraryView] = useState<LauncherView>("sessions");
   const [libraryKey, setLibraryKey] = useState(0);
   const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});
-  const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem("twapp-panel") !== "closed");
-  const [panelWidth, setPanelWidth] = useState(() => Number(localStorage.getItem("twapp-panel-width")) || 320);
+  const [layout, setLayoutState] = useState<LayoutPrefs>(loadLayout);
+  const [peek, setPeek] = useState<"rail" | "sidebar" | null>(null);
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
   const [forkTicket, setForkTicket] = useState("");
@@ -120,14 +125,13 @@ export default function Hub() {
     for (const s of sessions) {
       if (s.override_terminal_theme) manager.setTheme(terminalThemeFor(s, isDark), s.key);
     }
-    const color = showingTerminal ? current?.color : undefined;
-    if (color) {
-      document.documentElement.style.setProperty("--bg-terminal", isDark ? getDarkModeAccentColor(color) : color);
-      applyThemeColor(color, isDark);
-    } else {
-      for (const prop of ["--bg-terminal", "--bg-secondary", "--border-color", "--border-hover", "--scrollbar-thumb", "--scrollbar-thumb-hover"]) {
-        document.documentElement.style.removeProperty(prop);
-      }
+    // Session colors mark sessions (swatches, the terminal background when a
+    // session opts in) instead of repainting the window's surfaces.
+    for (const prop of ["--bg-terminal", "--bg-secondary", "--border-color", "--border-hover", "--scrollbar-thumb", "--scrollbar-thumb-hover"]) {
+      document.documentElement.style.removeProperty(prop);
+    }
+    if (showingTerminal && current?.override_terminal_theme && current.color) {
+      document.documentElement.style.setProperty("--bg-terminal", isDark ? getDarkModeAccentColor(current.color) : current.color);
     }
   }, [isDark, sessions, current?.color, showingTerminal, manager]);
 
@@ -262,7 +266,7 @@ export default function Hub() {
 
   useEffect(() => {
     setTimeout(() => manager.fitActive(), 60);
-  }, [panelOpen, panelWidth, manager]);
+  }, [layout, manager]);
 
   // --- Actions ---------------------------------------------------------------
   const openDirectory = useCallback(
@@ -346,11 +350,37 @@ export default function Hub() {
     selectSession(needing[(idx + 1) % needing.length].key);
   }, [sessions, selected, selectSession]);
 
-  const togglePanel = useCallback(() => {
-    setPanelOpen((open) => {
-      localStorage.setItem("twapp-panel", open ? "closed" : "open");
-      return !open;
+  const setLayout = useCallback((change: (prev: LayoutPrefs) => LayoutPrefs) => {
+    setLayoutState((prev) => {
+      const next = change(prev);
+      saveLayout(next);
+      return next;
     });
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setPeek(null);
+    setLayout((l) => ({ ...l, sidebarThin: !l.sidebarThin }));
+  }, [setLayout]);
+
+  const toggleRail = useCallback(() => {
+    setPeek(null);
+    setLayout((l) => ({ ...l, railThin: !l.railThin }));
+  }, [setLayout]);
+
+  const setMode = useCallback(
+    (mode: LayoutMode) => {
+      setLayoutMenuOpen(false);
+      setLayout((l) => ({ ...l, mode }));
+    },
+    [setLayout],
+  );
+
+  /** Peeking shows a thin sidebar in full over the terminal while hovered. */
+  const peekAt = useCallback((target: "rail" | "sidebar" | null) => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    if (target) setPeek(target);
+    else peekTimer.current = setTimeout(() => setPeek(null), 250);
   }, []);
 
   const rebuild = useCallback(() => {
@@ -374,11 +404,17 @@ export default function Hub() {
           ]
         : []),
       { id: "next", label: "Next session that needs you", hint: "⌘J", run: () => nextAttention() },
-      { id: "panel", label: panelOpen ? "Hide session panel" : "Show session panel", hint: "⌘B", run: () => togglePanel() },
+      { id: "sidebar", label: layout.sidebarThin ? "Expand the sidebar" : "Collapse the sidebar to a thin bar", hint: "⌘\\", run: () => toggleSidebar() },
+      ...(layout.mode === "split"
+        ? [{ id: "rail", label: layout.railThin ? "Expand the session list" : "Collapse the session list", hint: "⌘⇧\\", run: () => toggleRail() }]
+        : []),
+      { id: "layout-right", label: "Layout: one sidebar on the right", run: () => setMode("right") },
+      { id: "layout-left", label: "Layout: one sidebar on the left", run: () => setMode("left") },
+      { id: "layout-split", label: "Layout: sessions left, details right", run: () => setMode("split") },
       { id: "import", label: "Import sessions", run: () => openLibrary("import") },
       { id: "settings", label: "Settings", hint: "⌘,", run: () => openLibrary("settings") },
     ],
-    [current, openLibrary, restart, newTab, nextAttention, panelOpen, togglePanel, rebuild],
+    [current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild],
   );
 
   // --- Keyboard --------------------------------------------------------------
@@ -434,9 +470,15 @@ export default function Hub() {
         nextAttention();
         return;
       }
+      if (key === "\\" || key === "|") {
+        e.preventDefault();
+        if (e.shiftKey && layout.mode === "split") toggleRail();
+        else toggleSidebar();
+        return;
+      }
       if (key === "b") {
         e.preventDefault();
-        togglePanel();
+        toggleSidebar();
         return;
       }
       if (key === ",") {
@@ -483,7 +525,7 @@ export default function Hub() {
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, togglePanel, openLibrary, newTab, closeTab]);
+  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, toggleSidebar, toggleRail, layout.mode, openLibrary, newTab, closeTab]);
 
   // --- Render ----------------------------------------------------------------
   const releaseNotesComponents = markdownComponents((path) => previewRef.current?.open(path, null));
@@ -503,32 +545,153 @@ export default function Hub() {
     />
   );
 
+  const reorder = (keys: string[]) => {
+    hub.setState((prev) => ({
+      ...prev,
+      sessions: keys.map((k) => prev.sessions.find((s) => s.key === k)!).filter(Boolean),
+    }));
+    hubApi.reorder(keys).catch(console.error);
+  };
+  const goOverview = () => {
+    setShowLibrary(false);
+    setOverview(true);
+  };
+  const needingCount = sessions.filter((s) => s.attention).length;
+  const split = layout.mode === "split";
+  const sidebarSide: "left" | "right" = layout.mode === "left" ? "left" : "right";
+
+  const startResize = (which: "sidebar" | "rail" | "switcher", e: React.MouseEvent, grows: 1 | -1) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const start = layout;
+    const column = (e.currentTarget as HTMLElement).parentElement;
+    const height = column?.getBoundingClientRect().height ?? window.innerHeight;
+    const onMove = (ev: MouseEvent) => {
+      setLayout((l) => {
+        if (which === "sidebar") return { ...l, sidebarWidth: clamp(start.sidebarWidth + grows * (ev.clientX - startX), 260, 640) };
+        if (which === "rail") return { ...l, railWidth: clamp(start.railWidth + grows * (ev.clientX - startX), 200, 420) };
+        return { ...l, switcherShare: clamp(start.switcherShare + (ev.clientY - startY) / height, 0.15, 0.8) };
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const rail = (variant: "rail" | "switcher", onCollapse: () => void) => (
+    <SessionRail
+      sessions={sessions}
+      selected={selected}
+      overviewActive={overview}
+      isDark={isDark}
+      now={now}
+      variant={variant}
+      onSelect={selectSession}
+      onOverview={goOverview}
+      onReorder={reorder}
+      onNew={() => openLibrary("new-session")}
+      onPalette={() => setPaletteOpen(true)}
+      onCollapse={onCollapse}
+      onLayout={() => setLayoutMenuOpen((v) => !v)}
+      side={variant === "rail" ? "left" : sidebarSide}
+    />
+  );
+
+  const details = current && showingTerminal && (
+    <SessionPanel
+      key={current.key}
+      session={current}
+      activeTab={activeTab}
+      now={now}
+      globalPrompts={globalPrompts}
+      setGlobalPrompts={setGlobalPrompts}
+      reloadPrompts={reloadPrompts}
+      onPreview={(path) => previewRef.current?.open(path, current.key)}
+      onRestart={restart}
+      onFork={() => setForkOpen(true)}
+      onCloseSession={() => setConfirmClose(current)}
+      onCollapse={toggleSidebar}
+      showCollapse={split}
+    />
+  );
+
+  const versionFooter = appVersion && (
+    <div className="panel-footer">
+      <button
+        className={`version-button${updateInfo ? " has-update" : ""}`}
+        onClick={() => {
+          setShowUpdatePanel(!showUpdatePanel);
+          checkForUpdate(true);
+        }}
+      >
+        v{appVersion}
+        {updateInfo && <span className="update-dot" />}
+      </button>
+    </div>
+  );
+
+  /** The one sidebar of the `left` and `right` layouts: switcher above details. */
+  const sidebar = (floating: boolean) => (
+    <aside
+      className={`sidebar-column side-${sidebarSide}${floating ? " floating" : ""}`}
+      style={{ width: layout.sidebarWidth }}
+      onMouseEnter={floating ? () => peekAt("sidebar") : undefined}
+      onMouseLeave={floating ? () => peekAt(null) : undefined}
+    >
+      {!floating && (
+        <div
+          className={`column-resizer at-${sidebarSide === "right" ? "left" : "right"}`}
+          onMouseDown={(e) => startResize("sidebar", e, sidebarSide === "right" ? -1 : 1)}
+        />
+      )}
+      <div className="switcher-area" style={{ height: details ? `${layout.switcherShare * 100}%` : "100%" }}>
+        {rail("switcher", toggleSidebar)}
+      </div>
+      {details && (
+        <>
+          <div className="row-resizer" onMouseDown={(e) => startResize("switcher", e, 1)} />
+          <div className="details-area">{details}</div>
+        </>
+      )}
+      {versionFooter}
+    </aside>
+  );
+
+  const thin = (side: "left" | "right", target: "rail" | "sidebar", expand: () => void) => (
+    <ThinBar
+      sessions={sessions}
+      selected={overview ? null : selected}
+      side={side}
+      onSelect={selectSession}
+      onExpand={expand}
+      onPeek={(on) => peekAt(on ? target : null)}
+    />
+  );
+
+  const statusLineVisible = showingTerminal && current && layout.sidebarThin;
+
   return (
-    <div className="hub">
-      <SessionRail
-        sessions={sessions}
-        selected={selected}
-        overviewActive={overview}
-        isDark={isDark}
-        now={now}
-        onSelect={selectSession}
-        onOverview={() => {
-          setShowLibrary(false);
-          setOverview(true);
-        }}
-        onReorder={(keys) => {
-          hub.setState((prev) => ({
-            ...prev,
-            sessions: keys.map((k) => prev.sessions.find((s) => s.key === k)!).filter(Boolean),
-          }));
-          hubApi.reorder(keys).catch(console.error);
-        }}
-        onNew={() => openLibrary("new-session")}
-        onPalette={() => setPaletteOpen(true)}
-      />
+    <div className={`hub layout-${layout.mode}`}>
+      {split &&
+        (layout.railThin ? (
+          thin("left", "rail", toggleRail)
+        ) : (
+          <aside className="rail-column side-left" style={{ width: layout.railWidth }}>
+            {rail("rail", toggleRail)}
+            <div className="column-resizer at-right" onMouseDown={(e) => startResize("rail", e, 1)} />
+          </aside>
+        ))}
+      {!split && sidebarSide === "left" && (layout.sidebarThin ? thin("left", "sidebar", toggleSidebar) : sidebar(false))}
 
       <main className="hub-main">
         {hub.hostError && <div className="host-error">{hub.hostError}</div>}
+        {statusLineVisible && current && (
+          <StatusLine session={current} needing={needingCount} now={now} onNext={nextAttention} onExpand={toggleSidebar} />
+        )}
         {overview || !current ? (
           <Overview
             sessions={sessions}
@@ -555,7 +718,6 @@ export default function Hub() {
                     setRenameValue(t.title);
                   }}
                 >
-                  {t.tab === "main" && <span className="tab-primary-indicator">&#9670;</span>}
                   {renamingTab === t.tab ? (
                     <input
                       className="tab-rename-input"
@@ -593,59 +755,67 @@ export default function Hub() {
           )}
           <div className="hub-terminal-host" ref={hostRef} />
         </div>
+        {peek === "sidebar" && !split && layout.sidebarThin && sidebar(true)}
+        {peek === "rail" && split && layout.railThin && (
+          <aside
+            className="rail-column side-left floating"
+            style={{ width: layout.railWidth }}
+            onMouseEnter={() => peekAt("rail")}
+            onMouseLeave={() => peekAt(null)}
+          >
+            {rail("rail", toggleRail)}
+          </aside>
+        )}
+        {peek === "sidebar" && split && layout.sidebarThin && details && (
+          <aside
+            className="sidebar-column side-right floating"
+            style={{ width: layout.sidebarWidth }}
+            onMouseEnter={() => peekAt("sidebar")}
+            onMouseLeave={() => peekAt(null)}
+          >
+            <div className="details-area">{details}</div>
+          </aside>
+        )}
       </main>
 
-      {showingTerminal && current && panelOpen && (
-        <>
-          <div
-            className="resize-handle"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startX = e.clientX;
-              const startWidth = panelWidth;
-              const onMove = (ev: MouseEvent) => {
-                const width = Math.max(240, Math.min(640, startWidth + startX - ev.clientX));
-                setPanelWidth(width);
-                localStorage.setItem("twapp-panel-width", String(width));
-              };
-              const onUp = () => {
-                document.removeEventListener("mousemove", onMove);
-                document.removeEventListener("mouseup", onUp);
-              };
-              document.addEventListener("mousemove", onMove);
-              document.addEventListener("mouseup", onUp);
-            }}
-          />
-          <div className="session-panel-wrap" style={{ width: panelWidth }}>
-            <SessionPanel
-              key={current.key}
-              session={current}
-              activeTab={activeTab}
-              now={now}
-              globalPrompts={globalPrompts}
-              setGlobalPrompts={setGlobalPrompts}
-              reloadPrompts={reloadPrompts}
-              onPreview={(path) => previewRef.current?.open(path, current.key)}
-              onRestart={restart}
-              onFork={() => setForkOpen(true)}
-              onCloseSession={() => setConfirmClose(current)}
-            />
-            {appVersion && (
-              <div className="panel-footer">
-                <span
-                  className={`sidebar-version${updateInfo ? " has-update" : ""}`}
-                  onClick={() => {
-                    setShowUpdatePanel(!showUpdatePanel);
-                    checkForUpdate(true);
-                  }}
-                >
-                  v{appVersion}
-                  {updateInfo && <span className="update-dot" />}
+      {!split && sidebarSide === "right" && (layout.sidebarThin ? thin("right", "sidebar", toggleSidebar) : sidebar(false))}
+      {split &&
+        (layout.sidebarThin
+          ? thin("right", "sidebar", toggleSidebar)
+          : details && (
+              <aside className="sidebar-column side-right" style={{ width: layout.sidebarWidth }}>
+                <div className="column-resizer at-left" onMouseDown={(e) => startResize("sidebar", e, -1)} />
+                <div className="details-area">{details}</div>
+                {versionFooter}
+              </aside>
+            ))}
+
+      {layoutMenuOpen && (
+        <div className="menu-overlay" onClick={() => setLayoutMenuOpen(false)}>
+          <div className={`layout-menu from-${split ? "left" : sidebarSide}`} onClick={(e) => e.stopPropagation()}>
+            <div className="menu-label">Layout</div>
+            {([
+              ["right", "Sidebar on the right", "Terminal starts at the left edge"],
+              ["left", "Sidebar on the left", "Sessions and details on one side"],
+              ["split", "Split", "Sessions left, details right"],
+            ] as const).map(([mode, label, hint]) => (
+              <button key={mode} className={`menu-item${layout.mode === mode ? " checked" : ""}`} onClick={() => setMode(mode)}>
+                <span className={`layout-glyph glyph-${mode}`} />
+                <span className="menu-item-text">
+                  <span>{label}</span>
+                  <span className="menu-item-hint">{hint}</span>
                 </span>
-              </div>
-            )}
+              </button>
+            ))}
+            <div className="menu-separator" />
+            <button className="menu-item" onClick={() => { setLayoutMenuOpen(false); toggleSidebar(); }}>
+              <span className="menu-item-text">
+                <span>{layout.sidebarThin ? "Expand the sidebar" : "Collapse to a thin bar"}</span>
+              </span>
+              <kbd>⌘\</kbd>
+            </button>
           </div>
-        </>
+        </div>
       )}
 
       {showUpdatePanel && (
