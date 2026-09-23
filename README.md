@@ -234,6 +234,7 @@ session_color: random    # random | a hex color such as "#ffe0e0"
 defaults:
   work_directory: ~/projects
   jira_project: ABC
+  jira_issue_type: Task  # optional; issue type for twapp ticket create
   jira_base_url: https://example.atlassian.net   # optional; defaults to jtk's site
   github_repo: owner/repo
   agent_providers:       # harnesses offered for new sessions

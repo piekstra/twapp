@@ -184,7 +184,8 @@ export default function Hub() {
         const data = await res.json();
         const latest = (data.tag_name as string).replace(/^v/, "");
         if (isNewerVersion(appVersion, latest)) {
-          const asset = data.assets?.find((a: { name: string }) => a.name === "twapp-macos-aarch64.tar.gz");
+          const arch = await invoke<string>("host_arch").catch(() => "aarch64");
+          const asset = data.assets?.find((a: { name: string }) => a.name === `twapp-macos-${arch}.tar.gz`);
           setUpdateInfo({
             latestVersion: latest,
             releaseNotes: data.body || "No release notes available.",

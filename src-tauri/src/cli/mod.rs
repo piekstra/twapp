@@ -255,9 +255,9 @@ pub enum TicketCommands {
         /// Target directory
         #[arg(long)]
         dir: Option<String>,
-        /// Ticket type
-        #[arg(long, default_value = "SDLC")]
-        r#type: String,
+        /// Issue type (default: defaults.jira_issue_type in config.yaml, else Task)
+        #[arg(long)]
+        r#type: Option<String>,
     },
     /// Re-fetch ticket details from Jira/GitHub
     Refresh {
@@ -499,7 +499,12 @@ pub fn run(cmd: Commands) -> i32 {
                 summary,
                 dir,
                 r#type,
-            } => cmd_ticket_create(&summary, dir.as_deref(), &r#type),
+            } => {
+                let issue_type = r#type
+                    .or_else(|| config::GlobalConfig::load().ok().and_then(|c| c.jira_issue_type))
+                    .unwrap_or_else(|| "Task".to_string());
+                cmd_ticket_create(&summary, dir.as_deref(), &issue_type)
+            },
             TicketCommands::Refresh { dir } => cmd_ticket_refresh(dir.as_deref()),
         },
         Commands::Note { command } => match command {

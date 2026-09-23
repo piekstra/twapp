@@ -12,6 +12,7 @@ struct ConfigYaml {
 struct ConfigDefaults {
     work_directory: Option<String>,
     jira_project: Option<String>,
+    jira_issue_type: Option<String>,
     jira_base_url: Option<String>,
     github_repo: Option<String>,
     agent_provider: Option<AgentProvider>,
@@ -22,6 +23,8 @@ struct ConfigDefaults {
 pub struct GlobalConfig {
     pub work_directory: PathBuf,
     pub jira_project: Option<String>,
+    /// Issue type for `twapp ticket create` when `--type` is not given.
+    pub jira_issue_type: Option<String>,
     pub jira_base_url: Option<String>,
     pub github_repo: Option<String>,
     pub agent_provider: AgentProvider,
@@ -368,6 +371,7 @@ impl GlobalConfig {
             return Ok(Self {
                 work_directory: home_dir().join("Dev"),
                 jira_project: None,
+                jira_issue_type: None,
                 jira_base_url: None,
                 github_repo: None,
                 agent_provider: AgentProvider::Claude,
@@ -383,6 +387,7 @@ impl GlobalConfig {
         let defaults = yaml.defaults.unwrap_or(ConfigDefaults {
             work_directory: None,
             jira_project: None,
+            jira_issue_type: None,
             jira_base_url: None,
             github_repo: None,
             agent_provider: None,
@@ -400,6 +405,7 @@ impl GlobalConfig {
         Ok(Self {
             work_directory,
             jira_project: defaults.jira_project,
+            jira_issue_type: defaults.jira_issue_type,
             jira_base_url: defaults
                 .jira_base_url
                 .map(|url| url.trim().to_string())

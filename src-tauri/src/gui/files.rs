@@ -11,6 +11,13 @@ fn resolve_path(path: &str, directory: Option<&str>) -> std::path::PathBuf {
     }
 }
 
+/// The CPU architecture the running build is for, as release asset names
+/// spell it (`aarch64`, `x86_64`), so the updater downloads the matching one.
+#[tauri::command]
+pub fn host_arch() -> String {
+    std::env::consts::ARCH.to_string()
+}
+
 #[tauri::command]
 pub fn read_file(path: String, directory: Option<String>) -> Result<String, String> {
     let resolved = resolve_path(&path, directory.as_deref());
