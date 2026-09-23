@@ -40,7 +40,13 @@ pub struct Summary {
     /// the agent worked is stale once it waits on the user.
     #[serde(default)]
     pub for_state: Option<String>,
+    /// A name for the session when its current one no longer describes the
+    /// work, offered to the user to accept or dismiss.
+    #[serde(default)]
+    pub suggested_name: Option<String>,
 }
+
+pub const SUGGESTED_NAME_MAX_CHARS: usize = 48;
 
 /// A summary built from what the harness already wrote: its own session title
 /// and the last assistant message. Used until a model summary exists, when
@@ -70,6 +76,7 @@ pub fn free_summary(condensed: &Condensed) -> Summary {
         transcript_len: condensed.transcript_len,
         source: SummarySource::Free,
         for_state: None,
+        suggested_name: None,
     }
 }
 

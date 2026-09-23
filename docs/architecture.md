@@ -148,6 +148,11 @@ itself.
   selects another one or the window loses focus. The cached summary is reused when
   the transcript has not grown and the state is the one it was written for.
   Requests are debounced per session and run one at a time.
+- **Name suggestions.** The same call returns a suggested name when the
+  session's name no longer describes its work. The panel offers it with Rename
+  and Dismiss; a suggestion matching the current name or one the user
+  dismissed (kept per session in `hub.json`) is not shown. Nothing renames a
+  session without the user accepting.
 - **Input.** A condensed transcript tail: the latest user prompt, the last few
   assistant messages, the tools used, the harness title, plus the ticket key and
   title, and the session state in words when the transcript cannot show it (an
