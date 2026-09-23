@@ -75,7 +75,8 @@ export default function SessionPanel({
   // this panel has not seen and dropping only the ones deleted here.
   const [notes, setNotes] = useState<Note[]>([]);
   const deletedNotes = useRef<Set<string>>(new Set());
-  const [notesExpanded, setNotesExpanded] = useState(true);
+  // Until the user toggles it, the section is open only when it has notes.
+  const [notesOpen, setNotesExpanded] = useState<boolean | null>(null);
   const [newNote, setNewNote] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
@@ -139,7 +140,8 @@ export default function SessionPanel({
 
   // --- Ticket --------------------------------------------------------------
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
-  const [ticketExpanded, setTicketExpanded] = useState(true);
+  // Until the user toggles it, the section is open only when a ticket is linked.
+  const [ticketOpen, setTicketExpanded] = useState<boolean | null>(null);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [changingTicket, setChangingTicket] = useState(false);
   const [linkKey, setLinkKey] = useState("");
@@ -317,6 +319,8 @@ export default function SessionPanel({
     });
 
   const isDark = document.documentElement.classList.contains("dark");
+  const ticketExpanded = ticketOpen ?? !!ticket;
+  const notesExpanded = notesOpen ?? notes.length > 0;
   const summary = session.summary;
   const status = session.status;
 
@@ -453,6 +457,7 @@ export default function SessionPanel({
           <Chevron open={ticketExpanded} />
           <span className="section-title">Ticket</span>
           {!ticketExpanded && ticket && <span className="chip chip-mono">{formatTicketBadge(ticket.key)}</span>}
+          {!ticketExpanded && !ticket && <span className="section-empty">None linked</span>}
           <span className="spacer" />
           {ticket && ticketExpanded && (
             <>
@@ -548,6 +553,7 @@ export default function SessionPanel({
           <Chevron open={notesExpanded} />
           <span className="section-title">Notes</span>
           {notes.length > 0 && <span className="count">{notes.length}</span>}
+          {!notesExpanded && notes.length === 0 && <span className="section-empty">None yet</span>}
           <span className="spacer" />
           <button
             className="icon-button small"

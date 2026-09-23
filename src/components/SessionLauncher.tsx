@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
+import DeleteSessionDialog from "./DeleteSessionDialog";
 import { maskProviderSessionId } from "../utils/session";
 import type {
   LauncherSession,
@@ -12,7 +13,6 @@ import type {
   DiscoveredGroup,
   ImportPreview,
   ImportResult,
-  DeletePreflight,
   SortMode,
   LauncherView,
   PromptStore,
@@ -99,10 +99,6 @@ function SessionLauncher({
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<LauncherSession | null>(null);
-  const [deletePreflight, setDeletePreflight] = useState<DeletePreflight | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Import sessions state
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
@@ -558,49 +554,9 @@ function SessionLauncher({
     });
   };
 
-  // Delete session handlers
-  const handleDeleteClick = async (e: React.MouseEvent, session: LauncherSession) => {
+  const handleDeleteClick = (e: React.MouseEvent, session: LauncherSession) => {
     e.stopPropagation();
     setDeleteTarget(session);
-    setDeletePreflight(null);
-    setDeleteError(null);
-    setDeleting(false);
-    setDeleteLoading(true);
-    try {
-      const result = await invoke<DeletePreflight>("preflight_delete_session", {
-        directory: session.directory,
-      });
-      setDeletePreflight(result);
-    } catch (err) {
-      setDeleteError(String(err));
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
-
-  const handleDeleteConfirm = async (deleteEverything: boolean) => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await invoke("delete_session", {
-        directory: deleteTarget.directory,
-        deleteEverything,
-      });
-      setSessions((prev) => prev.filter((s) => s.session_id !== deleteTarget.session_id));
-      closeDeleteDialog();
-    } catch (err) {
-      setDeleteError(String(err));
-      setDeleting(false);
-    }
-  };
-
-  const closeDeleteDialog = () => {
-    setDeleteTarget(null);
-    setDeletePreflight(null);
-    setDeleteLoading(false);
-    setDeleting(false);
-    setDeleteError(null);
   };
 
   // Rename session handlers
@@ -1627,98 +1583,17 @@ function SessionLauncher({
       </div>
       )}
 
-      {/* Delete confirmation modal */}
       {deleteTarget && (
-        <div className="delete-overlay" onClick={closeDeleteDialog}>
-          <div className="delete-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="delete-header">
-              <div className="delete-session-info">
-                <span className="delete-color-dot" style={{ background: deleteTarget.color || "var(--text-muted)" }} />
-                <span className="delete-session-name">{deleteTarget.name}</span>
-              </div>
-              <button className="delete-close" onClick={closeDeleteDialog}>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-              </button>
-            </div>
-
-            <div className="delete-body">
-              {deleteLoading ? (
-                <div className="delete-loading">
-                  <div className="launcher-spinner small" /> Checking session...
-                </div>
-              ) : deleteError && !deletePreflight ? (
-                <div className="delete-error">{deleteError}</div>
-              ) : deletePreflight ? (
-                <>
-                  {deletePreflight.is_running && (
-                    <div className="delete-check blocking">
-                      <span className="delete-check-icon">&#x26D4;</span>
-                      Session is currently running. Close it before deleting.
-                    </div>
-                  )}
-                  {!deletePreflight.is_running && deletePreflight.has_uncommitted_changes && (
-                    <div className="delete-check warning">
-                      <span className="delete-check-icon">&#x26A0;</span>
-                      Uncommitted git changes in working directory
-                    </div>
-                  )}
-                  {!deletePreflight.is_running && deletePreflight.unpushed_commit_count > 0 && (
-                    <div className="delete-check warning">
-                      <span className="delete-check-icon">&#x26A0;</span>
-                      {deletePreflight.unpushed_commit_count} unpushed commit{deletePreflight.unpushed_commit_count !== 1 ? "s" : ""}
-                    </div>
-                  )}
-                  {!deletePreflight.is_running && deletePreflight.ticket_key && deletePreflight.ticket_status &&
-                    !["Done", "Closed", "Merged", "CLOSED", "MERGED"].includes(deletePreflight.ticket_status) && (
-                    <div className="delete-check warning">
-                      <span className="delete-check-icon">&#x26A0;</span>
-                      Ticket {deletePreflight.ticket_key} is &ldquo;{deletePreflight.ticket_status}&rdquo;
-                    </div>
-                  )}
-                  {!deletePreflight.is_running && deletePreflight.note_count > 0 && (
-                    <div className="delete-check warning">
-                      <span className="delete-check-icon">&#x26A0;</span>
-                      {deletePreflight.note_count} note{deletePreflight.note_count !== 1 ? "s" : ""} will be deleted
-                    </div>
-                  )}
-                  <div className="delete-info-section">
-                    <div className="delete-info-item">
-                      <span className="delete-info-label">Last active</span>
-                      <span>{formatRelativeTime(deletePreflight.last_active)}</span>
-                    </div>
-                    {deletePreflight.conversation_size_bytes > 0 && (
-                      <div className="delete-info-item">
-                        <span className="delete-info-label">Conversation data</span>
-                        <span>{formatBytes(deletePreflight.conversation_size_bytes)}</span>
-                      </div>
-                    )}
-                    {deletePreflight.forked_from && (
-                      <div className="delete-info-item">
-                        <span className="delete-info-label">Forked from</span>
-                        <span className="delete-info-mono">{deletePreflight.forked_from.slice(0, 12)}</span>
-                      </div>
-                    )}
-                  </div>
-                  {deleteError && <div className="delete-error">{deleteError}</div>}
-                </>
-              ) : null}
-            </div>
-
-            <div className="delete-actions">
-              <button className="delete-cancel" onClick={closeDeleteDialog}>Cancel</button>
-              {deletePreflight && !deletePreflight.is_running && (
-                <>
-                  <button className="delete-remove" onClick={() => handleDeleteConfirm(false)} disabled={deleting}>
-                    {deleting ? "Removing..." : "Remove Session"}
-                  </button>
-                  <button className="delete-everything" onClick={() => handleDeleteConfirm(true)} disabled={deleting}>
-                    {deleting ? "Deleting..." : "Delete Everything"}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <DeleteSessionDialog
+          directory={deleteTarget.directory}
+          name={deleteTarget.name}
+          color={deleteTarget.color}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setSessions((prev) => prev.filter((s) => s.session_id !== deleteTarget.session_id));
+            setDeleteTarget(null);
+          }}
+        />
       )}
 
     </div>

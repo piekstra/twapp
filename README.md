@@ -144,7 +144,7 @@ The dock icon shows how many sessions need you and bounces once when a session s
 | `⌘J` | Next session that needs you |
 | `⌘K` | Switch to, open or start anything |
 | `⌥⌘↑` / `⌥⌘↓` | Previous or next session |
-| `⌘0` | Overview |
+| `⌘0` | Overview, or back to the session you were viewing |
 | `⌘N` / `⌘⇧N` | New session / fork the current one |
 | `⌘T` / `⌘W` | New shell tab / close the shell tab |
 | `⌘⇧[` / `⌘⇧]` | Previous or next tab |
@@ -156,6 +156,10 @@ The dock icon shows how many sessions need you and bounces once when a session s
 The session list has three lanes: **Priority**, **Background** and **Blocked**. Drag a row within a lane to reorder it or onto another lane to move it; right-click a row, or use the lane control under the session's name, to move it without dragging. Your order is kept between launches. A new session opened with a command starts in Priority; a restored or adopted one starts in Background.
 
 Blocked is for a session you are keeping open while you wait on someone else. It does not count toward the sessions that need you or the dock badge, except when its harness asks for a permission, and its row shows how long it has been blocked and when you last checked on it. Sending the session a message restarts the "checked" clock; the session stays blocked until you move it.
+
+**Sessions** at the top of the sidebar opens the overview; clicking it again, `⌘0`, `Esc`, or **Back to** in the overview's header returns to the session you were viewing.
+
+**Close** in a session's panel stops it and removes it from the window; the session stays on disk and opens again from All sessions or `⌘K`. **Delete instead...** in that dialog (or `Delete <session>` in `⌘K`) removes it entirely: it checks for uncommitted changes, unpushed commits, an open ticket and notes first, then stops the session and deletes its conversation and twapp's files (**Remove Session**) or also its directory (**Delete Everything**).
 
 Each lane folds from its header. The list next to a session's details starts with only Priority open, the sessions you switch between most; the full list in the split layout and the overview start with everything but Blocked open. `⌘1` to `⌘9` count the rows that are showing. The layout button in the list's header picks where the sidebar goes. A collapsed sidebar shows the full sidebar while you hover it, and a one-line status bar above the terminal carries the selected session's state, what it needs from you, and how many other sessions need you.
 
