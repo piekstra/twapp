@@ -128,6 +128,7 @@ pub fn run(args: GuiArgs) {
             hub::hub_blocker_set,
             hub::hub_blocker_note,
             hub::hub_set_effort,
+            files::host_arch,
             hub::hub_yak_report,
             hub::hub_find_efforts,
             hub::hub_start,
