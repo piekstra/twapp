@@ -34,6 +34,10 @@ function harnessList(providers: AgentProvider[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+// The library is rebuilt each time it opens; the last list it showed is kept
+// here so it opens with that list at once and refreshes it in the background.
+let lastList: { sessions: LauncherSession[]; homeDir: string } | null = null;
+
 function SessionLauncher({
   initialView = "sessions",
   onOpened,
@@ -57,15 +61,15 @@ function SessionLauncher({
   checkForUpdate: (force?: boolean) => Promise<void>;
   handleInstallUpdate: () => Promise<void>;
 }) {
-  const [sessions, setSessions] = useState<LauncherSession[]>([]);
-  const [homeDir, setHomeDir] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<LauncherSession[]>(() => lastList?.sessions ?? []);
+  const [homeDir, setHomeDir] = useState(() => lastList?.homeDir ?? "");
+  const [loading, setLoading] = useState(() => !lastList);
   const [searchQuery, setSearchQuery] = useState("");
   // Keyed by directory: a provider session id can be empty.
   const [launching, setLaunching] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<{ directory: string; message: string } | null>(null);
   const [themeMode, setThemeMode] = useState<"light" | "dark" | "system">("system");
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(() => !lastList);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [launcherView, setLauncherView] = useState<LauncherView>(initialView);
   const [settingsTab, setSettingsTab] = useState<"general" | "prompts" | "permissions">("general");
@@ -121,6 +125,10 @@ function SessionLauncher({
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!scanning) lastList = { sessions, homeDir };
+  }, [sessions, homeDir, scanning]);
+
   // Streaming initial load — each session appears as it's discovered
   useEffect(() => {
     const unlistenHomeDir = listen<string>("launcher:home-dir", (event) => {
@@ -144,10 +152,20 @@ function SessionLauncher({
       setScanning(false);
     });
 
-    invoke("scan_sessions").catch((e) => {
-      console.error("Failed to scan sessions:", e);
-      setLoading(false);
-    });
+    if (lastList) {
+      // Shown from the last visit; one listing brings it up to date.
+      invoke<LauncherResponse>("list_all_sessions")
+        .then((result) => {
+          setSessions(result.sessions);
+          setHomeDir(result.home_dir);
+        })
+        .catch((e) => console.error("Failed to load sessions:", e));
+    } else {
+      invoke("scan_sessions").catch((e) => {
+        console.error("Failed to scan sessions:", e);
+        setLoading(false);
+      });
+    }
 
     return () => {
       unlistenHomeDir.then((fn) => fn());
