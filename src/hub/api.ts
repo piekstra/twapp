@@ -32,6 +32,7 @@ export interface Summary {
   transcript_len: number;
   source: "model" | "free";
   for_state?: string | null;
+  suggested_name?: string | null;
 }
 
 export interface TabView {
@@ -58,6 +59,8 @@ export interface SessionView {
   lane: Lane;
   blocked_since: string | null;
   checked_at: string | null;
+  /** A name the summarizer suggests, not yet taken or dismissed. */
+  name_suggestion?: string | null;
 }
 
 export type Lane = "priority" | "background" | "blocked";
@@ -125,6 +128,8 @@ export const hubApi = {
   select: (key: string) => invoke("hub_select", { key }),
   reorder: (keys: string[]) => invoke("hub_reorder", { keys }),
   setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
+  dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
+  rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
   start: (key: string, tab: string, rows: number, cols: number, channel: Channel<ArrayBuffer>) =>
     invoke("hub_start", { key, tab, rows, cols, channel }),
   write: (key: string, tab: string, data: string) => invoke("hub_write", { key, tab, data }),

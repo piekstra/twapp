@@ -349,6 +349,26 @@ export default function SessionPanel({
         )}
       </header>
 
+      {session.name_suggestion && (
+        <div className="name-suggestion">
+          <span className="name-suggestion-text">
+            Rename to <strong>{session.name_suggestion}</strong>?
+          </span>
+          <button
+            className="button small"
+            onClick={() => hubApi.rename(directory, session.name_suggestion!).catch(console.error)}
+          >
+            Rename
+          </button>
+          <button
+            className="button ghost small"
+            onClick={() => hubApi.dismissName(directory, session.name_suggestion!).catch(console.error)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="panel-lane">
         <div className="segmented" role="radiogroup" aria-label="Lane">
           {LANES.map(({ lane, label }) => (

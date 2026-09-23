@@ -89,6 +89,7 @@ mod tests {
             transcript_len: len,
             source,
             for_state: None,
+            suggested_name: None,
         }
     }
 

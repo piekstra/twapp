@@ -65,11 +65,11 @@ export function useHub() {
           sessions: prev.sessions.map((s) => (s.key === key ? { ...s, status, attention } : s)),
         }));
       }),
-      listen<{ key: string; summary: Summary }>("hub:summary", (e) => {
-        const { key, summary } = e.payload;
+      listen<{ key: string; summary: Summary; name_suggestion: string | null }>("hub:summary", (e) => {
+        const { key, summary, name_suggestion } = e.payload;
         setState((prev) => ({
           ...prev,
-          sessions: prev.sessions.map((s) => (s.key === key ? { ...s, summary } : s)),
+          sessions: prev.sessions.map((s) => (s.key === key ? { ...s, summary, name_suggestion } : s)),
         }));
       }),
       listen<string>("hub:select", (e) => {
