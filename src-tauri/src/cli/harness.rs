@@ -156,7 +156,9 @@ pub fn build_provider_command(
             }
         }
         AgentProvider::Codex => {
-            let escaped_dir = shell_escape_single(&work_dir_str);
+            // A thread imported from another directory resumes where it began.
+            let escaped_dir =
+                shell_escape_single(&session_data.native_cwd(AgentProvider::Codex, work_dir));
             match session_data.native_session_id(AgentProvider::Codex) {
                 Some(current_id) => ProviderLaunch {
                     command: format!(
@@ -175,8 +177,15 @@ pub fn build_provider_command(
         }
         AgentProvider::Antigravity => {
             let existing = session_data.native_session_id(AgentProvider::Antigravity);
+            // Antigravity ties a conversation to its workspace directory.
+            let cwd = session_data.native_cwd(AgentProvider::Antigravity, work_dir);
+            let cd_prefix = if existing.is_some() && cwd != work_dir_str {
+                format!("cd '{}' && ", shell_escape_single(&cwd))
+            } else {
+                String::new()
+            };
             ProviderLaunch {
-                command: build_antigravity_run_command(existing, None),
+                command: format!("{}{}", cd_prefix, build_antigravity_run_command(existing, None)),
                 conversation: match existing {
                     Some(id) => Conversation::Existing(id.to_string()),
                     None => Conversation::HarnessAssigns,
@@ -358,6 +367,31 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("twapp-migration-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn imported_codex_thread_resumes_in_its_original_directory() {
+        let mut data = session_migrating_from_antigravity();
+        data.provider = Some(AgentProvider::Codex);
+        data.antigravity_session_id = None;
+        data.codex_session_id = Some("thread-aaa".to_string());
+        data.codex_cwd = Some("/work/app".to_string());
+        let dir = work_dir();
+        let launch = build_provider_command(AgentProvider::Codex, &data, &dir, None);
+        assert_eq!(launch.command, "codex resume thread-aaa -C '/work/app'");
+    }
+
+    #[test]
+    fn imported_antigravity_conversation_resumes_in_its_workspace() {
+        let mut data = session_migrating_from_antigravity();
+        data.antigravity_cwd = Some("/work/site".to_string());
+        let dir = work_dir();
+        let launch = build_provider_command(AgentProvider::Antigravity, &data, &dir, None);
+        assert_eq!(launch.command, "cd '/work/site' && agy --conversation 'conversation-123'");
+
+        data.antigravity_cwd = Some(dir.to_string_lossy().to_string());
+        let launch = build_provider_command(AgentProvider::Antigravity, &data, &dir, None);
+        assert_eq!(launch.command, "agy --conversation 'conversation-123'");
     }
 
     fn claude_session() -> SessionData {

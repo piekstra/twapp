@@ -1,6 +1,7 @@
 pub mod config;
 pub mod files;
 pub mod hub;
+pub mod import;
 pub mod notes;
 pub mod prompts;
 pub mod sessions;
@@ -113,7 +114,7 @@ pub fn run(args: GuiArgs) {
             sessions::update_session_fields,
             sessions::get_session_history,
             sessions::delete_session,
-            sessions::discover_claude_sessions,
+            sessions::discover_sessions,
             sessions::import_sessions,
             hub::hub_snapshot,
             hub::hub_open,

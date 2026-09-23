@@ -375,7 +375,7 @@ export default function Hub() {
         : []),
       { id: "next", label: "Next session that needs you", hint: "⌘J", run: () => nextAttention() },
       { id: "panel", label: panelOpen ? "Hide session panel" : "Show session panel", hint: "⌘B", run: () => togglePanel() },
-      { id: "import", label: "Import Claude sessions", run: () => openLibrary("import") },
+      { id: "import", label: "Import sessions", run: () => openLibrary("import") },
       { id: "settings", label: "Settings", hint: "⌘,", run: () => openLibrary("settings") },
     ],
     [current, openLibrary, restart, newTab, nextAttention, panelOpen, togglePanel, rebuild],
