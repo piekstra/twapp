@@ -79,12 +79,16 @@ pub fn prepare_launch(
 ) -> ProviderLaunch {
     let provider = session_data.last_provider();
     session_data.provider = Some(provider);
+    let fresh = provider == AgentProvider::Claude && !locate_claude_conversation(session_data, work_dir, roots);
 
     let migration_prompt = session_data
         .migration_source(provider)
         .map(|source| build_migration_prompt(session_data, work_dir, source, provider, roots));
-    let launch =
-        build_provider_command(provider, session_data, work_dir, migration_prompt.as_deref());
+    let launch = if fresh {
+        start_claude_conversation(session_data, work_dir, migration_prompt.as_deref())
+    } else {
+        build_provider_command(provider, session_data, work_dir, migration_prompt.as_deref())
+    };
 
     let work_dir_str = work_dir.to_string_lossy().to_string();
     // An id twapp minted is only real once it is on disk; one the harness
@@ -99,6 +103,45 @@ pub fn prepare_launch(
     }
 
     launch
+}
+
+/// Whether the session's Claude conversation can be resumed, pointing the
+/// session at the directory its transcript is under when that moved.
+///
+/// `claude --resume` only finds a conversation from the directory it ran in,
+/// and Claude deletes transcripts after its cleanup period; a conversation
+/// minted but never sent a message has no transcript yet. `false` means there
+/// is nothing to resume. A session with no conversation id at all counts as
+/// resumable here; the regular launch mints one.
+fn locate_claude_conversation(session_data: &mut SessionData, work_dir: &Path, roots: &TranscriptRoots) -> bool {
+    let Some(id) = session_data.native_session_id(AgentProvider::Claude).map(str::to_string) else {
+        return true;
+    };
+    let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
+    if roots.claude_transcript(&cwd, &id).is_file() {
+        return true;
+    }
+    match roots.find_claude_cwd(&id) {
+        Some(found) => {
+            session_data.claude_cwd = found;
+            true
+        }
+        None => false,
+    }
+}
+
+/// A new Claude conversation under the session's recorded id, in the session
+/// directory, for a session whose conversation has no transcript to resume.
+fn start_claude_conversation(session_data: &mut SessionData, work_dir: &Path, prompt: Option<&str>) -> ProviderLaunch {
+    let id = session_data.session_id.clone();
+    session_data.claude_cwd = work_dir.to_string_lossy().to_string();
+    let chrome = if session_data.use_chrome.unwrap_or(false) { " --chrome" } else { "" };
+    let prompt = prompt.map(|text| format!(" '{}'", shell_escape_single(text))).unwrap_or_default();
+    ProviderLaunch {
+        command: format!("claude --session-id {}{}{}", id, chrome, prompt),
+        conversation: Conversation::Existing(id),
+        prefill: None,
+    }
 }
 
 /// Build the launch for `provider` against an existing session.

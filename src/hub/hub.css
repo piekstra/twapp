@@ -2443,3 +2443,41 @@ kbd {
   font-size: 11.5px;
   color: var(--state-error);
 }
+
+.launcher-lost-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.launcher-lost-toggle {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding-left: 0;
+}
+
+.launcher-lost-forget {
+  border: none;
+  background: none;
+  color: var(--state-error);
+  font: 500 11.5px var(--font-ui);
+  cursor: pointer;
+}
+
+.launcher-lost-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+  margin: 2px 0 8px;
+  max-width: 640px;
+}
+
+.launcher-lost-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font: 500 10.5px var(--font-ui);
+}

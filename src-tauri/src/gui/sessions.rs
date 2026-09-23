@@ -60,9 +60,42 @@ fn count_messages_for_provider(
     }
 }
 
+/// Ids of every Claude conversation with a transcript, from one pass over
+/// Claude's project folders.
+/// A folder's listing changes its modification time, so each folder is
+/// listed again only when a transcript was added or removed.
+fn claude_conversation_ids() -> std::collections::HashSet<String> {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+    type Listing = (std::time::SystemTime, Vec<String>);
+    static CACHE: LazyLock<Mutex<HashMap<std::path::PathBuf, Listing>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    let projects = TranscriptRoots::from_home().claude_projects;
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ids = std::collections::HashSet::new();
+    for project in std::fs::read_dir(projects).into_iter().flatten().flatten() {
+        let path = project.path();
+        let Some(modified) = project.metadata().ok().and_then(|m| m.modified().ok()) else { continue };
+        let fresh = cache.get(&path).is_some_and(|(at, _)| *at == modified);
+        if !fresh {
+            let listed = std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|f| f.file_name().to_string_lossy().strip_suffix(".jsonl").map(str::to_string))
+                .collect();
+            cache.insert(path.clone(), (modified, listed));
+        }
+        ids.extend(cache[&path].1.iter().cloned());
+    }
+    ids
+}
+
 fn launcher_session_from_data(
     session_data: &SessionData,
     directory: &std::path::Path,
+    claude_ids: &std::collections::HashSet<String>,
 ) -> LauncherSession {
     let preferred = session_data.last_provider();
     let is_running = session_running(directory);
@@ -96,6 +129,10 @@ fn launcher_session_from_data(
         message_count,
         imported,
         forked_from,
+        conversation_missing: preferred == AgentProvider::Claude
+            && session_data
+                .native_session_id(AgentProvider::Claude)
+                .is_some_and(|id| !claude_ids.contains(id)),
     }
 }
 
@@ -169,8 +206,9 @@ fn emit_provider_session_update(
 }
 
 pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
+    let claude_ids = claude_conversation_ids();
     crate::cli::session::visit_sessions(dir, depth, &mut |data, path| {
-        let _ = app.emit("launcher:session", launcher_session_from_data(&data, &path));
+        let _ = app.emit("launcher:session", launcher_session_from_data(&data, &path, &claude_ids));
     });
 }
 
@@ -203,9 +241,10 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
+    let claude_ids = claude_conversation_ids();
     let mut results = Vec::new();
     for (data, dir) in sessions {
-        results.push(launcher_session_from_data(&data, &dir));
+        results.push(launcher_session_from_data(&data, &dir, &claude_ids));
     }
 
     Ok(LauncherResponse {
@@ -340,9 +379,14 @@ struct ResumeCommand {
 
 #[cfg(test)]
 fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
+    resume_command_in(directory, &TranscriptRoots::from_home())
+}
+
+#[cfg(test)]
+fn resume_command_in(directory: &str, roots: &TranscriptRoots) -> Result<ResumeCommand, String> {
     let work_dir = std::path::PathBuf::from(directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
-    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
+    let launch = prepare_launch(&mut session_data, &work_dir, roots);
     crate::cli::session::write_session(&work_dir, &session_data)?;
     Ok(ResumeCommand {
         session_id: launch.conversation.known_id().map(str::to_string),
@@ -751,6 +795,31 @@ pub fn delete_session_files(directory: &str, delete_everything: bool) -> Result<
     }
 
     Ok(())
+}
+
+/// Forget sessions: remove twapp's own files from each directory, and the
+/// directory itself when nothing else is left in it. The conversation, the
+/// directory's other contents and its `.claude/` settings stay. Sessions open
+/// in the window are skipped. Returns how many were forgotten.
+#[tauri::command]
+pub async fn forget_sessions(directories: Vec<String>) -> Result<u32, String> {
+    let mut forgotten = 0;
+    for directory in directories {
+        let dir = std::path::PathBuf::from(&directory);
+        if session_running(&dir) || !dir.join(".twapp-session.json").is_file() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(".twapp-") && entry.path().is_file() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        // Only succeeds on an empty directory.
+        let _ = std::fs::remove_dir(&dir);
+        forgotten += 1;
+    }
+    Ok(forgotten)
 }
 
 /// Claude conversations under `projects_dir` that no twapp session owns.
@@ -1420,6 +1489,19 @@ mod resume_command_tests {
         std::fs::write(dir.join(".twapp-session.json"), json).unwrap();
     }
 
+    /// Transcript roots in a temp directory, holding a transcript for each
+    /// (cwd, id) given.
+    fn roots_with(transcripts: &[(&str, &str)]) -> TranscriptRoots {
+        let root = std::env::temp_dir().join(format!("twapp-roots-{}", uuid::Uuid::new_v4()));
+        let roots = TranscriptRoots { claude_projects: root.join("projects"), codex_history: root.join("history.jsonl") };
+        for (cwd, id) in transcripts {
+            let path = roots.claude_transcript(cwd, id);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, format!("{{\"type\":\"user\",\"cwd\":\"{}\"}}\n", cwd)).unwrap();
+        }
+        roots
+    }
+
     #[test]
     fn a_chrome_session_keeps_chrome_when_its_terminal_restarts() {
         let dir = session_dir();
@@ -1433,7 +1515,8 @@ mod resume_command_tests {
             ),
         );
 
-        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        let roots = roots_with(&[(&dir.to_string_lossy(), "claude-123")]);
+        let resumed = resume_command_in(&dir.to_string_lossy(), &roots).unwrap();
 
         assert_eq!(resumed.command, "claude --resume claude-123 --chrome");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1449,7 +1532,8 @@ mod resume_command_tests {
                 "last_resumed":null,"provider":"claude"}"#,
         );
 
-        let resumed = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        let roots = roots_with(&[("/tmp/somewhere-else", "claude-123")]);
+        let resumed = resume_command_in(&dir.to_string_lossy(), &roots).unwrap();
 
         assert_eq!(
             resumed.command,
@@ -1533,11 +1617,76 @@ mod resume_command_tests {
 
         // Without the write-back the next call would mint a different id and
         // the terminal would resume a conversation twapp never recorded.
-        let second = resume_command_for_directory(&dir.to_string_lossy()).unwrap();
+        let roots = roots_with(&[(&dir.to_string_lossy(), &minted)]);
+        let second = resume_command_in(&dir.to_string_lossy(), &roots).unwrap();
         assert_eq!(second.session_id.as_deref(), Some(minted.as_str()));
         assert_eq!(second.command, format!("claude --resume {}", minted));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_conversation_with_no_transcript_starts_again_under_the_same_id() {
+        let dir = session_dir();
+        write(
+            &dir,
+            r#"{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                "claude_cwd":"/tmp/somewhere-else","created":"2026-01-01T00:00:00Z",
+                "last_resumed":null,"provider":"claude"}"#,
+        );
+
+        let resumed = resume_command_in(&dir.to_string_lossy(), &roots_with(&[])).unwrap();
+
+        assert_eq!(resumed.command, "claude --session-id claude-123");
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.claude_cwd, dir.to_string_lossy(), "the new conversation belongs to the session directory");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_conversation_recorded_under_the_wrong_directory_resumes_where_it_ran() {
+        let dir = session_dir();
+        write(
+            &dir,
+            &format!(
+                r#"{{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
+                     "claude_cwd":"{}","created":"2026-01-01T00:00:00Z","last_resumed":null,
+                     "provider":"claude"}}"#,
+                dir.to_string_lossy()
+            ),
+        );
+
+        let roots = roots_with(&[("/tmp/where-it-ran", "claude-123")]);
+        let resumed = resume_command_in(&dir.to_string_lossy(), &roots).unwrap();
+
+        assert_eq!(resumed.command, "cd '/tmp/where-it-ran' && claude --resume claude-123");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod forget_tests {
+    #[test]
+    fn forgetting_removes_only_twapps_files_and_an_emptied_directory() {
+        let root = std::env::temp_dir().join(format!("twapp-forget-{}", uuid::Uuid::new_v4()));
+        let only_twapp = root.join("only-twapp");
+        let with_code = root.join("with-code");
+        for dir in [&only_twapp, &with_code] {
+            std::fs::create_dir_all(dir.join(".claude")).unwrap();
+            std::fs::write(dir.join(".twapp-session.json"), "{}").unwrap();
+            std::fs::write(dir.join(".twapp-notes-x.json"), "[]").unwrap();
+        }
+        std::fs::remove_dir(only_twapp.join(".claude")).unwrap();
+        std::fs::write(with_code.join("main.rs"), "fn main() {}").unwrap();
+
+        let dirs = vec![only_twapp.to_string_lossy().to_string(), with_code.to_string_lossy().to_string()];
+        let forgotten = tauri::async_runtime::block_on(super::forget_sessions(dirs)).unwrap();
+
+        assert_eq!(forgotten, 2);
+        assert!(!only_twapp.exists(), "a directory holding only twapp's files goes");
+        assert!(with_code.join("main.rs").exists() && with_code.join(".claude").exists());
+        assert!(!with_code.join(".twapp-session.json").exists() && !with_code.join(".twapp-notes-x.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

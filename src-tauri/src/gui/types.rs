@@ -71,6 +71,10 @@ pub struct LauncherSession {
     pub message_count: Option<u32>,
     pub imported: bool,
     pub forked_from: Option<String>,
+    /// The session's Claude conversation has no transcript anywhere: Claude
+    /// removed it after its cleanup period, or it never received a message.
+    /// Opening the session starts a new conversation.
+    pub conversation_missing: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
