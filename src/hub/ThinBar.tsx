@@ -9,13 +9,16 @@ interface Props {
   onExpand: () => void;
   /** Hovering the bar shows the full sidebar over the terminal. */
   onPeek: (peeking: boolean) => void;
+  /** A newer twapp release, when one is out. */
+  update?: string | null;
+  onUpdate?: () => void;
 }
 
 /**
  * A collapsed sidebar: a strip a few pixels wide with one tick per session,
  * colored by what the session needs. Ticks select; the strip's end expands.
  */
-export default function ThinBar({ sessions, selected, side, onSelect, onExpand, onPeek }: Props) {
+export default function ThinBar({ sessions, selected, side, onSelect, onExpand, onPeek, update, onUpdate }: Props) {
   return (
     <div
       className={`thinbar thinbar-${side}`}
@@ -47,6 +50,11 @@ export default function ThinBar({ sessions, selected, side, onSelect, onExpand, 
           );
         })}
       </div>
+      {update && (
+        <button className="thinbar-update" onClick={onUpdate} title={`Update twapp to ${update}`}>
+          <span className="update-dot" />
+        </button>
+      )}
       <button className="thinbar-expand" onClick={onExpand} title="Expand (⌘\)">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
           {side === "right" ? <path d="M6.5 2L3.5 5l3 3" /> : <path d="M3.5 2l3 3-3 3" />}
