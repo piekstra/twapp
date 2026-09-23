@@ -74,7 +74,9 @@ pub fn parse_anthropic_response(body: &str) -> Result<Vec<ModelEntry>, String> {
 
 pub fn tier_for_name(name: &str) -> &'static str {
     let n = name.to_lowercase();
-    if n.contains("opus") {
+    if n.contains("fable") {
+        "fable"
+    } else if n.contains("opus") {
         "opus"
     } else if n.contains("sonnet") {
         "sonnet"
@@ -251,7 +253,7 @@ mod tests {
         assert!(!entries.is_empty(), "bundled default must not be empty");
         for e in &entries {
             assert!(!e.name.is_empty());
-            assert!(matches!(e.tier.as_str(), "opus" | "sonnet" | "haiku" | "other"));
+            assert!(matches!(e.tier.as_str(), "fable" | "opus" | "sonnet" | "haiku" | "other"));
             assert!(!e.description.is_empty());
         }
     }
@@ -318,6 +320,8 @@ mod tests {
         assert_eq!(tier_for_name("claude-opus-4-7"), "opus");
         assert_eq!(tier_for_name("claude-sonnet-4-6"), "sonnet");
         assert_eq!(tier_for_name("claude-haiku-4-5"), "haiku");
+        assert_eq!(tier_for_name("claude-fable-5-1"), "fable");
+        assert_eq!(tier_for_name("claude-opus-5-5[1m]"), "opus");
         assert_eq!(tier_for_name("something-else"), "other");
     }
 

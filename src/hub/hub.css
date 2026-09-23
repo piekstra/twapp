@@ -1969,3 +1969,26 @@ kbd {
 .hub .import-view .launcher-search {
   padding: 10px 24px 4px;
 }
+
+.summary-agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.summary-agents li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.summary-agents .state-dot {
+  width: 6px;
+  height: 6px;
+}

@@ -106,6 +106,12 @@ Signals, in priority order per harness:
   - The transcript tail: `stop_reason: end_turn` followed by
     `system/turn_duration` marks a finished turn. Also read from it: the
     `ai-title`, the latest `away_summary`, and the last assistant text.
+  - Subagents under `<transcript>/subagents/` (forks, background agents):
+    one counts as running while its last assistant message is not a
+    finished turn and its transcript changed in the last 30 minutes. A
+    session whose turn ended while its agents still run stays `working`,
+    because Claude resumes on its own when they report back; the agents'
+    descriptions show in the details and go to the summarizer.
   - The terminal title: a `◐`/`◑` prefix means the harness is working. `✳`
     marks both idle and a pending dialog, so the title never decides
     `needs_approval` alone.

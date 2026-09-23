@@ -253,6 +253,55 @@ mod tests {
     }
 
     #[test]
+    fn subagents_are_running_until_their_turn_ends() {
+        let root = std::env::temp_dir().join(format!("twapp-subagents-{}", uuid::Uuid::new_v4()));
+        let transcript = root.join("session-1.jsonl");
+        let dir = root.join("session-1").join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&transcript, "").unwrap();
+        let done = r#"{"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"end_turn","content":[]}}"#;
+        let busy = r#"{"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"tool_use","content":[]}}"#;
+        let result = r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result"}]}}"#;
+        std::fs::write(dir.join("agent-a1.jsonl"), format!("{}\n", done)).unwrap();
+        std::fs::write(dir.join("agent-a1.meta.json"), r#"{"agentType":"fork","description":"Build the host"}"#).unwrap();
+        std::fs::write(dir.join("agent-a2.jsonl"), format!("{}\n{}\n", busy, result)).unwrap();
+        std::fs::write(dir.join("agent-a2.meta.json"), r#"{"agentType":"Explore","description":""}"#).unwrap();
+
+        let mut seen = std::collections::HashMap::new();
+        let now = std::time::SystemTime::now();
+        let agents = read_subagents(&transcript, now, &mut seen);
+        assert_eq!(
+            agents,
+            vec![
+                Subagent { id: "a1".into(), description: "Build the host".into(), running: false },
+                Subagent { id: "a2".into(), description: "Explore".into(), running: true },
+            ]
+        );
+
+        let later = now + std::time::Duration::from_secs(SUBAGENT_STALE_SECS + 60);
+        assert!(
+            read_subagents(&transcript, later, &mut seen).iter().all(|a| !a.running),
+            "an agent that stopped writing long ago is not counted"
+        );
+        assert!(read_subagents(&root.join("missing.jsonl"), now, &mut seen).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `TWAPP_LIVE_TRANSCRIPT=<session.jsonl> cargo test live_subagents -- --ignored --nocapture`
+    /// lists a real session's subagents and which are still running.
+    #[test]
+    #[ignore]
+    fn live_subagents() {
+        let path = PathBuf::from(std::env::var("TWAPP_LIVE_TRANSCRIPT").expect("TWAPP_LIVE_TRANSCRIPT"));
+        let agents = read_subagents(&path, std::time::SystemTime::now(), &mut Default::default());
+        let running: Vec<_> = agents.iter().filter(|a| a.running).collect();
+        println!("{} subagents, {} running", agents.len(), running.len());
+        for a in running {
+            println!("running: {}", a.description);
+        }
+    }
+
+    #[test]
     fn status_files_tolerate_unknown_and_missing_fields() {
         let files = read_status_files(&fixture("claude-sessions"));
         let mut pids: Vec<u32> = files.iter().map(|f| f.pid).collect();
@@ -338,4 +387,98 @@ mod tests {
         );
         assert_eq!(locate_transcript(&projects, "/x", "missing"), None);
     }
+}
+
+/// A subagent transcript that has not changed for this long is treated as
+/// abandoned (a crash or a killed session), whatever its last line says.
+pub const SUBAGENT_STALE_SECS: u64 = 30 * 60;
+
+/// One subagent of a Claude session: a fork, a background agent, or a
+/// foreground helper, as recorded under `<session>/subagents/`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    pub id: String,
+    pub description: String,
+    pub running: bool,
+}
+
+/// The subagents of the session whose transcript is `transcript`, with
+/// whether each is still at work: its last assistant message is not a
+/// finished turn and its transcript changed within [`SUBAGENT_STALE_SECS`].
+///
+/// `seen` caches each transcript's finished flag by its length, so a poll
+/// only reads the transcripts that grew.
+pub fn read_subagents(
+    transcript: &Path,
+    now: std::time::SystemTime,
+    seen: &mut std::collections::HashMap<PathBuf, (u64, bool)>,
+) -> Vec<Subagent> {
+    let dir = transcript.with_extension("").join("subagents");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut agents = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(id) = name.strip_prefix("agent-").and_then(|n| n.strip_suffix(".jsonl")) else {
+            continue;
+        };
+        let meta = entry.metadata().ok();
+        let fresh = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| now.duration_since(t).ok())
+            .is_none_or(|age| age.as_secs() < SUBAGENT_STALE_SECS);
+        let len = meta.map(|m| m.len()).unwrap_or(0);
+        let running = fresh && {
+            let done = match seen.get(&path) {
+                Some((seen_len, done)) if *seen_len == len => *done,
+                _ => {
+                    let done = finished(&path);
+                    seen.insert(path.clone(), (len, done));
+                    done
+                }
+            };
+            !done
+        };
+        agents.push(Subagent {
+            id: id.to_string(),
+            description: subagent_description(&dir, id),
+            running,
+        });
+    }
+    agents.sort_by(|a, b| a.id.cmp(&b.id));
+    agents
+}
+
+fn finished(transcript: &Path) -> bool {
+    let Some((lines, _)) = tail_lines(transcript, 32 * 1024) else {
+        return false;
+    };
+    lines
+        .iter()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v.get("type").and_then(Value::as_str) == Some("assistant"))
+        .and_then(|v| {
+            v.pointer("/message/stop_reason")
+                .and_then(Value::as_str)
+                .map(|r| r == "end_turn")
+        })
+        .unwrap_or(false)
+}
+
+fn subagent_description(dir: &Path, id: &str) -> String {
+    std::fs::read_to_string(dir.join(format!("agent-{}.meta.json", id)))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| {
+            v.get("description")
+                .and_then(Value::as_str)
+                .filter(|d| !d.trim().is_empty())
+                .or_else(|| v.get("agentType").and_then(Value::as_str))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "agent".to_string())
 }
