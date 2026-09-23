@@ -140,7 +140,7 @@ The dock icon shows how many sessions need you and bounces once when a session s
 
 | Shortcut | Action |
 |----------|--------|
-| `⌘1` to `⌘9` | Select the session at that position |
+| `⌘1` to `⌘9` | Select the session at that position among the rows showing |
 | `⌘J` | Next session that needs you |
 | `⌘K` | Switch to, open or start anything |
 | `⌥⌘↑` / `⌥⌘↓` | Previous or next session |
@@ -153,7 +153,11 @@ The dock icon shows how many sessions need you and bounces once when a session s
 | `⌘,` | Settings |
 | `⌘=` / `⌘-` / `⌘⇧0` | Zoom in, out, reset |
 
-Drag rows in the session list to reorder them; the order is kept between launches. The layout button in the list's header picks where the sidebar goes. A collapsed sidebar shows the full sidebar while you hover it, and a one-line status bar above the terminal carries the selected session's state, what it needs from you, and how many other sessions need you.
+The session list has three lanes: **Priority**, **Background** and **Blocked**. Drag a row within a lane to reorder it or onto another lane to move it; right-click a row, or use the lane control under the session's name, to move it without dragging. Your order is kept between launches. A new session opened with a command starts in Priority; a restored or adopted one starts in Background.
+
+Blocked is for a session you are keeping open while you wait on someone else. It does not count toward the sessions that need you or the dock badge, except when its harness asks for a permission, and its row shows how long it has been blocked and when you last checked on it. Sending the session a message restarts the "checked" clock; the session stays blocked until you move it.
+
+Each lane folds from its header. The list next to a session's details starts with only Priority open, the sessions you switch between most; the full list in the split layout and the overview start with everything but Blocked open. `⌘1` to `⌘9` count the rows that are showing. The layout button in the list's header picks where the sidebar goes. A collapsed sidebar shows the full sidebar while you hover it, and a one-line status bar above the terminal carries the selected session's state, what it needs from you, and how many other sessions need you.
 
 ### Notes, tickets and prompts
 
@@ -223,7 +227,7 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `config.yaml` | `~/.config/twapp/` | Global configuration |
 | `quick-prompts.json` | `~/.config/twapp/` | Quick prompts |
 | `default-permissions.json` | `~/.config/twapp/` | Default Claude permissions |
-| `hub.json` | `~/.config/twapp/` | Rail order, selection, last-viewed times |
+| `hub.json` | `~/.config/twapp/` | Rail order, lanes, selection, last-viewed times |
 | `run/hub.sock`, `run/ptyd.sock` | `~/.config/twapp/` | Sockets for the window and the terminal host |
 | `summaries/` | `~/.local/state/twapp/` | Cached summaries |
 

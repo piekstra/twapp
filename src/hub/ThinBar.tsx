@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { STATE_LABELS, headlineOf, type SessionView } from "./api";
 
 interface Props {
@@ -22,7 +23,7 @@ export default function ThinBar({ sessions, selected, side, onSelect, onExpand, 
       onMouseLeave={() => onPeek(false)}
     >
       <div className="thinbar-ticks">
-        {sessions.map((s) => {
+        {sessions.map((s, i) => {
           const tone = s.attention
             ? s.status.state === "needs_approval"
               ? "approval"
@@ -32,13 +33,17 @@ export default function ThinBar({ sessions, selected, side, onSelect, onExpand, 
               : s.status.state === "errored"
                 ? "error"
                 : "quiet";
+          // A gap marks where one lane ends and the next begins.
+          const laneBreak = i > 0 && (sessions[i - 1].lane ?? "background") !== (s.lane ?? "background");
           return (
+            <Fragment key={s.key}>
+            {laneBreak && <div className="thinbar-gap" />}
             <button
-              key={s.key}
-              className={`thinbar-tick tone-${tone}${s.key === selected ? " selected" : ""}`}
+              className={`thinbar-tick tone-${tone} lane-${s.lane ?? "background"}${s.key === selected ? " selected" : ""}`}
               title={`${s.name}: ${STATE_LABELS[s.status.state]}${headlineOf(s) ? `\n${headlineOf(s)}` : ""}`}
               onClick={() => onSelect(s.key)}
             />
+            </Fragment>
           );
         })}
       </div>

@@ -69,6 +69,31 @@ struct PersistedHub {
     /// the user closed here is not added back while its old window runs.
     #[serde(default)]
     adopted: Vec<String>,
+    #[serde(default)]
+    lanes: HashMap<String, LaneInfo>,
+}
+
+/// How the user files a session: what they are focused on today, what they
+/// get to when they have time, and what waits on someone else.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Lane {
+    Priority,
+    #[default]
+    Background,
+    Blocked,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LaneInfo {
+    pub lane: Lane,
+    /// When the user marked the session blocked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_since: Option<String>,
+    /// When the user last sent the blocked session a message, such as asking
+    /// it to check on the party it waits for. Starts at `blocked_since`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
 }
 
 fn load_persisted() -> PersistedHub {
@@ -113,6 +138,9 @@ pub struct SessionView {
     pub summary: Option<Summary>,
     pub last_viewed: Option<String>,
     pub attention: bool,
+    pub lane: Lane,
+    pub blocked_since: Option<String>,
+    pub checked_at: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -197,6 +225,7 @@ struct HubSession {
     /// Restored from a running PTY: the first state the engine reports began
     /// before this window started, so its start time comes from the files.
     restored: bool,
+    lane: LaneInfo,
 }
 
 impl HubSession {
@@ -211,6 +240,7 @@ impl HubSession {
             tracker: Arc::new(Mutex::new(StatusTracker::new(provider))),
             shell_pid: None,
             restored: false,
+            lane: LaneInfo::default(),
         }
     }
 
@@ -223,6 +253,11 @@ impl HubSession {
     }
 
     fn attention(&self) -> bool {
+        // A blocked session waits on someone else; only an open prompt, which
+        // stops it until the user answers, is worth interrupting them for.
+        if self.lane.lane == Lane::Blocked && self.status.state != State::NeedsApproval {
+            return false;
+        }
         match self.status.state {
             State::NeedsApproval => true,
             State::YourTurn | State::Errored => match &self.last_viewed {
@@ -274,6 +309,9 @@ impl HubSession {
             summary: self.summary.clone(),
             last_viewed: self.last_viewed.clone(),
             attention: self.attention(),
+            lane: self.lane.lane,
+            blocked_since: self.lane.blocked_since.clone(),
+            checked_at: self.lane.checked_at.clone(),
         }
     }
 }
@@ -308,6 +346,11 @@ impl HubInner {
                 .filter_map(|s| s.last_viewed.clone().map(|v| (s.key.clone(), v)))
                 .collect(),
             adopted: self.adopted.clone(),
+            lanes: self
+                .sessions
+                .iter()
+                .map(|s| (s.key.clone(), s.lane.clone()))
+                .collect(),
         }
     }
 
@@ -531,6 +574,7 @@ impl Hub {
                 .unwrap_or(AgentProvider::Claude);
             let mut session = HubSession::new(key.clone(), provider);
             session.last_viewed = persisted.last_viewed.get(&key).cloned();
+            session.lane = persisted.lanes.get(&key).cloned().unwrap_or_default();
             session.summary = self.summarizer.cached(&key);
             for info in live.iter().filter(|i| i.session_key == key && i.alive) {
                 if info.tab == MAIN_TAB {
@@ -613,6 +657,8 @@ impl Hub {
             let mut inner = self.inner.lock();
             if inner.session(&key).is_none() {
                 let mut session = HubSession::new(key.clone(), args.provider);
+                // A session started from here is what the user is on now.
+                session.lane.lane = if args.command.is_some() { Lane::Priority } else { Lane::Background };
                 session.summary = self.summarizer.cached(&key);
                 inner.sessions.push(session);
             }
@@ -931,7 +977,51 @@ impl Hub {
         ))
     }
 
+    /// File a session in a lane. Marking it blocked starts its blocked and
+    /// checked clocks; moving it out of blocked clears them.
+    pub fn set_lane(&self, key: &str, lane: Lane) {
+        {
+            let mut inner = self.inner.lock();
+            let Some(session) = inner.session(key) else { return };
+            if session.lane.lane == lane {
+                return;
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            session.lane = match lane {
+                Lane::Blocked => LaneInfo {
+                    lane,
+                    blocked_since: Some(now.clone()),
+                    checked_at: Some(now),
+                },
+                _ => LaneInfo { lane, ..Default::default() },
+            };
+        }
+        self.persist();
+        self.emit_changed();
+        self.update_badge();
+    }
+
     pub fn write(&self, key: &str, tab: &str, data: Vec<u8>) {
+        // Sending a blocked session a message (such as asking it to check on
+        // the party it waits for) restarts its checked clock; it stays
+        // blocked until the user moves it.
+        if tab == MAIN_TAB && data.contains(&b'\r') {
+            let touched = {
+                let mut inner = self.inner.lock();
+                inner.session(key).is_some_and(|s| {
+                    if s.lane.lane == Lane::Blocked {
+                        s.lane.checked_at = Some(chrono::Utc::now().to_rfc3339());
+                        true
+                    } else {
+                        false
+                    }
+                })
+            };
+            if touched {
+                self.persist();
+                self.emit_changed();
+            }
+        }
         let _ = self.ops.send(TerminalOp::Write {
             key: key.to_string(),
             tab: tab.to_string(),
@@ -1603,6 +1693,12 @@ pub fn hub_select(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
+    require_hub()?.set_lane(&key, lane);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn hub_reorder(keys: Vec<String>) -> Result<(), String> {
     require_hub()?.reorder(&keys);
     Ok(())
@@ -1726,6 +1822,27 @@ mod tests {
         assert_eq!(live_holder(&files, &procs, "live-id"), Some(111));
         assert_eq!(live_holder(&files, &procs, "stale-id"), None, "its process is gone");
         assert_eq!(live_holder(&files, &procs, "other"), None);
+    }
+
+    #[test]
+    fn a_blocked_session_only_interrupts_for_an_open_prompt() {
+        let mut s = HubSession::new("/w/a".into(), AgentProvider::Claude);
+        s.lane.lane = Lane::Blocked;
+        s.status = SessionStatus::in_state_now(State::YourTurn);
+        assert!(!s.attention(), "a finished turn in a blocked session waits quietly");
+        s.status = SessionStatus::in_state_now(State::NeedsApproval);
+        assert!(s.attention(), "an open prompt stops the session until the user answers");
+    }
+
+    #[test]
+    fn lanes_round_trip_through_hub_json() {
+        let json = r#"{"order":["/w/a"],"lanes":{"/w/a":{"lane":"blocked","blocked_since":"2026-01-01T00:00:00Z","checked_at":"2026-01-02T00:00:00Z"}}}"#;
+        let p: PersistedHub = serde_json::from_str(json).unwrap();
+        let info = &p.lanes["/w/a"];
+        assert_eq!(info.lane, Lane::Blocked);
+        assert_eq!(info.checked_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+        let old: PersistedHub = serde_json::from_str(r#"{"order":["/w/a"]}"#).unwrap();
+        assert!(old.lanes.is_empty(), "a hub.json from before lanes still loads");
     }
 
     #[test]

@@ -55,6 +55,23 @@ export interface SessionView {
   summary: Summary | null;
   last_viewed: string | null;
   attention: boolean;
+  lane: Lane;
+  blocked_since: string | null;
+  checked_at: string | null;
+}
+
+export type Lane = "priority" | "background" | "blocked";
+
+export const LANES: { lane: Lane; label: string }[] = [
+  { lane: "priority", label: "Priority" },
+  { lane: "background", label: "Background" },
+  { lane: "blocked", label: "Blocked" },
+];
+
+/** Sessions in lane order (priority, background, blocked), keeping the
+ * user's order within each lane. */
+export function byLane(sessions: SessionView[]): SessionView[] {
+  return LANES.flatMap(({ lane }) => sessions.filter((s) => (s.lane ?? "background") === lane));
 }
 
 export interface HubSnapshot {
@@ -107,6 +124,7 @@ export const hubApi = {
   open: (directory: string) => invoke<string>("hub_open", { directory }),
   select: (key: string) => invoke("hub_select", { key }),
   reorder: (keys: string[]) => invoke("hub_reorder", { keys }),
+  setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
   start: (key: string, tab: string, rows: number, cols: number, channel: Channel<ArrayBuffer>) =>
     invoke("hub_start", { key, tab, rows, cols, channel }),
   write: (key: string, tab: string, data: string) => invoke("hub_write", { key, tab, data }),

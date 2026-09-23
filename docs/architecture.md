@@ -206,7 +206,7 @@ Keyboard:
 
 | Shortcut | Action |
 |---|---|
-| `⌘1` to `⌘9` | Select the session at that position in the rail. |
+| `⌘1` to `⌘9` | Select the session at that position among the rows showing (folded lanes are skipped). |
 | `⌘J` | Jump to the next session that needs attention. |
 | `⌘K` | Command palette: switch to or open any known session, new session, fork, settings. |
 | `⌥⌘↑`, `⌥⌘↓` | Previous or next session in the rail. |
@@ -219,7 +219,17 @@ Keyboard:
 | `⌘=`, `⌘-`, `⌘⇧0` | Zoom in, out, reset. |
 
 The list keeps the user's order (drag to reorder) rather than sorting by state,
-so a session's `⌘` number does not change while its state does.
+so a session's `⌘` number does not change while its state does. Sessions sit in
+one of three lanes the user assigns (`priority`, `background`, `blocked`); every
+view lists them lane by lane, keeping the user's order within each. The backend
+holds one order across all sessions and the frontend groups it, so a drag sends
+the new full order and, when the row changed lanes, the new lane.
+
+A blocked session carries `blocked_since` (when it was moved to Blocked) and
+`checked_at` (the last time the user sent it input ending in a carriage
+return). Its attention is muted except for `needs_approval`, so it stays out of
+`⌘J`, the attention count and the dock badge while it waits on someone else.
+Only the user moves a session out of Blocked.
 
 ## Rendering cost
 
@@ -234,7 +244,7 @@ one harness process, plus an xterm buffer in the webview.
 
 ## Restore
 
-The GUI records the hosted sessions, their rail order, the selected session and
+The GUI records the hosted sessions, their rail order and lanes, the selected session and
 the per-session last-viewed time in `~/.config/twapp/hub.json`. On start it
 attaches to every PTY `ptyd` still holds. Sessions from the last run that `ptyd`
 no longer holds come back as `suspended`, and each resumes only when selected.
