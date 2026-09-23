@@ -374,12 +374,37 @@ mod command_build_tests {
     }
 }
 
+/// A count derived from a file, recomputed only when the file's size or
+/// modification time changes. Listing every session counts messages in every
+/// transcript, and most transcripts do not change between two listings.
+pub fn cached_file_count(path: &Path, key: &str, count: impl FnOnce() -> Option<u32>) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+    type Stamp = (u64, std::time::SystemTime);
+    static CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), (Stamp, Option<u32>)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    let meta = std::fs::metadata(path).ok()?;
+    let stamp = (meta.len(), meta.modified().ok()?);
+    let id = (path.to_path_buf(), key.to_string());
+    if let Some((cached, value)) = CACHE.lock().ok()?.get(&id) {
+        if *cached == stamp {
+            return *value;
+        }
+    }
+    let value = count();
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(id, (stamp, value));
+    }
+    value
+}
+
 pub fn count_codex_conversation_messages(session_id: &str) -> Option<u32> {
     let history_path = dirs::home_dir()?.join(".codex/history.jsonl");
-    if !history_path.exists() {
-        return None;
-    }
+    cached_file_count(&history_path.clone(), session_id, || count_codex_history(&history_path, session_id))
+}
 
+fn count_codex_history(history_path: &Path, session_id: &str) -> Option<u32> {
     let file = std::fs::File::open(history_path).ok()?;
     let reader = std::io::BufReader::new(file);
     use std::io::BufRead;
@@ -1022,7 +1047,18 @@ fn ensure_claude_settings(work_dir: &Path) {
     }
 }
 
+const SKIPPED_DIRS: &[&str] = &[
+    "node_modules", "target", "dist", "build", "vendor", "venv", "__pycache__", "Pods", "bin", "obj",
+];
+
 fn scan_recursive(dir: &Path, results: &mut Vec<(SessionData, PathBuf)>, depth: usize) {
+    visit_sessions(dir, depth, &mut |data, path| results.push((data, path)));
+}
+
+/// Every session under `dir`, in directory order. Sessions sit directly in
+/// the work directory or in folders that group them, never inside another
+/// session or a checkout, so neither is descended into.
+pub fn visit_sessions(dir: &Path, depth: usize, visit: &mut impl FnMut(SessionData, PathBuf)) {
     if depth > 5 {
         return; // Prevent runaway recursion
     }
@@ -1031,25 +1067,54 @@ fn scan_recursive(dir: &Path, results: &mut Vec<(SessionData, PathBuf)>, depth: 
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            // Skip hidden directories
-            if path
-                .file_name()
-                .map_or(false, |n| n.to_string_lossy().starts_with('.'))
-            {
-                continue;
-            }
-            // Check for session file in this directory
-            let session_file = path.join(".twapp-session.json");
-            if session_file.exists() {
-                if let Ok(content) = std::fs::read_to_string(&session_file) {
-                    if let Ok(data) = serde_json::from_str::<SessionData>(&content) {
-                        results.push((data, path.clone()));
-                    }
+        if !path.is_dir() {
+            continue;
+        }
+        // Hidden directories and build or dependency trees never hold a
+        // session, and walking them is most of the scan's cost.
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        let session_file = path.join(".twapp-session.json");
+        if session_file.exists() {
+            if let Ok(content) = std::fs::read_to_string(&session_file) {
+                if let Ok(data) = serde_json::from_str::<SessionData>(&content) {
+                    visit(data, path.clone());
                 }
             }
-            // Continue scanning subdirectories
-            scan_recursive(&path, results, depth + 1);
+            continue;
         }
+        if path.join(".git").exists() {
+            continue;
+        }
+        visit_sessions(&path, depth + 1, visit);
+    }
+}
+
+#[cfg(test)]
+mod visit_sessions_tests {
+    use super::*;
+
+    #[test]
+    fn finds_sessions_in_grouping_folders_but_not_inside_sessions_or_checkouts() {
+        let root = std::env::temp_dir().join(format!("twapp-visit-{}", uuid::Uuid::new_v4()));
+        let session = |dir: &Path, name: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            let data = format!(r#"{{"session_id":"x","name":"{}","color":"","claude_cwd":"","created":"2026-01-01T00:00:00Z"}}"#, name);
+            std::fs::write(dir.join(".twapp-session.json"), data).unwrap();
+        };
+        session(&root.join("top"), "top");
+        session(&root.join("group").join("grouped"), "grouped");
+        session(&root.join("top").join("nested"), "inside a session");
+        std::fs::create_dir_all(root.join("repo").join(".git")).unwrap();
+        session(&root.join("repo").join("sub"), "inside a checkout");
+        session(&root.join("app").join("node_modules").join("pkg"), "inside dependencies");
+
+        let mut names = Vec::new();
+        visit_sessions(&root, 0, &mut |data, _| names.push(data.name));
+        names.sort();
+        assert_eq!(names, vec!["grouped", "top"]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

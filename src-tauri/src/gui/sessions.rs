@@ -25,22 +25,18 @@ pub fn count_conversation_messages(session_id: &str, claude_cwd: &str) -> Option
         .join(&encoded)
         .join(format!("{}.jsonl", session_id));
 
-    if !jsonl_path.exists() {
-        return None;
-    }
-
-    let file = std::fs::File::open(&jsonl_path).ok()?;
-    let reader = std::io::BufReader::new(file);
-    use std::io::BufRead;
-    let count = reader
-        .lines()
-        .filter_map(|l| l.ok())
-        .filter(|line| {
-            line.contains("\"type\":\"human\"") || line.contains("\"type\":\"assistant\"")
-        })
-        .count();
-
-    Some(count as u32)
+    crate::cli::session::cached_file_count(&jsonl_path, "", || {
+        use std::io::BufRead;
+        let file = std::fs::File::open(&jsonl_path).ok()?;
+        let count = std::io::BufReader::new(file)
+            .lines()
+            .map_while(Result::ok)
+            .filter(|line| {
+                line.contains("\"type\":\"human\"") || line.contains("\"type\":\"assistant\"")
+            })
+            .count();
+        Some(count as u32)
+    })
 }
 
 fn count_messages_for_provider(
@@ -173,37 +169,9 @@ fn emit_provider_session_update(
 }
 
 pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
-    if depth > 5 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if path
-                .file_name()
-                .map_or(false, |n| n.to_string_lossy().starts_with('.'))
-            {
-                continue;
-            }
-            let session_file = path.join(".twapp-session.json");
-            if session_file.exists() {
-                if let Ok(content) = std::fs::read_to_string(&session_file) {
-                    if let Ok(data) =
-                        serde_json::from_str::<crate::cli::session::SessionData>(&content)
-                    {
-                        let _ = app.emit(
-                            "launcher:session",
-                            launcher_session_from_data(&data, &path),
-                        );
-                    }
-                }
-            }
-            scan_and_emit(app, &path, depth + 1);
-        }
-    }
+    crate::cli::session::visit_sessions(dir, depth, &mut |data, path| {
+        let _ = app.emit("launcher:session", launcher_session_from_data(&data, &path));
+    });
 }
 
 #[tauri::command]
@@ -1564,5 +1532,20 @@ mod resume_command_tests {
         assert_eq!(second.command, format!("claude --resume {}", minted));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod live_probe {
+    /// `cargo test live_list_all_sessions -- --ignored --nocapture`: how long
+    /// listing this machine's sessions takes, cold and then cached.
+    #[test]
+    #[ignore]
+    fn live_list_all_sessions() {
+        for pass in 0..2 {
+            let t = std::time::Instant::now();
+            let r = tauri::async_runtime::block_on(super::list_all_sessions()).unwrap();
+            println!("pass={} sessions={} ms={}", pass, r.sessions.len(), t.elapsed().as_millis());
+        }
     }
 }
