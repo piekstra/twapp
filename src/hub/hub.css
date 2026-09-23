@@ -3268,3 +3268,78 @@ kbd {
   gap: 6px;
   margin-top: 6px;
 }
+
+/* --- Calmer overview ------------------------------------------------------- */
+
+.overview-fold {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+}
+
+.overview-fold {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.overview-waiting-parties {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+  margin-left: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-waiting .blocker-list {
+  margin-top: 8px;
+}
+
+.overview-effort + .overview-effort {
+  margin-top: 12px;
+}
+
+.overview-effort-head {
+  font: 500 11.5px var(--font-ui);
+  color: var(--text-2);
+  margin: 2px 0 6px;
+}
+
+.check-ask {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+
+.check-ask-text {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.check-ask-text code {
+  font: 11px var(--font-mono, Menlo, monospace);
+  color: var(--text-1);
+  word-break: break-all;
+}
+
+.check-ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}

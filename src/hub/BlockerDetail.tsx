@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
+import CheckButton from "./CheckButton";
 import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
 
 const EVENT: Record<string, string> = {
@@ -83,7 +84,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
                   <code className="blocker-detail-code">{blocker.check}</code>
                   <div className="blocker-checked">
                     {blocker.last_checked_at ? `Last run ${sinceLabel(blocker.last_checked_at, now)} ago` : "Not run yet"}
-                    {!blocker.check_approved && " · runs on its own only after you approve it"}
+                    {!blocker.check_approved && " · not run on its own until you allow it"}
                   </div>
                 </dd>
               </>
@@ -123,11 +124,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
           </ol>
           {error && <div className="blocker-error">{error}</div>}
           <div className="fork-actions">
-            {blocker.check && (
-              <button className="fork-cancel" disabled={busy} onClick={() => run(() => hubApi.blockerCheck(session.key, blocker.id, !blocker.check_approved))}>
-                {blocker.check_approved ? "Check now" : "Approve and check"}
-              </button>
-            )}
+            <CheckButton blocker={blocker} sessionKey={session.key} className="fork-cancel" onError={setError} />
             {blocker.status === "updated" && (
               <button className="fork-cancel" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>Mark seen</button>
             )}

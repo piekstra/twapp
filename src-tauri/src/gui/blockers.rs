@@ -69,6 +69,21 @@ pub fn check_one(dir: &Path, id: &str) -> Result<bool, String> {
     if !blockers::is_approved(&command) {
         return Err("the check command is not approved".to_string());
     }
+    run_and_record(dir, id, &command)
+}
+
+/// Run a check the user asked for once, without approving its command.
+pub fn check_one_unapproved(dir: &Path, id: &str) -> Result<bool, String> {
+    let command = blockers::load(dir)
+        .into_iter()
+        .find(|b| b.id == id)
+        .and_then(|b| b.check)
+        .ok_or("the blocker has no check command")?;
+    run_and_record(dir, id, &command)
+}
+
+fn run_and_record(dir: &Path, id: &str, command: &str) -> Result<bool, String> {
+    let command = command.to_string();
     log_check(dir, &command);
     let result = blockers::run_check(&command, dir);
     let updated = blockers::update(dir, id, |b| b.record_check(result))?;
