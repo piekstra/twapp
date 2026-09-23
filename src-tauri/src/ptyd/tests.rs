@@ -456,3 +456,27 @@ fn smoke_real_daemon_outlives_a_client() {
     events.wait_for_output(pty, HELLO_OUT);
     b.shutdown(true).unwrap();
 }
+
+#[test]
+fn a_terminal_that_is_not_reading_input_does_not_stall_the_host() {
+    let server = TestServer::start(test_config());
+    let (client, events) = server.client();
+    // In raw mode, as harness TUIs run, a program that never reads stdin
+    // fills the tty input queue and further writes block (in line mode the
+    // tty drops the excess instead).
+    let stuck = client.spawn(spawn_req(Some("stty raw -echo; sleep 30"))).unwrap();
+    let other = client.spawn(spawn_req(Some(HELLO_CMD))).unwrap();
+    client.attach(other.id, true).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let started = std::time::Instant::now();
+    let chunk = vec![b'x'; 16 * 1024];
+    for _ in 0..16 {
+        // Once the queue is full the host refuses the keys instead of blocking.
+        let _ = client.write(stuck.id, &chunk);
+    }
+    assert!(client.list().unwrap().iter().any(|p| p.id == other.id));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "writes and List stalled for {:?}", started.elapsed());
+    events.wait_for_output(other.id, HELLO_OUT);
+    let _ = client.kill(stuck.id);
+}

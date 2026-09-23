@@ -19,6 +19,9 @@ const OUTPUT_CHUNK: usize = 64 * 1024;
 /// Frames queued per client before a slow client is disconnected. A dropped
 /// client reconnects and replays, so this bounds memory without losing screens.
 const CLIENT_QUEUE: usize = 1024;
+/// Input chunks a PTY holds while its program is not reading. Keystrokes and
+/// pastes are small, so this is far more than a user types ahead.
+const INPUT_QUEUE: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -196,7 +199,11 @@ impl Ring {
 
 struct Pty {
     info: PtyInfo,
-    writer: Option<Box<dyn Write + Send>>,
+    /// Input for the PTY, written by its own thread: a write to a terminal
+    /// whose program is not reading stdin blocks once the tty queue fills,
+    /// and blocking with this struct's lock held would stall its output and
+    /// every request that touches it.
+    writer: Option<SyncSender<Vec<u8>>>,
     master: Option<Box<dyn MasterPty + Send>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     ring: Ring,
@@ -380,11 +387,14 @@ impl Server {
                     .decode(data_b64)
                     .map_err(|e| format!("invalid base64: {}", e))?;
                 let pty = self.get(pty)?;
-                let mut p = pty.lock();
-                let writer = p.writer.as_mut().ok_or("pty has exited")?;
-                writer.write_all(&data).map_err(|e| e.to_string())?;
-                writer.flush().map_err(|e| e.to_string())?;
-                Ok(ResponseBody::Ok)
+                let writer = pty.lock().writer.clone().ok_or("pty has exited")?;
+                match writer.try_send(data) {
+                    Ok(()) => Ok(ResponseBody::Ok),
+                    Err(TrySendError::Full(_)) => {
+                        Err("the terminal is not reading its input; these keys were dropped".to_string())
+                    }
+                    Err(TrySendError::Disconnected(_)) => Err("pty has exited".to_string()),
+                }
             }
             RequestBody::Resize { pty, rows, cols } => {
                 let pty = self.get(pty)?;
@@ -508,7 +518,16 @@ impl Server {
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let mut raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let (writer, input) = sync_channel::<Vec<u8>>(INPUT_QUEUE);
+        std::thread::spawn(move || {
+            // Ends when every sender is dropped (exit or kill) or the PTY closes.
+            for chunk in input {
+                if raw_writer.write_all(&chunk).and_then(|_| raw_writer.flush()).is_err() {
+                    break;
+                }
+            }
+        });
         let killer = child.clone_killer();
 
         let id = self.next_pty.fetch_add(1, Ordering::SeqCst);
@@ -669,12 +688,15 @@ fn wait_for_settle(pty: &Mutex<Pty>, quiet: Duration, timeout: Duration) {
 }
 
 fn type_input(pty: &Mutex<Pty>, bytes: &[u8]) {
-    let mut p = pty.lock();
-    if let Some(w) = p.writer.as_mut() {
-        let _ = w.write_all(bytes);
-        let _ = w.flush();
+    let writer = {
+        let mut p = pty.lock();
+        p.settle_bytes = 0;
+        p.writer.clone()
+    };
+    if let Some(writer) = writer {
+        // Blocks only this typing thread when the queue is full.
+        let _ = writer.send(bytes.to_vec());
     }
-    p.settle_bytes = 0;
 }
 
 fn type_launch_input(
