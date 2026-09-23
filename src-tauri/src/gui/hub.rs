@@ -1996,22 +1996,31 @@ pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
 /// commands the window may run on its own; `once` runs a command that is not
 /// approved this one time, at the user's request, without approving it.
 #[tauri::command]
-pub async fn hub_blocker_check(key: String, id: String, approve: bool, once: Option<bool>) -> Result<(), String> {
+pub async fn hub_blocker_check(
+    key: String,
+    id: String,
+    approve: bool,
+    once: Option<bool>,
+    command: Option<String>,
+) -> Result<bool, String> {
     let hub = require_hub()?;
     tauri::async_runtime::spawn_blocking(move || {
         let dir = Path::new(&key);
-        if approve {
-            let command = crate::cli::blockers::load(dir)
-                .into_iter()
-                .find(|b| b.id == id)
-                .and_then(|b| b.check)
-                .ok_or("the blocker has no check command")?;
-            crate::cli::blockers::approve(&command)?;
+        // What runs, or gets approved, is the command the user was shown;
+        // one changed in the file since then is refused.
+        if approve || once.unwrap_or(false) {
+            let current = super::blockers::current_check(dir, &id)?;
+            if command.as_deref() != Some(current.as_str()) {
+                return Err("the check command changed since it was shown; look at it again".to_string());
+            }
+            if approve {
+                crate::cli::blockers::approve(&current, dir)?;
+            }
         }
         let result = if once.unwrap_or(false) && !approve {
-            super::blockers::check_one_unapproved(dir, &id).map(|_| ())
+            super::blockers::check_one_unapproved(dir, &id)
         } else {
-            super::blockers::check_one(dir, &id).map(|_| ())
+            super::blockers::check_one(dir, &id)
         };
         hub.refresh_blockers();
         result

@@ -6,6 +6,8 @@ interface Props {
   sessionKey: string;
   className?: string;
   onError: (error: string) => void;
+  /** Called with what the check found, to show next to the blocker. */
+  onResult?: (text: string) => void;
 }
 
 /**
@@ -13,16 +15,18 @@ interface Props {
  * was written by an agent, and it runs on the user's machine; the user can
  * run it once or let twapp run it every hour from then on.
  */
-export default function CheckButton({ blocker, sessionKey, className = "button ghost small", onError }: Props) {
+export default function CheckButton({ blocker, sessionKey, className = "button ghost small", onError, onResult }: Props) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const run = async (approve: boolean, once: boolean) => {
     setAsking(false);
     setBusy(true);
     try {
-      await hubApi.blockerCheck(sessionKey, blocker.id, approve, once);
+      const changed = await hubApi.blockerCheck(sessionKey, blocker.id, approve, once, blocker.check ?? null);
+      onResult?.(changed ? "Checked just now: the output changed" : "Checked just now: no change");
     } catch (e) {
       onError(String(e));
+      onResult?.("");
     } finally {
       setBusy(false);
     }

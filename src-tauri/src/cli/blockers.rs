@@ -283,28 +283,48 @@ pub fn run_check(command: &str, dir: &Path) -> Result<String, String> {
 
 /// Commands the user allowed the window to run on its own. Blocker files are
 /// written by agents and live in any directory, so the window runs a check
-/// only once the user approved that exact command.
+/// only once the user approved that exact command in that session directory:
+/// a command runs with the session directory as its working directory, so
+/// the same text can do something else in another one.
 fn approved_path() -> PathBuf {
     super::config::config_dir().join("approved-checks.json")
 }
 
-pub fn approved_checks() -> Vec<String> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Approval {
+    /// A command approved in one session directory.
+    In { command: String, dir: String },
+    /// A command approved before approvals named a directory; it stays
+    /// approved everywhere, as it was when the user approved it.
+    Anywhere(String),
+}
+
+pub fn approvals() -> Vec<Approval> {
     std::fs::read_to_string(approved_path())
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
 }
 
-pub fn is_approved(command: &str) -> bool {
-    approved_checks().iter().any(|c| c == command)
+pub fn approved_in(approvals: &[Approval], command: &str, dir: &Path) -> bool {
+    let dir = dir.to_string_lossy();
+    approvals.iter().any(|a| match a {
+        Approval::In { command: c, dir: d } => c == command && *d == dir,
+        Approval::Anywhere(c) => c == command,
+    })
 }
 
-pub fn approve(command: &str) -> Result<(), String> {
-    let mut approved = approved_checks();
-    if !approved.iter().any(|c| c == command) {
-        approved.push(command.to_string());
+pub fn is_approved(command: &str, dir: &Path) -> bool {
+    approved_in(&approvals(), command, dir)
+}
+
+pub fn approve(command: &str, dir: &Path) -> Result<(), String> {
+    let mut all = approvals();
+    if !approved_in(&all, command, dir) {
+        all.push(Approval::In { command: command.to_string(), dir: dir.to_string_lossy().to_string() });
     }
-    let json = serde_json::to_string_pretty(&approved).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
     super::fsutil::write_atomic(&approved_path(), json).map_err(|e| e.to_string())
 }
 
@@ -327,7 +347,8 @@ fn print_blocker(b: &Blocker) {
         println!("          ref: {}", reference);
     }
     if let Some(check) = &b.check {
-        let approved = if is_approved(check) { "" } else { " (not approved in the window)" };
+        let here = std::env::current_dir().unwrap_or_default();
+        let approved = if is_approved(check, &here) { "" } else { " (not approved in the window)" };
         println!("          check: {}{}", check, approved);
     }
     if let Some(error) = &b.check_error {
@@ -503,6 +524,22 @@ mod tests {
         b.status = BlockerStatus::Waiting;
         b.record_check(Ok("status: answered\n".into()));
         assert_eq!(b.status, BlockerStatus::Waiting, "the seen output is the new baseline");
+    }
+
+    #[test]
+    fn an_approval_holds_for_its_command_in_its_directory() {
+        let a = Path::new("/work/a");
+        let b = Path::new("/work/b");
+        let all = vec![
+            Approval::In { command: "cat status.txt".into(), dir: "/work/a".into() },
+            Approval::Anywhere("gh pr view 1".into()),
+        ];
+        assert!(approved_in(&all, "cat status.txt", a));
+        assert!(!approved_in(&all, "cat status.txt", b), "the same text reads another directory's files");
+        assert!(!approved_in(&all, "cat status.txt; rm -rf ~", a));
+        assert!(approved_in(&all, "gh pr view 1", b), "an approval from before directories stays");
+        let file: Vec<Approval> = serde_json::from_str(r#"["gh pr view 1", {"command": "x", "dir": "/w"}]"#).unwrap();
+        assert_eq!(file.len(), 2);
     }
 
     #[test]

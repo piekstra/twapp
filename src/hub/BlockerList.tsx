@@ -19,6 +19,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
   // An update shows its output in the card; everything else is in the details.
   const open = blocker.status === "updated";
   const [detail, setDetail] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
   const notes = (blocker.history ?? []).filter((e) => e.kind === "note");
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -34,8 +35,8 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
   const updated = blocker.status === "updated";
   const link = blocker.reference && /^https?:\/\//.test(blocker.reference) ? blocker.reference : null;
   const age = (
-    <span className="blocker-age" title={`Recorded ${new Date(blocker.created_at).toLocaleString()}`}>
-      {sinceLabel(blocker.created_at, now)}
+    <span className="blocker-age" title={`Waiting since ${new Date(blocker.created_at).toLocaleString()}`}>
+      waiting {sinceLabel(blocker.created_at, now)}
     </span>
   );
   return (
@@ -90,9 +91,16 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
           )}
         </div>
       )}
+      {blocker.check && !open && (
+        <div className="blocker-checked">
+          {checkResult ?? (blocker.last_checked_at ? `Last checked ${sinceLabel(blocker.last_checked_at, now)} ago` : "Not checked yet")}
+          {blocker.check_error && !checkResult && " · the last check failed"}
+        </div>
+      )}
+      {open && checkResult && <div className="blocker-checked">{checkResult}</div>}
       {error && <div className="blocker-error">{error}</div>}
       <div className="blocker-actions">
-        <CheckButton blocker={blocker} sessionKey={session.key} onError={setError} />
+        <CheckButton blocker={blocker} sessionKey={session.key} onError={setError} onResult={(t) => setCheckResult(t || null)} />
         {updated && (
           <button className="button ghost small" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>
             Mark seen

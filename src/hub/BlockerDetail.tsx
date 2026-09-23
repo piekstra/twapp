@@ -24,6 +24,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -122,9 +123,10 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
               </li>
             ))}
           </ol>
+          {checkResult && <div className="blocker-checked">{checkResult}</div>}
           {error && <div className="blocker-error">{error}</div>}
           <div className="fork-actions">
-            <CheckButton blocker={blocker} sessionKey={session.key} className="fork-cancel" onError={setError} />
+            <CheckButton blocker={blocker} sessionKey={session.key} className="fork-cancel" onError={setError} onResult={(t) => setCheckResult(t || null)} />
             {blocker.status === "updated" && (
               <button className="fork-cancel" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>Mark seen</button>
             )}

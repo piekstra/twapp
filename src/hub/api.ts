@@ -179,7 +179,9 @@ export const hubApi = {
   setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),
   findEfforts: () => invoke<number>("hub_find_efforts"),
   yakReport: (days: number) => invoke<YakReport>("hub_yak_report", { days }),
-  blockerCheck: (key: string, id: string, approve: boolean, once = false) => invoke("hub_blocker_check", { key, id, approve, once }),
+  /** Resolves true when the check's output changed. `command` is the text the user was shown. */
+  blockerCheck: (key: string, id: string, approve: boolean, once = false, command: string | null = null) =>
+    invoke<boolean>("hub_blocker_check", { key, id, approve, once, command }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),

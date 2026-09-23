@@ -27,12 +27,12 @@ pub fn open_blockers(dir: &Path) -> Vec<BlockerView> {
     if !blockers::path_in(dir).is_file() {
         return Vec::new();
     }
-    let approved = blockers::approved_checks();
+    let approvals = blockers::approvals();
     blockers::load(dir)
         .into_iter()
         .filter(Blocker::is_open)
         .map(|blocker| BlockerView {
-            check_approved: blocker.check.as_ref().is_some_and(|c| approved.contains(c)),
+            check_approved: blocker.check.as_ref().is_some_and(|c| blockers::approved_in(&approvals, c, dir)),
             blocker,
         })
         .collect()
@@ -66,7 +66,7 @@ pub fn check_one(dir: &Path, id: &str) -> Result<bool, String> {
         .find(|b| b.id == id)
         .ok_or_else(|| format!("no blocker {}", id))?;
     let command = blocker.check.clone().ok_or("the blocker has no check command")?;
-    if !blockers::is_approved(&command) {
+    if !blockers::is_approved(&command, dir) {
         return Err("the check command is not approved".to_string());
     }
     run_and_record(dir, id, &command)
@@ -74,12 +74,17 @@ pub fn check_one(dir: &Path, id: &str) -> Result<bool, String> {
 
 /// Run a check the user asked for once, without approving its command.
 pub fn check_one_unapproved(dir: &Path, id: &str) -> Result<bool, String> {
-    let command = blockers::load(dir)
+    let command = current_check(dir, id)?;
+    run_and_record(dir, id, &command)
+}
+
+/// The blocker's check command as the file has it now.
+pub fn current_check(dir: &Path, id: &str) -> Result<String, String> {
+    blockers::load(dir)
         .into_iter()
         .find(|b| b.id == id)
         .and_then(|b| b.check)
-        .ok_or("the blocker has no check command")?;
-    run_and_record(dir, id, &command)
+        .ok_or_else(|| "the blocker has no check command".to_string())
 }
 
 fn run_and_record(dir: &Path, id: &str, command: &str) -> Result<bool, String> {
@@ -112,10 +117,10 @@ pub fn check_loop(hub: Arc<super::hub::Hub>) {
         let mut changed = false;
         for key in hub.hosted_keys() {
             let dir = Path::new(&key);
-            let approved = blockers::approved_checks();
+            let approvals = blockers::approvals();
             let due_ids: Vec<String> = blockers::load(dir)
                 .into_iter()
-                .filter(|b| b.check.as_ref().is_some_and(|c| approved.contains(c)) && due(b, now))
+                .filter(|b| b.check.as_ref().is_some_and(|c| blockers::approved_in(&approvals, c, dir)) && due(b, now))
                 .map(|b| b.id)
                 .collect();
             for id in due_ids {
