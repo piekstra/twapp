@@ -71,6 +71,10 @@ struct PersistedHub {
     adopted: Vec<String>,
     #[serde(default)]
     lanes: HashMap<String, LaneInfo>,
+    /// Suggested names the user dismissed, per session, so the same one is
+    /// not offered again.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    dismissed_names: HashMap<String, Vec<String>>,
 }
 
 /// How the user files a session: what they are focused on today, what they
@@ -141,6 +145,9 @@ pub struct SessionView {
     pub lane: Lane,
     pub blocked_since: Option<String>,
     pub checked_at: Option<String>,
+    /// The summarizer's suggested name, unless it matches the current name
+    /// or the user dismissed it.
+    pub name_suggestion: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -161,6 +168,7 @@ struct StatusEvent {
 struct SummaryEvent {
     key: String,
     summary: Summary,
+    name_suggestion: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -174,6 +182,15 @@ struct StartFailedEvent {
     key: String,
     tab: String,
     error: String,
+}
+
+fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) -> Option<String> {
+    let suggested = summary?.suggested_name.as_deref()?.trim();
+    let same = |a: &str| a.trim().eq_ignore_ascii_case(suggested);
+    if suggested.is_empty() || same(name) || dismissed.iter().any(|d| same(d)) {
+        return None;
+    }
+    Some(suggested.to_string())
 }
 
 // --- Registry --------------------------------------------------------------
@@ -226,6 +243,7 @@ struct HubSession {
     /// before this window started, so its start time comes from the files.
     restored: bool,
     lane: LaneInfo,
+    dismissed_names: Vec<String>,
 }
 
 impl HubSession {
@@ -241,6 +259,7 @@ impl HubSession {
             shell_pid: None,
             restored: false,
             lane: LaneInfo::default(),
+            dismissed_names: Vec::new(),
         }
     }
 
@@ -274,18 +293,20 @@ impl HubSession {
             .as_ref()
             .and_then(|d| d.provider)
             .unwrap_or(AgentProvider::Claude);
+        let name = data
+            .as_ref()
+            .map(|d| d.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| {
+                Path::new(&self.key)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| self.key.clone())
+            });
         SessionView {
             key: self.key.clone(),
-            name: data
-                .as_ref()
-                .map(|d| d.name.clone())
-                .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| {
-                    Path::new(&self.key)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| self.key.clone())
-                }),
+            name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
+            name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
             session_id: data.as_ref().and_then(|d| d.display_session_id(provider)),
@@ -351,6 +372,12 @@ impl HubInner {
                 .iter()
                 .map(|s| (s.key.clone(), s.lane.clone()))
                 .collect(),
+            dismissed_names: self
+                .sessions
+                .iter()
+                .filter(|s| !s.dismissed_names.is_empty())
+                .map(|s| (s.key.clone(), s.dismissed_names.clone()))
+                .collect(),
         }
     }
 
@@ -401,10 +428,11 @@ impl Hub {
         let summarizer = Summarizer::new(
             SummarizerConfig::from_config(std::env::var("PATH").ok()),
             Box::new(move |key: String, summary: Summary| {
-                if let Some(hub) = hub() {
-                    hub.on_summary(&key, summary.clone());
-                }
-                let _ = summary_app.emit("hub:summary", SummaryEvent { key, summary });
+                let name_suggestion = hub().and_then(|hub| hub.on_summary(&key, summary.clone()));
+                let _ = summary_app.emit(
+                    "hub:summary",
+                    SummaryEvent { key, summary, name_suggestion },
+                );
             }),
         );
         let (ops, ops_rx) = std::sync::mpsc::channel();
@@ -575,6 +603,7 @@ impl Hub {
             let mut session = HubSession::new(key.clone(), provider);
             session.last_viewed = persisted.last_viewed.get(&key).cloned();
             session.lane = persisted.lanes.get(&key).cloned().unwrap_or_default();
+            session.dismissed_names = persisted.dismissed_names.get(&key).cloned().unwrap_or_default();
             session.summary = self.summarizer.cached(&key);
             for info in live.iter().filter(|i| i.session_key == key && i.alive) {
                 if info.tab == MAIN_TAB {
@@ -977,6 +1006,23 @@ impl Hub {
         ))
     }
 
+    /// Stop offering a suggested name for a session.
+    pub fn dismiss_name(&self, key: &str, name: &str) {
+        {
+            let mut inner = self.inner.lock();
+            let Some(session) = inner.session(key) else { return };
+            if session.dismissed_names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+                return;
+            }
+            session.dismissed_names.push(name.to_string());
+            // Only recent dismissals matter; the list must not grow forever.
+            let excess = session.dismissed_names.len().saturating_sub(20);
+            session.dismissed_names.drain(..excess);
+        }
+        self.persist();
+        self.emit_changed();
+    }
+
     /// File a session in a lane. Marking it blocked starts its blocked and
     /// checked clocks; moving it out of blocked clears them.
     pub fn set_lane(&self, key: &str, lane: Lane) {
@@ -1139,10 +1185,16 @@ impl Hub {
         }
     }
 
-    fn on_summary(&self, key: &str, summary: Summary) {
-        if let Some(session) = self.inner.lock().session(key) {
-            session.summary = Some(summary);
-        }
+    /// Store a new summary; returns the name suggestion it carries for the
+    /// session, if any is left to offer.
+    fn on_summary(&self, key: &str, summary: Summary) -> Option<String> {
+        let name = read_session(Path::new(key)).ok().map(|d| d.name).unwrap_or_default();
+        let session_summary = Some(summary);
+        let mut inner = self.inner.lock();
+        let session = inner.session(key)?;
+        let suggestion = name_suggestion(&name, session_summary.as_ref(), &session.dismissed_names);
+        session.summary = session_summary;
+        suggestion
     }
 
     pub fn triage(&self) -> Result<crate::summary::Triage, String> {
@@ -1699,6 +1751,12 @@ pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn hub_dismiss_name(key: String, name: String) -> Result<(), String> {
+    require_hub()?.dismiss_name(&key, &name);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn hub_reorder(keys: Vec<String>) -> Result<(), String> {
     require_hub()?.reorder(&keys);
     Ok(())
@@ -1832,6 +1890,29 @@ mod tests {
         assert!(!s.attention(), "a finished turn in a blocked session waits quietly");
         s.status = SessionStatus::in_state_now(State::NeedsApproval);
         assert!(s.attention(), "an open prompt stops the session until the user answers");
+    }
+
+    #[test]
+    fn a_name_suggestion_is_offered_until_taken_or_dismissed() {
+        let summary = |n: &str| Summary {
+            headline: "h".into(),
+            doing: String::new(),
+            needs_user: None,
+            generated_at: String::new(),
+            transcript_len: 0,
+            source: crate::summary::SummarySource::Model,
+            for_state: None,
+            suggested_name: Some(n.into()),
+        };
+        let none: Vec<String> = Vec::new();
+        assert_eq!(
+            name_suggestion("login fix", Some(&summary("Session cookie rewrite")), &none).as_deref(),
+            Some("Session cookie rewrite")
+        );
+        assert_eq!(name_suggestion("Session Cookie Rewrite", Some(&summary("session cookie rewrite")), &none), None);
+        let dismissed = vec!["Session cookie rewrite".to_string()];
+        assert_eq!(name_suggestion("login fix", Some(&summary("session cookie rewrite ")), &dismissed), None);
+        assert_eq!(name_suggestion("login fix", None, &none), None);
     }
 
     #[test]

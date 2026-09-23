@@ -2236,4 +2236,25 @@ kbd {
   display: flex;
   justify-content: center;
   cursor: pointer;
+.name-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 10px;
+  padding: 7px 8px 7px 10px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.name-suggestion-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.name-suggestion-text strong {
+  color: var(--text-1);
+  font-weight: 600;
 }

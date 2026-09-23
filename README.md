@@ -190,6 +190,8 @@ summaries:
 
 `auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes. The session you are looking at is not summarized while you work in it; its summary is written when you switch away or leave the window.
 
+When a session's work has drifted from its name, the summary also suggests a new one. The session panel shows it with **Rename** and **Dismiss**; a dismissed suggestion is not offered again. The suggestion comes from the same call as the summary, so it costs nothing extra.
+
 These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
 ### Importing sessions

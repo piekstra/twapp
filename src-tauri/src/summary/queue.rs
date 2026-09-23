@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use super::cache::SummaryCache;
 use super::condense::{condense_claude, condense_codex, Condensed, DEFAULT_BUDGET};
 use super::runner::{extract_json_object, HarnessRunner, Runner, SummaryHarness};
-use super::{clean_text, free_summary, Summary, SummarySource, HEADLINE_MAX_CHARS};
+use super::{clean_text, free_summary, Summary, SummarySource, HEADLINE_MAX_CHARS, SUGGESTED_NAME_MAX_CHARS};
 use crate::cli::session::AgentProvider;
 
 pub const DEFAULT_MIN_INTERVAL: Duration = Duration::from_secs(20);
@@ -20,9 +20,13 @@ can see at a glance what it is doing and whether it needs them. You are reading 
 session, not taking part in it. Describe what the agent is working on and, precisely, what it is \
 waiting on from the user, if anything: a question it asked, an approval, a decision, or a review. \
 If the turn finished with no question, needs_user is null. Do not give the agent advice and do not \
-suggest next steps. Use plain language, no em dashes, no filler. Reply with only a JSON object: \
+suggest next steps. Use plain language, no em dashes, no filler. The session's name is the user's \
+label for it; when the work has moved to something the name no longer describes, suggest a short \
+name for what the session is about now, in the same style as the current name; otherwise \
+suggested_name is null. Reply with only a JSON object: \
 {\"headline\": \"<at most 80 characters naming the task>\", \"doing\": \"<one or two sentences on \
-where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" or null}.";
+where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" or null, \
+\"suggested_name\": \"<at most 48 characters>\" or null}.";
 
 const INSTRUCTION: &str = "Summarize the session excerpt on stdin.";
 
@@ -374,6 +378,14 @@ pub(crate) fn model_summary(
         .as_str()
         .map(|n| clean_text(n, 300))
         .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case("null"));
+    let suggested_name = value["suggested_name"]
+        .as_str()
+        .map(|n| clean_text(n, SUGGESTED_NAME_MAX_CHARS))
+        .filter(|n| {
+            !n.is_empty()
+                && !n.eq_ignore_ascii_case("null")
+                && !n.eq_ignore_ascii_case(request.name.trim())
+        });
     Ok(Summary {
         headline: clean_text(
             headline.ok_or("the answer had no headline")?,
@@ -385,6 +397,7 @@ pub(crate) fn model_summary(
         transcript_len: condensed.transcript_len,
         source: SummarySource::Model,
         for_state: request.state.clone(),
+        suggested_name,
     })
 }
 
@@ -489,6 +502,21 @@ mod tests {
         );
         let input = runner.inputs.lock()[0].clone();
         assert!(input.starts_with("Session name: login-fix\nTicket: ABC-1 Flaky login\n"));
+    }
+
+    #[test]
+    fn a_suggested_name_matching_the_current_one_is_dropped() {
+        for (suggested, expected) in [("Cookie wait rewrite", Some("Cookie wait rewrite")), ("Login-Fix", None)] {
+            let answer = format!(
+                r#"{{"headline": "h", "doing": "d", "needs_user": null, "suggested_name": "{}"}}"#,
+                suggested
+            );
+            let runner = FakeRunner::new(Ok(&answer));
+            let (s, rx) = start(cfg(Duration::ZERO), Some(runner));
+            s.request(request("/a", false));
+            let (_, summary) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(summary.suggested_name.as_deref(), expected);
+        }
     }
 
     #[test]

@@ -121,6 +121,7 @@ pub fn run(args: GuiArgs) {
             hub::hub_select,
             hub::hub_reorder,
             hub::hub_set_lane,
+            hub::hub_dismiss_name,
             hub::hub_start,
             hub::hub_write,
             hub::hub_resize,
