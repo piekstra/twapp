@@ -265,7 +265,7 @@ twapp models refresh                   # Claude only; needs ANTHROPIC_API_KEY
 
 ## Updating
 
-twapp checks for a new release and shows a dot on the version in the session panel. Click it for the release notes and **Update & Restart**. Sessions keep running across the restart.
+twapp checks for a new release when it starts and every few hours while it runs. A newer release shows as a dot on the version at the bottom of the sidebar, an **Update** button in the status line and a dot at the end of the thin bar when the sidebar is collapsed, and an entry in `⌘K`. Any of them opens the release notes and **Update & Restart**. Sessions keep running across the restart.
 
 ## How it works
 

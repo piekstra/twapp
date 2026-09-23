@@ -200,8 +200,13 @@ export default function Hub() {
   }, []);
   useEffect(() => {
     if (!appVersion) return;
+    // The window stays open for days, so check again every few hours too.
     const t = setTimeout(() => checkForUpdate(), 5000);
-    return () => clearTimeout(t);
+    const every = setInterval(() => checkForUpdate(), 3 * 60 * 60 * 1000);
+    return () => {
+      clearTimeout(t);
+      clearInterval(every);
+    };
   }, [appVersion, checkForUpdate]);
 
   const installUpdate = async () => {
@@ -415,8 +420,16 @@ export default function Hub() {
       { id: "layout-split", label: "Layout: sessions left, details right", run: () => setMode("split") },
       { id: "import", label: "Import sessions", run: () => openLibrary("import") },
       { id: "settings", label: "Settings", hint: "⌘,", run: () => openLibrary("settings") },
+      {
+        id: "update",
+        label: updateInfo ? `Update twapp to ${updateInfo.latestVersion}` : "Check for twapp updates",
+        run: () => {
+          setShowUpdatePanel(true);
+          checkForUpdate(true);
+        },
+      },
     ],
-    [current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild],
+    [current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild, updateInfo, checkForUpdate],
   );
 
   // --- Keyboard --------------------------------------------------------------
@@ -721,6 +734,8 @@ export default function Hub() {
       onSelect={selectSession}
       onExpand={expand}
       onPeek={(on) => peekAt(on ? target : null)}
+      update={updateInfo?.latestVersion ?? null}
+      onUpdate={() => setShowUpdatePanel(true)}
     />
   );
 
@@ -742,7 +757,15 @@ export default function Hub() {
       <main className="hub-main">
         {hub.hostError && <div className="host-error">{hub.hostError}</div>}
         {statusLineVisible && current && (
-          <StatusLine session={current} needing={needingCount} now={now} onNext={nextAttention} onExpand={toggleSidebar} />
+          <StatusLine
+            session={current}
+            needing={needingCount}
+            now={now}
+            onNext={nextAttention}
+            onExpand={toggleSidebar}
+            update={updateInfo?.latestVersion ?? null}
+            onUpdate={() => setShowUpdatePanel(true)}
+          />
         )}
         {overview || !current ? (
           <Overview

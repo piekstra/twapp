@@ -7,13 +7,16 @@ interface Props {
   now: number;
   onNext: () => void;
   onExpand: () => void;
+  /** A newer twapp release, when one is out. */
+  update: string | null;
+  onUpdate: () => void;
 }
 
 /**
  * One line above the terminal with what the collapsed sidebar would show:
  * the session, its state and summary, and how many others need the user.
  */
-export default function StatusLine({ session, needing, now, onNext, onExpand }: Props) {
+export default function StatusLine({ session, needing, now, onNext, onExpand, update, onUpdate }: Props) {
   const others = needing - (session.attention ? 1 : 0);
   return (
     <div className="statusline">
@@ -36,6 +39,12 @@ export default function StatusLine({ session, needing, now, onNext, onExpand }: 
       {others > 0 && (
         <button className="statusline-next" onClick={onNext} title="Next session that needs you (⌘J)">
           {others} more need{others === 1 ? "s" : ""} you <kbd>⌘J</kbd>
+        </button>
+      )}
+      {update && (
+        <button className="statusline-update" onClick={onUpdate} title="A newer twapp is out">
+          <span className="update-dot" />
+          Update {update}
         </button>
       )}
       <button className="icon-button" onClick={onExpand} title="Show the sidebar (⌘\)">
