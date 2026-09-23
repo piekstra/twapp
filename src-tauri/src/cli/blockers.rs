@@ -108,6 +108,27 @@ impl Blocker {
         });
     }
 
+    /// A message telling the session's agent what changed, for the user to
+    /// review and send.
+    pub fn update_message(&self) -> String {
+        let mut text = format!("Update on a blocker this session is waiting on: {}", self.title);
+        if let Some(party) = &self.party {
+            text.push_str(&format!(" ({})", party));
+        }
+        if let Some(reference) = &self.reference {
+            text.push_str(&format!(", {}", reference));
+        }
+        text.push('.');
+        if let (Some(check), Some(excerpt)) = (&self.check, &self.excerpt) {
+            text.push_str(&format!("\n\nIts check `{}` now prints:\n\n{}\n", check, excerpt));
+        }
+        text.push_str(&format!(
+            "\nLook into what changed and carry on if it unblocks the work. Record what you find with `twapp blocker note {id} \"...\"`, and `twapp blocker resolve {id}` once nothing is left to wait for.",
+            id = self.id
+        ));
+        text
+    }
+
     pub fn resolve(&mut self, by: Option<&str>) {
         self.status = BlockerStatus::Resolved;
         self.resolved_at = Some(chrono::Utc::now().to_rfc3339());
@@ -547,6 +568,19 @@ mod tests {
         let dir = std::env::temp_dir();
         assert_eq!(run_check("printf ok", &dir).unwrap(), "ok");
         assert!(run_check("echo nope >&2; exit 3", &dir).unwrap_err().contains("exited with 3: nope"));
+    }
+
+    #[test]
+    fn the_update_message_names_the_blocker_its_output_and_the_commands() {
+        let mut b = Blocker::new("Vendor reply");
+        b.party = Some("Acme".into());
+        b.check = Some("cat status.txt".into());
+        b.excerpt = Some("status: answered".into());
+        let text = b.update_message();
+        assert!(text.contains("Vendor reply (Acme)"));
+        assert!(text.contains("`cat status.txt` now prints:\n\nstatus: answered"));
+        assert!(text.contains(&format!("twapp blocker resolve {}", b.id)));
+        assert!(!text.contains('\r'), "pasted, never submitted");
     }
 
     #[test]

@@ -316,6 +316,13 @@ export default function Hub() {
     [hub],
   );
 
+  useEffect(() => {
+    // Sent by a blocker's Send to session, once its message is in the input.
+    const focus = () => setTimeout(() => manager.focus(), 50);
+    window.addEventListener("twapp:focus-terminal", focus);
+    return () => window.removeEventListener("twapp:focus-terminal", focus);
+  }, [manager]);
+
   const [, setWaitingTick] = useState(0);
   useEffect(() => manager.onWaitingChange(() => setWaitingTick((n) => n + 1)), [manager]);
 

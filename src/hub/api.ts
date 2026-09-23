@@ -184,6 +184,7 @@ export const hubApi = {
     invoke<boolean>("hub_blocker_check", { key, id, approve, once, command }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
+  blockerSend: (key: string, id: string) => invoke("hub_blocker_send", { key, id }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
   start: (key: string, tab: string, rows: number, cols: number, channel: Channel<ArrayBuffer>) =>
     invoke("hub_start", { key, tab, rows, cols, channel }),
@@ -320,3 +321,14 @@ export function formatBytes(n: number): string {
   if (n >= 1024) return `${Math.round(n / 1024)} KB`;
   return `${n} B`;
 }
+
+/**
+ * Paste the update into the session's input and bring its terminal forward,
+ * where the user reads the message and presses Enter to send it.
+ */
+export async function sendToSession(key: string, id: string, onSelect?: (key: string) => void) {
+  await hubApi.blockerSend(key, id);
+  onSelect?.(key);
+  window.dispatchEvent(new CustomEvent("twapp:focus-terminal"));
+}
+

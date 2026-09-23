@@ -2,7 +2,7 @@ import { useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
 import BlockerDetail from "./BlockerDetail";
 import CheckButton from "./CheckButton";
-import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
+import { hubApi, sendToSession, sinceLabel, type Blocker, type SessionView } from "./api";
 
 interface Props {
   /** Each blocker with the session it belongs to. */
@@ -101,6 +101,16 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
       {error && <div className="blocker-error">{error}</div>}
       <div className="blocker-actions">
         <CheckButton blocker={blocker} sessionKey={session.key} onError={setError} onResult={(t) => setCheckResult(t || null)} />
+        {updated && (
+          <button
+            className="button primary small"
+            disabled={busy}
+            title="Paste a message about this update into the session's input, for you to review and send"
+            onClick={() => run(async () => { await sendToSession(session.key, blocker.id, onSelect); })}
+          >
+            Send to session
+          </button>
+        )}
         {updated && (
           <button className="button ghost small" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>
             Mark seen
