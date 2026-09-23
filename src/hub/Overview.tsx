@@ -4,6 +4,7 @@ import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinc
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
 import YakReport from "./YakReport";
+import Linkify from "./Linkify";
 
 interface Props {
   /** The session that was showing before the overview opened. */
@@ -119,12 +120,12 @@ export default function Overview({
           {s.status.detail && ` · ${s.status.detail}`}
         </div>
         {blockedLabel(s, now) && <div className="overview-card-blocked">{blockedLabel(s, now)}</div>}
-        {headlineOf(s) && <div className="overview-card-headline">{headlineOf(s)}</div>}
-        {s.summary?.doing && <div className="overview-card-doing">{s.summary.doing}</div>}
+        {headlineOf(s) && <div className="overview-card-headline"><Linkify text={headlineOf(s)} /></div>}
+        {s.summary?.doing && <div className="overview-card-doing"><Linkify text={s.summary.doing} /></div>}
         {s.summary?.needs_user && (
           <div className="overview-card-needs">
             <span className="summary-needs-label">Needs from you</span>
-            {s.summary.needs_user}
+            <Linkify text={s.summary.needs_user} />
           </div>
         )}
       </button>

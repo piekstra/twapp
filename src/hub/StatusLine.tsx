@@ -1,3 +1,4 @@
+import Linkify from "./Linkify";
 import { STATE_LABELS, headlineOf, sinceLabel, type SessionView } from "./api";
 import { StateDot } from "./SessionRail";
 
@@ -30,7 +31,7 @@ export default function StatusLine({ session, needing, now, onNext, onExpand, up
       <span className="statusline-headline">
         {session.summary?.needs_user ? (
           <>
-            <span className="statusline-needs">Needs you:</span> {session.summary.needs_user}
+            <span className="statusline-needs">Needs you:</span> <Linkify text={session.summary.needs_user} />
           </>
         ) : (
           headlineOf(session)
