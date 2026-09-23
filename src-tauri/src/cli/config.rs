@@ -32,7 +32,7 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().expect("No home directory")
 }
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     home_dir().join(".config/twapp")
 }
 

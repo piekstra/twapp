@@ -198,6 +198,14 @@ When a session's work has drifted from its name, the summary also suggests a new
 
 These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
+### Waiting on: blockers outside the session
+
+A session often stops on someone else: a vendor's support case, an email, another team's review. The session's agent records each one with `twapp blocker add`, naming who it waits on and, optionally, a command that prints the blocker's current state (a CLI that reads the ticket, say). The overview's **Waiting on** list shows every open blocker across sessions with the session it belongs to, and the session panel shows its own.
+
+For a blocker with a check command, the window runs the command hourly, one at a time, and marks the blocker **Updated** when its output changes. An updated blocker brings its session to your attention even in the Blocked lane, and **Mark seen** makes the new output the baseline. The window runs a command only after you press **Approve and check** for that exact command, since any agent or repository can write a blocker file; approved commands are kept in `~/.config/twapp/approved-checks.json` and every run is logged. Checking costs no model calls.
+
+`twapp install-skill` installs a skill that teaches Claude (and Codex, when installed) when to record blockers and how to write a check command whose output changes only when the blocker does.
+
 ### Sessions whose conversation is gone
 
 Claude removes conversations after its cleanup period (`cleanupPeriodDays`), and a session that never got a message has no conversation yet. All sessions lists those under **No conversation**, folded, and **Forget all...** removes twapp's files from their directories (and a directory that holds nothing else), leaving code and project settings. Opening one starts a new conversation in its directory. A session whose conversation ran in a different directory than the one it records resumes from where the transcript is.
@@ -253,6 +261,8 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp rename <name>`, `twapp rename --suggested` | Rename the session in the current directory, or take the window's suggestion |
 | `twapp lane [priority\|background\|blocked]` | Show or set the session's lane |
 | `twapp close` | Stop the session and remove it from the window; its files stay |
+| `twapp blocker add\|list\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
+| `twapp install-skill` | Install the twapp skill for agents |
 | `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
 | `twapp note add\|list\|remove` | Session notes |

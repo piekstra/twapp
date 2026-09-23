@@ -1,4 +1,5 @@
 pub mod app_bundle;
+pub mod blockers;
 pub mod config;
 pub mod harness;
 pub mod hub_link;
@@ -86,6 +87,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: NoteCommands,
     },
+    /// Track what the session waits on outside itself (a vendor ticket, an
+    /// email, a review), with an optional command that shows its state
+    #[command(after_help = "Examples:\n  twapp blocker add \"Vendor reply on case 4411\" --party Vendor --kind ticket --ref 4411 \\\n      --check \"vendor-cli cases view 4411 --field status\"\n  twapp blocker list\n  twapp blocker check\n  twapp blocker resolve 3f2a\n\nA check command prints the blocker's state, and only that: the window flags the\nblocker when the output changes, so timestamps or counters in it read as updates.\nThe window runs a check on its own only after you approve that command there.")]
+    Blocker {
+        #[command(subcommand)]
+        command: BlockerCommands,
+    },
     /// Manage quick prompts
     Prompt {
         #[command(subcommand)]
@@ -117,6 +125,10 @@ pub enum Commands {
     /// Create code signing certificate
     #[command(name = "setup-cert")]
     SetupCert,
+    /// Install the twapp skill for agents (~/.claude/skills/twapp, and
+    /// ~/.codex/skills/twapp when Codex is installed)
+    #[command(name = "install-skill")]
+    InstallSkill,
     /// Rename the current session
     #[command(after_help = "Examples:\n  twapp rename \"ABC-5678 Better Name\"    Rename session in current directory\n  twapp rename --suggested                Take the name the window suggests")]
     Rename {
@@ -256,6 +268,78 @@ pub enum NoteCommands {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum BlockerCommands {
+    /// Record a blocker; prints its id
+    Add {
+        title: String,
+        /// Who the session waits on (a vendor, a team, a person)
+        #[arg(long)]
+        party: Option<String>,
+        /// ticket, email, question, review, deploy, ...
+        #[arg(long)]
+        kind: Option<String>,
+        /// Ticket key, URL or other reference
+        #[arg(long = "ref")]
+        reference: Option<String>,
+        /// Shell command, run in the session directory, that prints the blocker's state
+        #[arg(long)]
+        check: Option<String>,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// List open blockers
+    List {
+        /// Include resolved blockers
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Change a blocker's fields
+    Update {
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        party: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long = "ref")]
+        reference: Option<String>,
+        #[arg(long)]
+        check: Option<String>,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Run check commands now (all open blockers, or one) and record the result
+    Check {
+        id: Option<String>,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Mark an update as seen: its output becomes the baseline
+    Seen {
+        id: String,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Mark a blocker resolved
+    Resolve {
+        id: String,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Delete a blocker
+    Remove {
+        id: String,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum PromptCommands {
     /// List quick prompts
     List {
@@ -381,6 +465,7 @@ pub fn run(cmd: Commands) -> i32 {
                 notes::cmd_note_remove(&note_id, dir.as_deref())
             }
         },
+        Commands::Blocker { command } => blockers::run_command(command),
         Commands::Prompt { command } => match command {
             PromptCommands::List { .. } => prompts::cmd_prompt_list(true, None),
             PromptCommands::Add {
@@ -404,6 +489,7 @@ pub fn run(cmd: Commands) -> i32 {
         } => cmd_set_session(&session_id, cwd.as_deref(), dir.as_deref()),
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
+        Commands::InstallSkill => cmd_install_skill(),
         Commands::Rename { name, suggested } => match (name, suggested) {
             (Some(name), false) => cmd_rename(&name),
             _ => cmd_rename_suggested(),
@@ -1801,6 +1887,27 @@ fn cmd_rename_suggested() -> i32 {
             1
         }
     }
+}
+
+const SKILL: &str = include_str!("../../../skills/twapp/SKILL.md");
+
+fn cmd_install_skill() -> i32 {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut targets = vec![home.join(".claude/skills/twapp")];
+    if home.join(".codex").is_dir() {
+        targets.push(home.join(".codex/skills/twapp"));
+    }
+    for dir in targets {
+        let result = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("SKILL.md"), SKILL));
+        match result {
+            Ok(()) => println!("Installed {}", dir.join("SKILL.md").display()),
+            Err(e) => {
+                eprintln!("Error writing {}: {}", dir.display(), e);
+                return 1;
+            }
+        }
+    }
+    0
 }
 
 fn cmd_rename(new_name: &str) -> i32 {

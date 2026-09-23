@@ -61,6 +61,25 @@ export interface SessionView {
   checked_at: string | null;
   /** A name the summarizer suggests, not yet taken or dismissed. */
   name_suggestion?: string | null;
+  /** Open blockers recorded in the session directory. */
+  blockers?: Blocker[];
+}
+
+/** Something the session waits on outside itself (`twapp blocker`). */
+export interface Blocker {
+  id: string;
+  title: string;
+  party?: string | null;
+  kind?: string | null;
+  reference?: string | null;
+  check?: string | null;
+  status: "waiting" | "updated" | "resolved";
+  created_at: string;
+  last_checked_at?: string | null;
+  changed_at?: string | null;
+  excerpt?: string | null;
+  check_error?: string | null;
+  check_approved: boolean;
 }
 
 export type Lane = "priority" | "background" | "blocked";
@@ -129,6 +148,8 @@ export const hubApi = {
   reorder: (keys: string[]) => invoke("hub_reorder", { keys }),
   setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
+  blockerCheck: (key: string, id: string, approve: boolean) => invoke("hub_blocker_check", { key, id, approve }),
+  blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
   start: (key: string, tab: string, rows: number, cols: number, channel: Channel<ArrayBuffer>) =>
     invoke("hub_start", { key, tab, rows, cols, channel }),

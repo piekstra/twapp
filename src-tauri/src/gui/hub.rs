@@ -148,6 +148,8 @@ pub struct SessionView {
     /// The summarizer's suggested name, unless it matches the current name
     /// or the user dismissed it.
     pub name_suggestion: Option<String>,
+    /// Open blockers recorded in the session directory.
+    pub blockers: Vec<super::blockers::BlockerView>,
 }
 
 #[derive(Serialize, Clone)]
@@ -244,10 +246,13 @@ struct HubSession {
     restored: bool,
     lane: LaneInfo,
     dismissed_names: Vec<String>,
+    /// Blockers whose check output changed since the user last looked.
+    blocker_updates: usize,
 }
 
 impl HubSession {
     fn new(key: String, provider: AgentProvider) -> Self {
+        let key_for_blockers = key.clone();
         Self {
             key,
             pending_args: None,
@@ -260,6 +265,7 @@ impl HubSession {
             restored: false,
             lane: LaneInfo::default(),
             dismissed_names: Vec::new(),
+            blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
         }
     }
 
@@ -272,6 +278,10 @@ impl HubSession {
     }
 
     fn attention(&self) -> bool {
+        // A reply from whoever the session waits on is news in any lane.
+        if self.blocker_updates > 0 {
+            return true;
+        }
         // A blocked session waits on someone else; only an open prompt, which
         // stops it until the user answers, is worth interrupting them for.
         if self.lane.lane == Lane::Blocked && self.status.state != State::NeedsApproval {
@@ -306,6 +316,7 @@ impl HubSession {
         SessionView {
             key: self.key.clone(),
             name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
+            blockers: super::blockers::open_blockers(Path::new(&self.key)),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
@@ -461,6 +472,8 @@ impl Hub {
         std::thread::spawn(move || poller.poll_loop());
         let listener = Arc::clone(&hub);
         std::thread::spawn(move || listener.socket_loop());
+        let checker = Arc::clone(&hub);
+        std::thread::spawn(move || super::blockers::check_loop(checker));
         hub
     }
 
@@ -666,6 +679,32 @@ impl Hub {
 
     pub fn is_hosted(&self, key: &str) -> bool {
         self.inner.lock().sessions.iter().any(|s| s.key == key)
+    }
+
+    pub fn hosted_keys(&self) -> Vec<String> {
+        self.inner.lock().sessions.iter().map(|s| s.key.clone()).collect()
+    }
+
+    /// Re-read every hosted session's blockers after one changed.
+    pub fn refresh_blockers(&self) {
+        let counts: Vec<(String, usize)> = self
+            .hosted_keys()
+            .into_iter()
+            .map(|key| {
+                let count = super::blockers::updated_count(Path::new(&key));
+                (key, count)
+            })
+            .collect();
+        {
+            let mut inner = self.inner.lock();
+            for (key, count) in counts {
+                if let Some(session) = inner.session(&key) {
+                    session.blocker_updates = count;
+                }
+            }
+        }
+        self.emit_changed();
+        self.update_badge();
     }
 
     pub fn is_hosted_running(&self, directory: &str) -> bool {
@@ -1575,7 +1614,7 @@ impl Hub {
                 }
             }
             Ok(HubRequest::Changed) => {
-                self.emit_changed();
+                self.refresh_blockers();
                 HubReply::ok(None)
             }
             Err(e) => HubReply::err(e.to_string()),
@@ -1777,6 +1816,51 @@ pub fn hub_select(key: String) -> Result<(), String> {
 #[tauri::command]
 pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
     require_hub()?.set_lane(&key, lane);
+    Ok(())
+}
+
+/// Run a blocker's check now. `approve` first adds its command to the
+/// commands the window may run on its own.
+#[tauri::command]
+pub async fn hub_blocker_check(key: String, id: String, approve: bool) -> Result<(), String> {
+    let hub = require_hub()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = Path::new(&key);
+        if approve {
+            let command = crate::cli::blockers::load(dir)
+                .into_iter()
+                .find(|b| b.id == id)
+                .and_then(|b| b.check)
+                .ok_or("the blocker has no check command")?;
+            crate::cli::blockers::approve(&command)?;
+        }
+        let result = super::blockers::check_one(dir, &id).map(|_| ());
+        hub.refresh_blockers();
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// `seen`, `resolve` or `remove` a blocker.
+#[tauri::command]
+pub fn hub_blocker_set(key: String, id: String, action: String) -> Result<(), String> {
+    let dir = Path::new(&key);
+    match action.as_str() {
+        "seen" => crate::cli::blockers::update(dir, &id, crate::cli::blockers::Blocker::mark_seen).map(|_| ())?,
+        "resolve" => crate::cli::blockers::update(dir, &id, |b| {
+            b.status = crate::cli::blockers::BlockerStatus::Resolved;
+            b.resolved_at = Some(chrono::Utc::now().to_rfc3339());
+        })
+        .map(|_| ())?,
+        "remove" => {
+            let mut all = crate::cli::blockers::load(dir);
+            all.retain(|b| b.id != id);
+            crate::cli::blockers::save(dir, &all)?
+        }
+        other => return Err(format!("unknown blocker action {}", other)),
+    }
+    require_hub()?.refresh_blockers();
     Ok(())
 }
 

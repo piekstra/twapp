@@ -161,6 +161,13 @@ export default function SessionRail({
             {shortcut !== undefined && shortcut < 9 && <span className="rail-shortcut">⌘{shortcut + 1}</span>}
           </div>
           {blocked && <div className="rail-blocked">{blocked}</div>}
+          {(s.blockers?.length ?? 0) > 0 && (
+            <div className={`rail-waiting${s.blockers!.some((b) => b.status === "updated") ? " updated" : ""}`}>
+              {s.blockers!.some((b) => b.status === "updated")
+                ? `Update on: ${s.blockers!.find((b) => b.status === "updated")!.title}`
+                : `Waiting on ${s.blockers!.length === 1 ? s.blockers![0].party || s.blockers![0].title : `${s.blockers!.length} things`}`}
+            </div>
+          )}
           {!compact && !blocked && (
             <div className="rail-row-meta">
               {s.ticket_key && <span className="chip chip-mono">{s.ticket_key}</span>}
