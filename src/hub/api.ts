@@ -20,6 +20,8 @@ export interface SessionStatus {
   transcript_path: string | null;
   transcript_len: number;
   harness_pid: number | null;
+  /** What each subagent still at work was started for. */
+  background_agents?: string[];
 }
 
 export interface Summary {

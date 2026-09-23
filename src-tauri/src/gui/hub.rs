@@ -1451,6 +1451,21 @@ fn summary_request(session: &HubSession, force: bool) -> Option<SummaryRequest> 
 /// The session state as the summarizer should read it, for the states the
 /// transcript alone does not show.
 fn state_in_words(status: &SessionStatus) -> Option<String> {
+    let base = base_state_in_words(status);
+    if status.background_agents.is_empty() {
+        return base;
+    }
+    let agents = format!(
+        "background agents it started are still running: {}",
+        status.background_agents.join("; ")
+    );
+    Some(match base {
+        Some(b) => format!("{}; {}", b, agents),
+        None => agents,
+    })
+}
+
+fn base_state_in_words(status: &SessionStatus) -> Option<String> {
     match status.state {
         State::NeedsApproval => Some(format!(
             "the harness is showing a {} and waits until the user answers it",

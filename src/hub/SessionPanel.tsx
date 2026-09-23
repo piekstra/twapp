@@ -345,6 +345,16 @@ export default function SessionPanel({
             </svg>
           </button>
         </div>
+        {(status.background_agents?.length ?? 0) > 0 && (
+          <ul className="summary-agents">
+            {status.background_agents!.map((a, i) => (
+              <li key={i}>
+                <span className="state-dot state-working" />
+                {a}
+              </li>
+            ))}
+          </ul>
+        )}
         {summary ? (
           <>
             <div className="summary-headline">{summary.headline}</div>

@@ -54,6 +54,10 @@ pub struct SessionStatus {
     pub transcript_path: Option<String>,
     pub transcript_len: u64,
     pub harness_pid: Option<u32>,
+    /// What each subagent still at work was started for (Claude forks and
+    /// background agents).
+    #[serde(default)]
+    pub background_agents: Vec<String>,
 }
 
 impl SessionStatus {
@@ -72,6 +76,7 @@ impl SessionStatus {
             transcript_path: None,
             transcript_len: 0,
             harness_pid: None,
+            background_agents: Vec::new(),
         }
     }
 
@@ -146,6 +151,9 @@ pub struct Signals {
     pub title_busy: Option<bool>,
     /// A desktop notification the harness sent that has not been cleared.
     pub notify: Option<String>,
+    /// Subagents still at work; a harness waiting on them is not waiting on
+    /// the user.
+    pub background_agents: usize,
 }
 
 impl Signals {
@@ -167,6 +175,7 @@ impl Signals {
             rollout_error: None,
             title_busy: None,
             notify: None,
+            background_agents: 0,
         }
     }
 }
@@ -208,6 +217,11 @@ fn decide_claude(s: &Signals) -> (State, Option<String>) {
             if let Some(err) = &s.transcript_error {
                 return (State::Errored, Some(err.clone()));
             }
+            // The turn ended but agents it started are still working; the
+            // harness resumes on its own when they report back.
+            if s.background_agents > 0 {
+                return (State::Working, Some(agents_detail(s.background_agents)));
+            }
             return (State::YourTurn, interrupted(s.transcript_interrupted));
         }
         _ => {}
@@ -224,9 +238,20 @@ fn decide_claude(s: &Signals) -> (State, Option<String>) {
         return notification(note);
     }
     match s.transcript_turn_complete {
+        Some(true) if s.background_agents > 0 => {
+            (State::Working, Some(agents_detail(s.background_agents)))
+        }
         Some(true) => (State::YourTurn, interrupted(s.transcript_interrupted)),
         Some(false) => (State::Working, None),
         None => generic(s),
+    }
+}
+
+fn agents_detail(n: usize) -> String {
+    if n == 1 {
+        "1 background agent running".to_string()
+    } else {
+        format!("{} background agents running", n)
     }
 }
 
@@ -302,6 +327,7 @@ pub fn classify_title(title: &str) -> (bool, String) {
 /// current state began.
 pub struct StatusTracker {
     provider: AgentProvider,
+    subagents: std::collections::HashMap<PathBuf, (u64, bool)>,
     scanner: OscScanner,
     title: Option<String>,
     title_busy: Option<bool>,
@@ -331,6 +357,7 @@ impl StatusTracker {
     pub fn new(provider: AgentProvider) -> Self {
         Self {
             provider,
+            subagents: std::collections::HashMap::new(),
             scanner: OscScanner::new(),
             title: None,
             title_busy: None,
@@ -395,6 +422,7 @@ impl StatusTracker {
         s.title_busy = self.title_busy;
 
         let mut last_message = None;
+        let mut background_agents = Vec::new();
         let mut transcript_path = None;
         let mut transcript_len = 0;
         let mut fallback_title = None;
@@ -419,6 +447,12 @@ impl StatusTracker {
                         s.transcript_interrupted = tail.interrupted;
                         last_message = tail.last_assistant_text.clone();
                         fallback_title = tail.ai_title.clone();
+                        background_agents = claude::read_subagents(&path, ctx.now, &mut self.subagents)
+                            .into_iter()
+                            .filter(|a| a.running)
+                            .map(|a| a.description)
+                            .collect();
+                        s.background_agents = background_agents.len();
                         transcript_path = Some(path.to_string_lossy().into_owned());
                         transcript_len = tail.len;
                     }
@@ -467,6 +501,7 @@ impl StatusTracker {
             transcript_path,
             transcript_len,
             harness_pid,
+            background_agents,
         };
         self.current = Some(status.clone());
         status
@@ -619,6 +654,25 @@ mod tests {
             s.transcript_interrupted = true;
         }));
         assert_eq!((st, detail.as_deref()), (State::YourTurn, Some("interrupted")));
+    }
+
+    #[test]
+    fn claude_idle_while_its_agents_work_is_still_working() {
+        let (st, detail) = decide(&sig(Claude, |s| {
+            s.claude_status = Some("idle".into());
+            s.background_agents = 2;
+        }));
+        assert_eq!((st, detail.as_deref()), (State::Working, Some("2 background agents running")));
+        let (st, _) = decide(&sig(Claude, |s| {
+            s.transcript_turn_complete = Some(true);
+            s.background_agents = 1;
+        }));
+        assert_eq!(st, State::Working, "the same holds without a status file");
+        let (st, _) = decide(&sig(Claude, |s| {
+            s.claude_status = Some("waiting".into());
+            s.background_agents = 1;
+        }));
+        assert_eq!(st, State::NeedsApproval, "an open prompt still needs the user");
     }
 
     #[test]

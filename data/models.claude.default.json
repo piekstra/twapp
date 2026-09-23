@@ -1,18 +1,33 @@
 [
   {
-    "name": "claude-opus-4-7",
-    "tier": "opus",
-    "description": "Most capable Claude model; use for design audits and complex synthesis."
+    "name": "claude-fable-5-1",
+    "tier": "fable",
+    "description": "Most capable Claude model; use for the hardest design and research work."
   },
   {
-    "name": "claude-sonnet-4-6",
+    "name": "claude-opus-5-5",
+    "tier": "opus",
+    "description": "Frontier Claude model for complex engineering, long agentic runs and subagent-heavy work."
+  },
+  {
+    "name": "claude-opus-5-5[1m]",
+    "tier": "opus",
+    "description": "Opus 5.5 with the 1M-token context window, for long sessions that coordinate many agents."
+  },
+  {
+    "name": "claude-sonnet-5",
     "tier": "sonnet",
-    "description": "Strong general-purpose Claude model; default for most implementation work."
+    "description": "Strong general-purpose Claude model; a good default for implementation work."
   },
   {
     "name": "claude-haiku-4-5-20251001",
     "tier": "haiku",
-    "description": "Fast and inexpensive Claude model; use for plumbing and simple edits."
+    "description": "Fast and inexpensive Claude model; use for plumbing, simple edits and summaries."
+  },
+  {
+    "name": "fable",
+    "tier": "fable",
+    "description": "Alias: latest fable-tier Claude model."
   },
   {
     "name": "opus",
