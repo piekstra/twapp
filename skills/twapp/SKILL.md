@@ -1,11 +1,11 @@
 ---
 name: twapp
-description: Working inside a twapp session - recording what the session waits on outside itself (twapp blocker), session notes, and reading the window's view of sessions. Use when the session files a ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, or when the user asks to note something for the session.
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), session notes, and reading the window's view of sessions. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, or when the user asks to note something for the session.
 ---
 
 # Working in a twapp session
 
-A twapp session is a directory holding `.twapp-session.json`; the session's terminals run in the twapp window, which shows every session's state, notes and what it waits on. `TWAPP_SESSION_KEY` is set in a twapp session's terminal. Every command below acts on the session in the current directory; `--dir <path>` targets another one.
+Every session this user runs is hosted by twapp: a directory holding `.twapp-session.json` whose terminals run in the twapp window, which shows every session's state, notes and what it waits on. Other skills describe how to work with a vendor or a tool without mentioning twapp; the steps here apply on top of them. Every command below acts on the session in the current directory; `--dir <path>` targets another one.
 
 ## Blockers: what the session waits on
 
@@ -30,6 +30,15 @@ The window runs a check now and then, only after the user approves that exact co
 - Leave out anything that changes on every run: current times, "updated N minutes ago", request ids, spinners.
 - Use a read-only command that makes one request. Rate limits and partner policies apply to checks like any other call.
 - Run it once yourself (`twapp blocker check <id>`) to confirm it works and prints what you expect.
+
+For example, for a vendor support case that a CLI can read as JSON:
+
+```bash
+twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" --kind ticket --ref CASE-4411 \
+    --check "vendor-cli cases get CASE-4411 -o json | jq -c '{status, resolved, vendor_replies: ([.comments[] | select(.from_vendor)] | length)}'"
+```
+
+It prints the case's status, whether it is resolved, and how many replies the vendor has written, so it changes only when the case moves. Look up the real field names in the CLI's help or one real response before writing the check.
 
 A blocker without a check still shows in the window; the user checks it by hand.
 
