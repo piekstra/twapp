@@ -1,21 +1,15 @@
-pub mod agent_actions;
 pub mod config;
-pub mod coordinator;
 pub mod files;
-pub mod fleet;
-pub mod monitor;
-pub mod msg;
 pub mod notes;
 pub mod prompts;
 pub mod pty;
 pub mod sessions;
 pub mod shell_env;
 pub mod tickets;
-pub mod timeline;
 pub mod title;
 pub mod types;
 
-pub use tickets::{extract_adf_text, truncate_str};
+pub use tickets::truncate_str;
 pub use types::GuiArgs;
 
 use parking_lot::Mutex;
@@ -23,8 +17,6 @@ use std::sync::Arc;
 use tauri::menu::{CheckMenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 use types::*;
-
-use crate::cli::monitor::MonitorRequest;
 
 #[tauri::command]
 fn get_app_config(config: tauri::State<'_, GuiArgs>) -> GuiArgs {
@@ -146,32 +138,12 @@ pub fn run(args: GuiArgs) {
     shell_env::init_path();
 
     let pty_state = Arc::new(Mutex::new(PtyState::default()));
-    let monitor_state = Arc::new(Mutex::new(MonitorState::default()));
 
-    // Pull role + provenance from the session file (if any) so the OS
-    // window title can advertise co-lab sessions at a glance. A missing
-    // or unparseable file silently falls back to the plain title.
-    let (session_role, session_provenance) = args
-        .cwd
-        .as_ref()
-        .and_then(|cwd| {
-            crate::cli::session::read_session(&std::path::PathBuf::from(cwd)).ok()
-        })
-        .map(|s| (s.role, s.provenance))
-        .unwrap_or((None, None));
-    let title = title::format_window_title(
-        &args.name,
-        session_role.as_deref(),
-        session_provenance.as_deref(),
-    );
-
-    // Clone cwd for the file watcher thread
-    let watcher_cwd = args.cwd.clone();
+    let title = title::format_window_title(&args.name);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(pty_state)
-        .manage(monitor_state)
         .manage(args)
         .invoke_handler(tauri::generate_handler![
             pty::spawn_shell,
@@ -229,32 +201,6 @@ pub fn run(args: GuiArgs) {
             sessions::delete_session,
             sessions::discover_claude_sessions,
             sessions::import_sessions,
-            monitor::start_monitor,
-            monitor::stop_monitor,
-            monitor::get_monitor_status,
-            config::get_monitor_position,
-            config::set_monitor_position,
-            config::get_monitor_size,
-            config::set_monitor_size,
-            config::get_monitor_enabled,
-            config::set_monitor_enabled,
-            config::get_monitor_float,
-            config::set_monitor_float,
-            monitor::list_monitor_logs,
-            files::reveal_in_finder,
-            msg::send_message,
-            msg::fetch_messages,
-            msg::get_mailbox_status,
-            fleet::list_fleet,
-            timeline::list_timeline_events,
-            agent_actions::focus_agent_window,
-            agent_actions::stop_agent,
-            agent_actions::list_agent_prs,
-            agent_actions::fetch_agent_activity,
-            coordinator::launch_coordinator,
-            coordinator::claim_coordinator,
-            coordinator::list_claimable_sessions,
-            coordinator::list_coordinator_models,
         ])
         .setup(move |app| {
             // Set window title — this controls the Mission Control fullscreen space label
@@ -342,74 +288,7 @@ pub fn run(args: GuiArgs) {
                 )?;
             }
 
-            // File watcher for CLI-initiated monitor requests
-            if let Some(watch_dir) = watcher_cwd
-                .as_ref()
-                .map(std::path::PathBuf::from)
-                .or_else(|| std::env::current_dir().ok())
-            {
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    let request_path = watch_dir.join(".twapp-monitor-request.json");
-                    loop {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                        if !request_path.exists() {
-                            continue;
-                        }
-                        let content = match std::fs::read_to_string(&request_path) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
-                        // Delete request file immediately to avoid re-processing
-                        let _ = std::fs::remove_file(&request_path);
-
-                        let request: MonitorRequest = match serde_json::from_str(&content) {
-                            Ok(r) => r,
-                            Err(_) => continue,
-                        };
-
-                        match request.action.as_str() {
-                            "start" => {
-                                if let Some(cmd) = request.command {
-                                    let monitor_state =
-                                        app_handle.state::<Arc<Mutex<MonitorState>>>();
-                                    let config = app_handle.state::<GuiArgs>();
-                                    // Call start_monitor logic directly
-                                    let _ = monitor::start_monitor_internal(
-                                        &app_handle,
-                                        &monitor_state,
-                                        &config,
-                                        cmd,
-                                    );
-                                }
-                            }
-                            "stop" => {
-                                let monitor_state = app_handle.state::<Arc<Mutex<MonitorState>>>();
-                                let config = app_handle.state::<GuiArgs>();
-                                let _ = monitor::stop_monitor_internal(
-                                    &app_handle,
-                                    &monitor_state,
-                                    &config,
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                });
-            }
-
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                // Kill monitor process on window close
-                if let Some(state) = window.try_state::<Arc<Mutex<MonitorState>>>() {
-                    let mut monitor = state.lock();
-                    if let Some(ref mut child) = monitor.child {
-                        let _ = child.kill();
-                    }
-                }
-            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -446,9 +325,6 @@ mod restore_tests {
             imported_from: None,
             use_chrome: None,
             override_terminal_theme: None,
-            role: None,
-            provenance: None,
-            colab_group: None,
         }
     }
 

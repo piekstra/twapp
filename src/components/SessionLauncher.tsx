@@ -5,12 +5,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
 import { maskProviderSessionId } from "../utils/session";
-import {
-  partitionSessions,
-  colabGroupBorderColor,
-} from "../utils/sessionSections";
-import { isColabSession } from "../utils/colab";
-import { buildClaimArgs, buildLaunchArgs } from "../utils/coordinator";
 import type {
   LauncherSession,
   LauncherResponse,
@@ -22,8 +16,6 @@ import type {
   SortMode,
   LauncherView,
   PromptStore,
-  ClaimableSession,
-  CoordinatorModel,
   AgentProvider,
   AgentHarnessInfo,
   GlobalConfig,
@@ -91,22 +83,6 @@ function SessionLauncher({
   const [editingSection, setEditingSection] = useState<{ id: string | null; title: string } | null>(null);
   const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
-  const [monitorEnabled, setMonitorEnabled] = useState(false);
-
-  // Coordinator launch/claim state
-  const [coordMenuOpen, setCoordMenuOpen] = useState(false);
-  const [coordDialog, setCoordDialog] = useState<"launch" | "claim" | null>(null);
-  const [launchName, setLaunchName] = useState("");
-  const [launchBriefing, setLaunchBriefing] = useState("");
-  const [launchSharedDir, setLaunchSharedDir] = useState("");
-  const [launchModel, setLaunchModel] = useState("");
-  const [claimName, setClaimName] = useState("");
-  const [claimForce, setClaimForce] = useState(false);
-  const [claimableSessions, setClaimableSessions] = useState<ClaimableSession[]>([]);
-  const [coordModels, setCoordModels] = useState<CoordinatorModel[]>([]);
-  const [coordRunning, setCoordRunning] = useState(false);
-  const [coordError, setCoordError] = useState<string | null>(null);
-  const [coordToast, setCoordToast] = useState<string | null>(null);
 
   // Delete session state
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
@@ -116,34 +92,6 @@ function SessionLauncher({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  // Launcher co-lab group collapse state (persisted per section id via localStorage)
-  const collapsedStorageKey = "twapp:launcher:collapsed-sections";
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(collapsedStorageKey);
-      if (!raw) return new Set();
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? new Set(parsed.filter((v) => typeof v === "string")) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem(collapsedStorageKey, JSON.stringify(Array.from(collapsedSections)));
-    } catch {
-      // Quota / private mode — collapse state just becomes session-local, no user-visible error.
-    }
-  }, [collapsedSections]);
-  const toggleSectionCollapsed = (id: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   // Import sessions state
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
@@ -318,9 +266,6 @@ function SessionLauncher({
     invoke<PromptStore>("load_global_prompts")
       .then((store) => setGlobalPrompts(store || { sections: [] }))
       .catch((e) => console.error("Failed to load global prompts:", e));
-    invoke<boolean>("get_monitor_enabled")
-      .then((enabled) => setMonitorEnabled(enabled))
-      .catch(() => {});
     setSettingsLoaded(true);
     void scanAgentHarnesses();
   }, [launcherView, settingsLoaded, scanAgentHarnesses]);
@@ -353,19 +298,9 @@ function SessionLauncher({
     );
   }, [sessions, searchQuery, showImported]);
 
-  const sections = useMemo(
-    () => partitionSessions(filteredSessions, sortMode),
-    [filteredSessions, sortMode],
-  );
-
-  // The flat "My sessions" list keeps its existing bucketing (Today / This Week /
-  // Older or A-Z) so single-session users see no regression. Co-lab and orphan
-  // sections are rendered flat — a group already carries its own context.
-  const mineBuckets = useMemo(() => {
-    const mine = sections.find((s) => s.kind === "mine")?.sessions ?? [];
-
+  const sessionBuckets = useMemo(() => {
     if (sortMode === "alpha") {
-      const sorted = [...mine].sort((a, b) =>
+      const sorted = [...filteredSessions].sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
       );
       const groups = new Map<string, LauncherSession[]>();
@@ -392,7 +327,13 @@ function SessionLauncher({
       { label: "Older", sessions: [] },
     ];
 
-    for (const s of mine) {
+    const recentFirst = [...filteredSessions].sort((a, b) => {
+      const ta = a.last_active || "";
+      const tb = b.last_active || "";
+      if (ta === tb) return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      return ta < tb ? 1 : -1;
+    });
+    for (const s of recentFirst) {
       const t = s.last_active ? new Date(s.last_active).getTime() : 0;
       if (t >= startOfToday.getTime()) buckets[0].sessions.push(s);
       else if (t >= startOfYesterday.getTime()) buckets[1].sessions.push(s);
@@ -402,24 +343,7 @@ function SessionLauncher({
     }
 
     return buckets.filter((b) => b.sessions.length > 0);
-  }, [sections, sortMode]);
-
-  // If the user has no co-lab sessions at all, preserve the lean flat-list UX:
-  // hide the "My sessions" header and just render the existing time/alpha
-  // buckets directly.
-  const hasColabSections = sections.some((s) => s.kind === "colab" || s.kind === "orphans");
-
-  // Search auto-expands any section whose members match, so results aren't
-  // hidden behind a collapsed header.
-  const searching = searchQuery.trim().length > 0;
-  const effectiveCollapsed = useMemo(() => {
-    if (!searching) return collapsedSections;
-    const filtered = new Set(collapsedSections);
-    for (const section of sections) {
-      if (section.sessions.length > 0) filtered.delete(section.id);
-    }
-    return filtered;
-  }, [collapsedSections, sections, searching]);
+  }, [filteredSessions, sortMode]);
 
   const handleLaunch = async (session: LauncherSession) => {
     setLaunching(session.session_id);
@@ -614,91 +538,6 @@ function SessionLauncher({
       setCreateError(String(e));
     } finally {
       setCreating(false);
-    }
-  };
-
-  // --- Coordinator launch/claim handlers ---
-  //
-  // The button's popover menu is the shared entry point. Loading the claimable
-  // session list + claude models on open means the dropdowns in both dialogs
-  // are always fresh; the fetch is cheap (a walk of work_directory + one cache
-  // read) and it fires at most once per user click.
-  const loadCoordinatorOptions = async () => {
-    try {
-      const [cs, mods] = await Promise.all([
-        invoke<ClaimableSession[]>("list_claimable_sessions"),
-        invoke<CoordinatorModel[]>("list_coordinator_models"),
-      ]);
-      setClaimableSessions(cs);
-      setCoordModels(mods);
-    } catch {
-      // Silent: errors surface when the user tries to submit a dialog.
-    }
-  };
-
-  const handleToggleCoordMenu = () => {
-    const next = !coordMenuOpen;
-    setCoordMenuOpen(next);
-    if (next) {
-      void loadCoordinatorOptions();
-    }
-  };
-
-  const handleOpenCoordDialog = (dialog: "launch" | "claim") => {
-    setCoordMenuOpen(false);
-    setCoordError(null);
-    setCoordDialog(dialog);
-    // Re-load right before opening so a freshly-claimed session disappears from
-    // the picker even if the user pops the menu twice without closing.
-    void loadCoordinatorOptions();
-  };
-
-  const closeCoordDialog = () => {
-    setCoordDialog(null);
-    setCoordError(null);
-    setCoordRunning(false);
-  };
-
-  const handleLaunchCoordinator = async () => {
-    setCoordRunning(true);
-    setCoordError(null);
-    try {
-      const args = buildLaunchArgs({
-        name: launchName,
-        briefing: launchBriefing,
-        sharedDir: launchSharedDir,
-        model: launchModel,
-      });
-      const name = await invoke<string>("launch_coordinator", args);
-      closeCoordDialog();
-      setLaunchName("");
-      setLaunchBriefing("");
-      setLaunchSharedDir("");
-      setLaunchModel("");
-      setCoordToast(`Launched coordinator "${name}"`);
-      setTimeout(() => setCoordToast(null), 4000);
-      setTimeout(loadSessions, 1000);
-    } catch (e) {
-      setCoordError(String(e));
-      setCoordRunning(false);
-    }
-  };
-
-  const handleClaimCoordinator = async () => {
-    setCoordRunning(true);
-    setCoordError(null);
-    try {
-      const args = buildClaimArgs({ name: claimName, force: claimForce });
-      const dir = await invoke<string>("claim_coordinator", args);
-      closeCoordDialog();
-      setClaimName("");
-      setClaimForce(false);
-      setCoordToast(`Claimed coordinator at ${dir}`);
-      setTimeout(() => setCoordToast(null), 4000);
-      setTimeout(loadSessions, 1000);
-    } catch (e) {
-      setCoordError(String(e));
-      setCoordRunning(false);
     }
   };
 
@@ -1067,32 +906,6 @@ function SessionLauncher({
               </div>
             </div>
 
-            {/* Features */}
-            <div className="launcher-settings-section">
-              <div className="launcher-settings-section-header">Features</div>
-              <div className="launcher-settings-field">
-                <label>Background Monitor</label>
-                <div className="launcher-sort">
-                  <button
-                    className={`launcher-sort-btn${monitorEnabled ? " active" : ""}`}
-                    onClick={() => {
-                      setMonitorEnabled(true);
-                      invoke("set_monitor_enabled", { enabled: true }).catch(() => {});
-                    }}
-                  >Enabled</button>
-                  <button
-                    className={`launcher-sort-btn${!monitorEnabled ? " active" : ""}`}
-                    onClick={() => {
-                      setMonitorEnabled(false);
-                      invoke("set_monitor_enabled", { enabled: false }).catch(() => {});
-                    }}
-                  >Disabled</button>
-                </div>
-                <span className="launcher-settings-hint" style={{ marginTop: 4 }}>
-                  Shows a command runner bar for background processes like dev servers
-                </span>
-              </div>
-            </div>
           </>
         )}
 
@@ -1252,19 +1065,12 @@ function SessionLauncher({
     </div>
   );
 
-  const renderSession = (session: LauncherSession, borderOverride?: string) => {
-    const isCoordinator = session.role === "coordinator";
-    const isColab = isColabSession(session);
-    // Border precedence: explicit override (co-lab group hue) > session color
-    // > transparent. Coordinator within a group gets a thicker visual tier via
-    // a class — colab-ui-chrome's chip lives on a separate badge in the meta
-    // row, so they don't conflict.
-    const borderColor = borderOverride || session.color || "transparent";
+  const renderSession = (session: LauncherSession) => {
+    const borderColor = session.color || "transparent";
     const classes = [
       "launcher-session",
       session.is_running ? "running" : "",
       launching === session.session_id ? "launching" : "",
-      isCoordinator ? "launcher-session-coordinator" : "",
     ].filter(Boolean).join(" ");
     return (
       <div
@@ -1299,26 +1105,6 @@ function SessionLauncher({
           </div>
           <div className="launcher-session-meta">
             <span className="launcher-imported-badge">{providerLabel(session.provider)}</span>
-            {isColab && !isCoordinator && (
-              <span
-                className="launcher-colab-chip"
-                title={
-                  session.role
-                    ? `Co-lab session — role: ${session.role}`
-                    : "Co-lab session (spawned by another session)"
-                }
-              >
-                CO-LAB
-              </span>
-            )}
-            {isCoordinator && (
-              <span
-                className="launcher-role-badge launcher-role-coordinator"
-                title="Coordinator for this co-lab group"
-              >
-                COORDINATOR
-              </span>
-            )}
             {session.forked_from && (
               <span className="launcher-forked-badge" title={`Forked from ${session.forked_from.slice(0, 12)}`}>Forked</span>
             )}
@@ -1420,55 +1206,6 @@ function SessionLauncher({
                     <path d="M8 2v12M2 8h12" />
                   </svg>
                 </button>
-                <div className="launcher-coord-wrap">
-                  <button
-                    className={`launcher-action-btn${coordMenuOpen ? " active" : ""}`}
-                    onClick={handleToggleCoordMenu}
-                    title="Launch or claim coordinator"
-                    aria-label="Launch or claim coordinator"
-                    aria-haspopup="menu"
-                    aria-expanded={coordMenuOpen}
-                  >
-                    {/* Crosshair glyph: reads as "coordinator / orchestrator"
-                        without overloading the palette. Same 16x16 footprint
-                        as the New Session + icon next to it. */}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="8" cy="8" r="5" />
-                      <path d="M8 1v2M8 13v2M1 8h2M13 8h2" />
-                      <circle cx="8" cy="8" r="1.5" />
-                    </svg>
-                  </button>
-                  {coordMenuOpen && (
-                    <>
-                      <div
-                        className="launcher-coord-menu-backdrop"
-                        onClick={() => setCoordMenuOpen(false)}
-                      />
-                      <div className="launcher-coord-menu" role="menu">
-                        <button
-                          className="launcher-coord-menu-item"
-                          role="menuitem"
-                          onClick={() => handleOpenCoordDialog("launch")}
-                        >
-                          Launch coordinator...
-                        </button>
-                        {/* §3.6 single-session preservation: Claim is only
-                            meaningful when at least one existing session can
-                            be claimed. Hide entirely otherwise so the menu
-                            doesn't tease an inert action. */}
-                        {claimableSessions.length > 0 && (
-                          <button
-                            className="launcher-coord-menu-item"
-                            role="menuitem"
-                            onClick={() => handleOpenCoordDialog("claim")}
-                          >
-                            Claim coordinator...
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
                 <button
                   className="launcher-action-btn"
                   onClick={handleStartImport}
@@ -1827,89 +1564,12 @@ function SessionLauncher({
           </div>
         ) : (
           <>
-            {/* "My sessions" section. When no co-lab sessions exist anywhere,
-                we drop the section header and fall back to the original flat
-                time/alpha buckets — preserves the lean UX for single-session
-                users. */}
-            {(() => {
-              const mineSection = sections.find((s) => s.kind === "mine");
-              const mineCount = mineSection?.sessions.length ?? 0;
-              const mineCollapsed = effectiveCollapsed.has("mine");
-              if (!hasColabSections) {
-                return mineBuckets.map((bucket) => (
-                  <div key={bucket.label} className="launcher-group">
-                    <div className="launcher-group-label">{bucket.label}</div>
-                    {bucket.sessions.map((s) => renderSession(s))}
-                  </div>
-                ));
-              }
-              return (
-                <div className="launcher-section launcher-section-mine">
-                  <button
-                    type="button"
-                    className={`launcher-section-header${mineCollapsed ? " collapsed" : ""}`}
-                    onClick={() => toggleSectionCollapsed("mine")}
-                    aria-expanded={!mineCollapsed}
-                  >
-                    <span className="launcher-section-chevron" aria-hidden="true">
-                      {mineCollapsed ? "▸" : "▾"}
-                    </span>
-                    <span className="launcher-section-title">My sessions</span>
-                    <span className="launcher-section-count">{mineCount}</span>
-                  </button>
-                  {!mineCollapsed &&
-                    mineBuckets.map((bucket) => (
-                      <div key={bucket.label} className="launcher-group">
-                        <div className="launcher-group-label">{bucket.label}</div>
-                        {bucket.sessions.map((s) => renderSession(s))}
-                      </div>
-                    ))}
-                </div>
-              );
-            })()}
-            {sections
-              .filter((s) => s.kind !== "mine")
-              .map((section) => {
-                const collapsed = effectiveCollapsed.has(section.id);
-                const borderColor =
-                  section.kind === "colab" && section.groupName
-                    ? colabGroupBorderColor(section.groupName)
-                    : undefined;
-                return (
-                  <div
-                    key={section.id}
-                    className={`launcher-section launcher-section-${section.kind}`}
-                    style={borderColor ? { ["--colab-group-border" as string]: borderColor } : undefined}
-                  >
-                    <button
-                      type="button"
-                      className={`launcher-section-header${collapsed ? " collapsed" : ""}`}
-                      onClick={() => toggleSectionCollapsed(section.id)}
-                      aria-expanded={!collapsed}
-                    >
-                      <span className="launcher-section-chevron" aria-hidden="true">
-                        {collapsed ? "▸" : "▾"}
-                      </span>
-                      <span
-                        className="launcher-section-title"
-                        style={
-                          borderColor
-                            ? { borderLeft: `3px solid ${borderColor}`, paddingLeft: 8 }
-                            : undefined
-                        }
-                      >
-                        {section.label}
-                      </span>
-                      <span className="launcher-section-count">{section.sessions.length}</span>
-                    </button>
-                    {!collapsed && (
-                      <div className="launcher-section-body">
-                        {section.sessions.map((s) => renderSession(s, borderColor))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            {sessionBuckets.map((bucket) => (
+              <div key={bucket.label} className="launcher-group">
+                <div className="launcher-group-label">{bucket.label}</div>
+                {bucket.sessions.map((s) => renderSession(s))}
+              </div>
+            ))}
           </>
         )}
       </div>
@@ -2009,158 +1669,6 @@ function SessionLauncher({
         </div>
       )}
 
-      {/* Launch coordinator dialog */}
-      {coordDialog === "launch" && (
-        <div className="delete-overlay" onClick={closeCoordDialog}>
-          <div className="delete-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="delete-header">
-              <div className="delete-session-info">
-                <span className="delete-session-name">Launch coordinator</span>
-              </div>
-              <button className="delete-close" onClick={closeCoordDialog}>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-              </button>
-            </div>
-            <div className="delete-body">
-              <p className="launcher-settings-hint">
-                Spawn a fresh twapp session wired as coordinator. Equivalent to running <code>twapp coordinator launch</code> in a terminal.
-              </p>
-              <div className="launcher-settings-field">
-                <label>Name <span className="launcher-field-hint">(optional, default: coordinator)</span></label>
-                <input
-                  type="text"
-                  value={launchName}
-                  onChange={(e) => setLaunchName(e.target.value)}
-                  placeholder="coordinator"
-                  autoFocus
-                />
-              </div>
-              <div className="launcher-settings-field">
-                <label>Briefing <span className="launcher-field-hint">(absolute path; defaults to bundled bootstrap)</span></label>
-                <input
-                  type="text"
-                  value={launchBriefing}
-                  onChange={(e) => setLaunchBriefing(e.target.value)}
-                  placeholder="/absolute/path/to/briefing.md"
-                />
-              </div>
-              <div className="launcher-settings-field">
-                <label>Shared mailbox dir <span className="launcher-field-hint">(optional; inherits $TWAPP_MAILBOX_DIR)</span></label>
-                <input
-                  type="text"
-                  value={launchSharedDir}
-                  onChange={(e) => setLaunchSharedDir(e.target.value)}
-                  placeholder="/absolute/path/to/mailbox"
-                />
-              </div>
-              <div className="launcher-settings-field">
-                <label>Model <span className="launcher-field-hint">(optional; claude CLI default if unset)</span></label>
-                <select
-                  value={launchModel}
-                  onChange={(e) => setLaunchModel(e.target.value)}
-                >
-                  <option value="">(default)</option>
-                  {coordModels.map((m) => (
-                    <option key={m.name} value={m.name}>
-                      {m.name} — {m.tier}
-                    </option>
-                  ))}
-                </select>
-                {/* If the claude model cache is empty, only `(default)` renders
-                    in the dropdown — nudge the operator toward the CLI that
-                    populates it so the silent degrade isn't mistaken for a bug. */}
-                {coordModels.length === 0 && (
-                  <span className="launcher-field-hint">
-                    Run <code>twapp models refresh</code> to populate the list.
-                  </span>
-                )}
-              </div>
-              {coordError && <div className="delete-error">{coordError}</div>}
-            </div>
-            <div className="delete-actions">
-              <button className="delete-cancel" onClick={closeCoordDialog} disabled={coordRunning}>Cancel</button>
-              <button
-                className="launcher-create-btn"
-                onClick={handleLaunchCoordinator}
-                disabled={coordRunning}
-              >
-                {coordRunning ? (<><div className="launcher-spinner small" /> Launching...</>) : "Launch"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Claim coordinator dialog */}
-      {coordDialog === "claim" && (
-        <div className="delete-overlay" onClick={closeCoordDialog}>
-          <div className="delete-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="delete-header">
-              <div className="delete-session-info">
-                <span className="delete-session-name">Claim coordinator</span>
-              </div>
-              <button className="delete-close" onClick={closeCoordDialog}>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-              </button>
-            </div>
-            <div className="delete-body">
-              <p className="launcher-settings-hint">
-                Flip an existing session's role to <code>coordinator</code> without restarting it. Equivalent to <code>twapp coordinator claim</code> run from inside that session.
-              </p>
-              <div className="launcher-settings-field">
-                <label>Session</label>
-                <select
-                  value={claimName}
-                  onChange={(e) => setClaimName(e.target.value)}
-                  autoFocus
-                >
-                  <option value="">(pick a session)</option>
-                  {claimableSessions.map((s) => (
-                    <option key={s.directory} value={s.name}>
-                      {s.name}{s.role ? ` — role: ${s.role}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {/* Only expose --force when the selected session already has a
-                  non-coordinator role. Otherwise it's a footgun: a user can
-                  toggle force without understanding what they'd overwrite. */}
-              {(() => {
-                const picked = claimableSessions.find((s) => s.name === claimName);
-                if (!picked || !picked.role) return null;
-                return (
-                  <label className="launcher-checkbox-field">
-                    <input
-                      type="checkbox"
-                      checked={claimForce}
-                      onChange={(e) => setClaimForce(e.target.checked)}
-                    />
-                    <span>Overwrite existing role "{picked.role}" (force)</span>
-                  </label>
-                );
-              })()}
-              {coordError && <div className="delete-error">{coordError}</div>}
-            </div>
-            <div className="delete-actions">
-              <button className="delete-cancel" onClick={closeCoordDialog} disabled={coordRunning}>Cancel</button>
-              <button
-                className="launcher-create-btn"
-                onClick={handleClaimCoordinator}
-                disabled={coordRunning || !claimName}
-              >
-                {coordRunning ? (<><div className="launcher-spinner small" /> Claiming...</>) : "Claim"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Coordinator toast: success announcements auto-dismiss after 4s.
-          Rendered at the root so it's above the session list without
-          hijacking dialog focus. */}
-      {coordToast && (
-        <div className="launcher-coord-toast">{coordToast}</div>
-      )}
     </div>
   );
 }

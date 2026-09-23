@@ -1,4 +1,4 @@
-use super::tickets::{normalize_jtk_ticket, read_session_id};
+use super::tickets::read_session_id;
 use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
@@ -10,19 +10,6 @@ use crate::cli::session::{
     find_latest_codex_session_for_cwd, shell_escape_single, AgentProvider, SessionData,
 };
 use crate::cli::session_attribution;
-
-/// Read `(role, provenance, colab_group)` from the parent session file so a
-/// GUI fork can inherit them. Returns `(None, None, None)` if the file is
-/// missing or unreadable — a fork off an unknown session is treated as a
-/// plain session.
-pub fn read_fork_inherited_metadata(
-    parent_cwd: &str,
-) -> (Option<String>, Option<String>, Option<String>) {
-    crate::cli::session::read_session(std::path::Path::new(parent_cwd))
-        .ok()
-        .map(|s| (s.role, s.provenance, s.colab_group))
-        .unwrap_or((None, None, None))
-}
 
 pub fn sanitize_instance_name(name: &str) -> String {
     let safe: String = name
@@ -132,9 +119,6 @@ fn launcher_session_from_data(
         message_count,
         imported,
         forked_from,
-        role: session_data.role.clone(),
-        provenance: session_data.provenance.clone(),
-        colab_group: session_data.colab_group.clone(),
     }
 }
 
@@ -416,9 +400,6 @@ pub async fn create_and_launch_session(
         None,
         None,
         chrome,
-        None,
-        Some("user".to_string()),
-        None,
     )?;
 
     let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
@@ -861,6 +842,7 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
         // Remove twapp metadata files
         let _ = std::fs::remove_file(work_dir.join(".twapp-session.json"));
         let _ = std::fs::remove_file(work_dir.join(".twapp-ticket.json"));
+        let _ = std::fs::remove_file(work_dir.join(".twapp-coordinator-bootstrap.md"));
 
         // Remove all .twapp-notes*.json and .twapp-prompts*.json
         if let Ok(entries) = std::fs::read_dir(&work_dir) {
@@ -1195,9 +1177,6 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             imported_from: Some(original_cwd),
             use_chrome: None,
             override_terminal_theme: None,
-            role: None,
-            provenance: None,
-            colab_group: None,
         };
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
@@ -1228,12 +1207,6 @@ pub async fn fork_session(
     }
     let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
     let mut work_dir = original_cwd.clone();
-    // Fork inherits role + provenance + colab_group from the parent session so CLI
-    // `twapp resume --fork` and the GUI fork button agree. A fork is a derivative of
-    // the parent's context, not a fresh launch — resetting these would drop the agent
-    // tag (or colab membership) on every fork.
-    let (parent_role, parent_provenance, parent_colab_group) =
-        read_fork_inherited_metadata(&original_cwd);
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
         .and_then(|n| n.to_str())
@@ -1253,40 +1226,20 @@ pub async fn fork_session(
 
     // If ticket provided, fetch and set up directory
     if let Some(ref key) = ticket_key {
-        // Fetch ticket via jtk
-        let output = super::shell_env::run_tool(
-            &super::shell_env::TOOL_JTK,
-            &["issues", "get", key, "-o", "json"],
-        )
+        let requested = key.clone();
+        let ticket = super::tickets::fetch_blocking(move || {
+            crate::cli::ticket::fetch_ticket(&requested, false)
+        })
         .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("jtk failed: {}", stderr));
-        }
-
-        let raw: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("Failed to parse jtk output: {}", e))?;
-        let data = if raw.is_array() {
-            raw.as_array()
-                .and_then(|a| a.first())
-                .cloned()
-                .unwrap_or(serde_json::Value::Null)
-        } else {
-            raw
-        };
-
-        let ticket = normalize_jtk_ticket(&data, key);
-        let ticket_key_str = ticket["key"].as_str().unwrap_or(key);
-        let ticket_title = ticket["title"].as_str().unwrap_or("");
-        window_name = crate::cli::format_session_name(ticket_key_str, ticket_title);
+        let ticket_key_str = ticket.key.as_str();
+        window_name = crate::cli::format_session_name(ticket_key_str, &ticket.title);
         ticket_key_for_session = Some(ticket_key_str.to_string());
 
         // Create work directory under parent of current cwd
         let parent = std::path::Path::new(&work_dir)
             .parent()
             .unwrap_or(std::path::Path::new(&work_dir));
-        let dir_name = ticket_key_str.replace('/', "-");
+        let dir_name = ticket_key_str.replace(['/', '#'], "-");
         let new_dir = parent.join(&dir_name);
         std::fs::create_dir_all(&new_dir)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -1345,9 +1298,6 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
-                role: parent_role.clone(),
-                provenance: parent_provenance.clone(),
-                colab_group: parent_colab_group.clone(),
             },
         )
     } else {
@@ -1393,9 +1343,6 @@ pub async fn fork_session(
                 imported_from: None,
                 use_chrome: None,
                 override_terminal_theme: None,
-                role: parent_role,
-                provenance: parent_provenance,
-                colab_group: parent_colab_group,
             },
         )
     };
@@ -1437,160 +1384,6 @@ pub async fn fork_session(
     crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
 
     Ok(window_name)
-}
-
-#[cfg(test)]
-mod fork_inheritance_tests {
-    use super::read_fork_inherited_metadata;
-    use std::fs;
-
-    #[test]
-    fn inherits_role_and_provenance_from_parent_session_file() {
-        let dir = std::env::temp_dir().join(format!("twapp-fork-inherit-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(".twapp-session.json"),
-            serde_json::json!({
-                "session_id": "abc",
-                "name": "parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": dir.to_string_lossy(),
-                "created": "2026-01-01T00:00:00Z",
-                "last_resumed": null,
-                "role": "implementer",
-                "provenance": "spawned",
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
-        assert_eq!(role.as_deref(), Some("implementer"));
-        assert_eq!(prov.as_deref(), Some("spawned"));
-        assert_eq!(colab, None);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn missing_parent_returns_none_pair() {
-        let dir = std::env::temp_dir().join(format!("twapp-fork-missing-{}", uuid::Uuid::new_v4()));
-        // Intentionally do not create the directory; fork against a path with no session file.
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
-        assert_eq!(role, None);
-        assert_eq!(prov, None);
-        assert_eq!(colab, None);
-    }
-
-    #[test]
-    fn legacy_parent_without_fields_returns_none_pair() {
-        let dir = std::env::temp_dir().join(format!("twapp-fork-legacy-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(".twapp-session.json"),
-            r#"{
-                "session_id": "old",
-                "name": "legacy-parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": "/tmp/legacy",
-                "created": "2025-12-01T00:00:00Z",
-                "last_resumed": null
-            }"#,
-        )
-        .unwrap();
-
-        let (role, prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
-        assert_eq!(role, None);
-        assert_eq!(prov, None);
-        assert_eq!(colab, None);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn inherits_colab_group_from_parent_session_file() {
-        let dir = std::env::temp_dir().join(format!("twapp-fork-colab-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join(".twapp-session.json"),
-            serde_json::json!({
-                "session_id": "abc",
-                "name": "parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": dir.to_string_lossy(),
-                "created": "2026-01-01T00:00:00Z",
-                "last_resumed": null,
-                "colab_group": "feature-x",
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        let (_role, _prov, colab) = read_fork_inherited_metadata(dir.to_str().unwrap());
-        assert_eq!(colab.as_deref(), Some("feature-x"));
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod launcher_propagation_tests {
-    use super::launcher_session_from_data;
-    use crate::cli::session::SessionData;
-
-    fn base_session() -> SessionData {
-        SessionData {
-            session_id: "sid".into(),
-            name: "parent".into(),
-            color: String::new(),
-            ticket_key: None,
-            claude_cwd: "/tmp/parent".into(),
-            created: "2026-04-21T00:00:00Z".into(),
-            last_resumed: None,
-            provider: None,
-            codex_session_id: None,
-            codex_cwd: None,
-            antigravity_session_id: None,
-            antigravity_cwd: None,
-            migration_source_provider: None,
-            forked_from: None,
-            imported: None,
-            imported_from: None,
-            use_chrome: None,
-            override_terminal_theme: None,
-            role: None,
-            provenance: None,
-            colab_group: None,
-        }
-    }
-
-    #[test]
-    fn propagates_role_provenance_colab_group_into_launcher_session() {
-        let mut s = base_session();
-        s.role = Some("coordinator".into());
-        s.provenance = Some("spawned".into());
-        s.colab_group = Some("feature-x".into());
-
-        let ls = launcher_session_from_data(&s, std::path::Path::new("/tmp/parent"));
-
-        assert_eq!(ls.role.as_deref(), Some("coordinator"));
-        assert_eq!(ls.provenance.as_deref(), Some("spawned"));
-        assert_eq!(ls.colab_group.as_deref(), Some("feature-x"));
-    }
-
-    #[test]
-    fn propagates_none_when_session_data_has_no_colab_group() {
-        let ls = launcher_session_from_data(
-            &base_session(),
-            std::path::Path::new("/tmp/parent"),
-        );
-        assert_eq!(ls.role, None);
-        assert_eq!(ls.provenance, None);
-        assert_eq!(ls.colab_group, None);
-    }
 }
 
 #[cfg(test)]
