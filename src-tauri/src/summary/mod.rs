@@ -5,6 +5,7 @@
 
 pub mod cache;
 pub mod condense;
+pub mod efforts;
 pub mod queue;
 pub mod runner;
 pub mod triage;

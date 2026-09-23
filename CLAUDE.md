@@ -13,6 +13,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp prompt add|list|remove`: quick prompts, shared by every session.
 - `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
 - `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
+- `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
 
@@ -23,7 +24,7 @@ Run `twapp <command> --help` for flags.
 **Config and state:**
 - Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-yaks.json` (tangents seen by summaries) in the session directory.
 - Approved check commands: `~/.config/twapp/approved-checks.json`; every check the window runs is logged to `~/.local/state/twapp/blocker-checks.log`.
-- Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, dismissed name suggestions, selection, last-viewed).
+- Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, efforts, dismissed name suggestions, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).
 - Summaries cache: `~/.local/state/twapp/summaries/`.
 

@@ -261,6 +261,16 @@ PTY exists are dropped, not queued. Opening a session that is not yet in the
 window (the palette, the library) shows "Opening" until the backend returns
 it, and neither path runs twice on repeated Enter.
 
+## Efforts
+
+A session's effort comes from, in order: the user (`hub.json`, source
+`user`); **Find related sessions**, which sends every hosted session's name,
+ticket, epic, main effort and headline to one metered small-model call and
+stores the groups it names (source `auto`, replaced on the next run, never
+over a `user` effort); and links the frontend computes on every render, which
+join sessions sharing an epic or a ticket, or a fork and its parent. A link
+needs two sessions to make a group.
+
 ## Blockers
 
 A session records what it waits on outside itself in `.twapp-blockers.json`
@@ -320,6 +330,7 @@ socket to answer and then sends the request over it.
 | `"snapshot"` | The rail as the window sees it, including state and summary (`twapp status`). |
 | `{"set_lane": {"key": "<dir>", "lane": "blocked"}}` | File a hosted session in a lane (`twapp lane`). |
 | `{"close": "<dir>"}` | Stop a hosted session and remove it from the window (`twapp close`, `twapp delete`). |
+| `{"set_effort": {"key": "<dir>", "name": "..."}}` | Put a hosted session in an effort; `null` takes it out (`twapp effort`). |
 | `"changed"` | Session files changed on disk; the window redraws its list (`twapp rename`). |
 | `"ping"` | Liveness check. |
 

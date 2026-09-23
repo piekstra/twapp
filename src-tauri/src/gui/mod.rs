@@ -126,6 +126,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_dismiss_name,
             hub::hub_blocker_check,
             hub::hub_blocker_set,
+            hub::hub_set_effort,
+            hub::hub_find_efforts,
             hub::hub_start,
             hub::hub_write,
             hub::hub_resize,

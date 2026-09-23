@@ -37,6 +37,8 @@ pub struct UsageReport {
     pub days: u32,
     pub summaries: u32,
     pub triages: u32,
+    #[serde(default)]
+    pub efforts: u32,
     pub failed: u32,
     pub tokens: u64,
     pub cost_usd: f64,
@@ -116,6 +118,7 @@ impl UsageLedger {
         for r in self.records_since(since) {
             match r.kind.as_str() {
                 "triage" => report.triages += 1,
+                "efforts" => report.efforts += 1,
                 _ => report.summaries += 1,
             }
             if !r.ok {

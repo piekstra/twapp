@@ -37,6 +37,10 @@ type SessionFieldValues = {
 
 interface Props {
   session: SessionView;
+  /** The effort the session's links put it in, when none is set. */
+  linkedEffort?: string | null;
+  /** Effort names in use, offered when naming one. */
+  knownEfforts: string[];
   activeTab: string;
   now: number;
   globalPrompts: PromptStore;
@@ -54,6 +58,8 @@ interface Props {
 
 export default function SessionPanel({
   session,
+  linkedEffort,
+  knownEfforts,
   activeTab,
   now,
   globalPrompts,
@@ -78,6 +84,15 @@ export default function SessionPanel({
   const deletedNotes = useRef<Set<string>>(new Set());
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
   const [yaksOpen, setYaksOpen] = useState(false);
+  const [editingEffort, setEditingEffort] = useState(false);
+  const [effortDraft, setEffortDraft] = useState("");
+  const effortName = session.effort?.name ?? linkedEffort ?? null;
+  const saveEffort = () => {
+    setEditingEffort(false);
+    const name = effortDraft.trim();
+    if (name === (session.effort?.name ?? "")) return;
+    hubApi.setEffort(session.key, name || null).catch(console.error);
+  };
   // Until the user toggles it, the section is open only when it has notes.
   const [notesOpen, setNotesExpanded] = useState<boolean | null>(null);
   const [newNote, setNewNote] = useState("");
@@ -394,6 +409,48 @@ export default function SessionPanel({
           ))}
         </div>
         {session.lane === "blocked" && <span className="panel-lane-since">{blockedLabel(session, now)}</span>}
+      </div>
+
+      <div className="panel-effort">
+        <span className="eyebrow">Effort</span>
+        {editingEffort ? (
+          <input
+            className="panel-effort-input"
+            autoFocus
+            list="twapp-efforts"
+            value={effortDraft}
+            placeholder="Name the larger effort"
+            onChange={(e) => setEffortDraft(e.target.value)}
+            onBlur={() => saveEffort()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveEffort();
+              if (e.key === "Escape") setEditingEffort(false);
+            }}
+          />
+        ) : (
+          <button
+            className={`panel-effort-value${effortName ? "" : " empty"}`}
+            onClick={() => {
+              setEffortDraft(effortName ?? "");
+              setEditingEffort(true);
+            }}
+            title={session.effort?.source === "auto" ? "Found by Find related sessions; click to change" : "Click to set"}
+          >
+            {effortName ?? "None"}
+            {session.effort?.source === "auto" && <span className="panel-effort-source">found</span>}
+            {!session.effort && effortName && <span className="panel-effort-source">linked</span>}
+          </button>
+        )}
+        {session.effort && !editingEffort && (
+          <button className="icon-button small" title="Take the session out of this effort" onClick={() => hubApi.setEffort(session.key, null).catch(console.error)}>
+            &times;
+          </button>
+        )}
+        <datalist id="twapp-efforts">
+          {knownEfforts.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
       </div>
 
       <section className={`summary-card state-${status.state}${session.attention ? " attention" : ""}${summaryOpen ? "" : " collapsed"}`}>

@@ -200,6 +200,10 @@ When a session's name no longer describes its main effort, the summary also sugg
 
 These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
+### Efforts: sessions that serve the same larger goal
+
+The overview groups sessions **By lane** or **By effort**. A session's effort is, in order: one you set in its panel (or with `twapp effort <name>`); one **Find related sessions** found; or a group its links make, when two sessions share an epic or a ticket, or one was forked from the other. **Find related sessions** makes one small-model call over every session's name, ticket and main effort, and never changes an effort you set; it is counted with the other smart features. List rows and cards show each session's effort.
+
 ### Waiting on: blockers outside the session
 
 A session often stops on someone else: a vendor's support case, an email, another team's review. The session's agent records each one with `twapp blocker add`, naming who it waits on and, optionally, a command that prints the blocker's current state (a CLI that reads the ticket, say). The overview's **Waiting on** list shows every open blocker across sessions with the session it belongs to, and the session panel shows its own.
@@ -266,6 +270,7 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp blocker add\|list\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |
 | `twapp yaks [--json]` | The session's main effort and the tangents it took |
+| `twapp effort [name\|--clear]` | Show or set the larger effort the session belongs to |
 | `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
 | `twapp note add\|list\|remove` | Session notes |

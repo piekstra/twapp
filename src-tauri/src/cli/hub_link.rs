@@ -40,6 +40,10 @@ pub fn set_lane(directory: &str, lane: Lane) -> Result<(), String> {
     expect_ok(&HubRequest::SetLane { key: directory.to_string(), lane })
 }
 
+pub fn set_effort(directory: &str, name: Option<String>) -> Result<(), String> {
+    expect_ok(&HubRequest::SetEffort { key: directory.to_string(), name })
+}
+
 pub fn close(directory: &str) -> Result<(), String> {
     expect_ok(&HubRequest::Close(directory.to_string()))
 }
