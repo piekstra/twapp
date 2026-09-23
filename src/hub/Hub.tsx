@@ -26,6 +26,7 @@ import ThinBar from "./ThinBar";
 import StatusLine from "./StatusLine";
 import { clamp, loadLayout, saveLayout, type LayoutMode, type LayoutPrefs } from "./layout";
 import SessionPanel from "./SessionPanel";
+import StartingOverlay from "./StartingOverlay";
 import Overview from "./Overview";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 
@@ -278,18 +279,32 @@ export default function Hub() {
   }, [layout, manager]);
 
   // --- Actions ---------------------------------------------------------------
+  // A session opened from the palette is resumed before it can be shown;
+  // until then the window says so, and no terminal takes the keys typed.
+  const [opening, setOpening] = useState<{ name: string; error?: string } | null>(null);
+  const openingRef = useRef(false);
   const openDirectory = useCallback(
-    async (directory: string) => {
+    async (directory: string, name?: string) => {
+      openingRef.current = true;
+      setOpening({ name: name || directory.split("/").pop() || directory });
+      (document.activeElement as HTMLElement | null)?.blur();
       try {
         const key = await hubApi.open(directory);
+        setOpening(null);
         setOverview(false);
         hub.select(key);
       } catch (e) {
-        console.error(e);
+        setOpening({ name: name || directory, error: String(e) });
+        setTimeout(() => setOpening((o) => (o?.error ? null : o)), 8000);
+      } finally {
+        openingRef.current = false;
       }
     },
     [hub],
   );
+
+  const [, setWaitingTick] = useState(0);
+  useEffect(() => manager.onWaitingChange(() => setWaitingTick((n) => n + 1)), [manager]);
 
   const openLibrary = useCallback((view: LauncherView = "sessions") => {
     setLibraryView(view);
@@ -760,6 +775,18 @@ export default function Hub() {
       {!split && sidebarSide === "left" && (layout.sidebarThin ? thin("left", "sidebar", toggleSidebar) : sidebar(false))}
 
       <main className="hub-main">
+        {opening && (
+          <div className={`opening-banner${opening.error ? " error" : ""}`} role="status">
+            {opening.error ? (
+              <>Could not open {opening.name}: {opening.error}</>
+            ) : (
+              <>
+                <div className="starting-spinner" />
+                Opening {opening.name}
+              </>
+            )}
+          </div>
+        )}
         {hub.hostError && <div className="host-error">{hub.hostError}</div>}
         {statusLineVisible && current && (
           <StatusLine
@@ -838,7 +865,12 @@ export default function Hub() {
               <button className="tab-add" onClick={newTab} title="New tab (⌘T)">+</button>
             </div>
           )}
-          <div className="hub-terminal-host" ref={hostRef} />
+          <div className="hub-terminal-stack">
+            <div className="hub-terminal-host" ref={hostRef} />
+            {current && manager.isWaiting(current.key, activeTab) && (
+              <StartingOverlay key={`${current.key}:${activeTab}`} session={current} tab={activeTab} />
+            )}
+          </div>
         </div>
         {peek === "sidebar" && !split && layout.sidebarThin && sidebar(true)}
         {peek === "rail" && split && layout.railThin && (
@@ -1076,7 +1108,9 @@ export default function Hub() {
           onOpen={openDirectory}
           onClose={() => {
             setPaletteOpen(false);
-            setTimeout(() => manager.focus(), 0);
+            setTimeout(() => {
+              if (!openingRef.current) manager.focus();
+            }, 0);
           }}
         />
       )}

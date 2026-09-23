@@ -15,7 +15,7 @@ interface Props {
   hosted: SessionView[];
   commands: PaletteCommand[];
   onSelect: (key: string) => void;
-  onOpen: (directory: string) => void;
+  onOpen: (directory: string, name: string) => void;
   onClose: () => void;
 }
 
@@ -94,7 +94,7 @@ export default function CommandPalette({ hosted, commands, onSelect, onOpen, onC
     if (!item) return;
     onClose();
     if (item.kind === "hosted") onSelect(item.session.key);
-    else if (item.kind === "known") onOpen(item.session.directory);
+    else if (item.kind === "known") onOpen(item.session.directory, item.session.name);
     else item.command.run();
   };
 

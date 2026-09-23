@@ -2305,3 +2305,141 @@ kbd {
   font-size: 11px;
   color: var(--text-3);
 }
+
+/* --- Starting a terminal -------------------------------------------------- */
+
+.starting-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  /* A terminal that draws within a moment never shows the overlay. */
+  animation: starting-in 150ms ease-out 250ms forwards;
+}
+
+@keyframes starting-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.starting-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 380px;
+  padding: 14px 16px;
+  border-radius: var(--radius-l);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+}
+
+.starting-spinner {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: starting-spin 0.8s linear infinite;
+}
+
+@keyframes starting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.starting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.starting-title {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font: 600 13px var(--font-ui);
+  color: var(--text-1);
+}
+
+.starting-elapsed {
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.starting-detail {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.opening-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  font: 500 12px var(--font-ui);
+  color: var(--text-1);
+}
+
+.opening-banner.error {
+  border-color: var(--state-error);
+  color: var(--state-error);
+  pointer-events: auto;
+}
+
+.opening-banner .starting-spinner {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+.hub-terminal-stack {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.launcher-opening {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  font: 500 11px var(--font-ui);
+  color: var(--accent-text);
+}
+
+.launcher-opening .starting-spinner {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  border-width: 1.5px;
+}
+
+.launcher-launch-error {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--state-error);
+}
