@@ -1,0 +1,4 @@
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "user", "message": {"role": "user", "content": "tidy the config loader"}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "text", "text": "I will run the tests next."}]}}
+{"sessionId": "sess-1", "cwd": "/work/app", "version": "2.1.0", "isSidechain": false, "userType": "external", "timestamp": "2026-01-01T00:00:00Z", "type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "t5", "name": "Bash", "input": {"command": "true"}}]}}
+{"type": "ai-title", "aiTitle": "Tidy the config loader", "sessionId": "claude-sess"}
