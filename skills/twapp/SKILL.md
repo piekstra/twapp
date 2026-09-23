@@ -1,6 +1,6 @@
 ---
 name: twapp
-description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), session notes, and reading the window's view of sessions. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, or when the user asks to note something for the session.
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
 ---
 
 # Working in a twapp session
@@ -50,3 +50,13 @@ A blocker without a check still shows in the window; the user checks it by hand.
 ## The window's view
 
 `twapp status` lists the window's sessions by lane (priority, background, blocked) with state and summary; `--json` for the full record. The lanes are the user's: change one with `twapp lane <lane>` only when the user asks.
+
+## The work journal
+
+twapp writes one journal entry per work day across all of the user's sessions: a headline, an overview, each effort with what was done and where it stands, and the day's blockers, tangents and sessions. When the user asks what they worked on over a stretch of time (a standup, a weekly update, a performance review), read the journal instead of reconstructing it from transcripts:
+
+- `twapp journal` prints the last finished work day; `twapp journal <YYYY-MM-DD|yesterday|today>` a given day.
+- `twapp journal week|month|year`, `last-week|last-month|last-year`, or an id (`2026-W38`, `2026-09`, `2026`) prints a period summary, written from the days' entries (and a year from its months') when it is missing or out of date.
+- `twapp journal --list` lists the days with entries; `--path` prints the Markdown file of an entry, or the journal directory with no day. The entries are Markdown files under `~/.local/share/twapp/journal/days/` and `periods/`; read them directly to cover a long stretch.
+
+Writing a missing entry or period runs a model call, so prefer the entries that exist; `--regenerate` rewrites one only when the user asks.

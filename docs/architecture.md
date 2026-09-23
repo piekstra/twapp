@@ -197,6 +197,48 @@ sessions to look at and why, plus observations (a session waiting a long time,
 two sessions on the same ticket, a finished session that could be closed). The
 result is advice shown to the user; twapp takes no action from it.
 
+## Journal
+
+The journal keeps one entry per work day, written from every session's
+activity, so days can be read back and summarized into weeks, months and
+years. A work day runs from 4 AM to 4 AM local time (`journal::DAY_START_HOUR`),
+so work past midnight counts toward the day it continues. Everything lives
+under `~/.local/share/twapp/journal/`.
+
+- **Trail.** Each summary the window receives is appended to
+  `activity/<day>.jsonl` with the session, its effort, ticket, headline, main
+  effort and tangent. A summary that repeats the session's previous headline
+  is not appended again.
+- **Facts.** An entry's facts are gathered for the day from the trail and the
+  session directories: the prompts typed that day and the agent's closing
+  message of each turn (Claude transcripts, Codex `history.jsonl` prompts),
+  notes written that day, the day's tangents and tangent share from
+  `.twapp-yaks.json`, and the blockers opened, noted, changed or resolved that
+  day or still open when it ended. The facts are saved with the entry, and
+  writing an entry again keeps sessions an earlier write recorded, so an entry
+  outlives a deleted session.
+- **Digest.** One headless harness call per entry turns the facts into a
+  headline, an overview, and the day's efforts with what was done and where
+  each stands. Blockers, tangents and the session list are shown from the
+  facts, not the digest. Journal calls go through the usage ledger as kind
+  `journal` but are not refused by `summaries.daily_limit`, and have a longer
+  timeout than summaries.
+- **When entries are written.** At start and whenever a new work day begins,
+  the window writes entries for finished days with activity in the last two
+  weeks that have none, most recent first, a few per pass. A finished day's
+  entry is kept as written unless the user rewrites it. Today's entry is
+  written only on request, and is marked as written before the day ended.
+- **Periods.** A week or month is summarized from its days' digests, a year
+  from its months', into `periods/<id>.json` (`2026-W39`, `2026-09`, `2026`).
+  A past day with activity and no entry gets one first. A period is written
+  again when the digests it covers changed.
+- **Files.** `days/<day>.json` and `periods/<id>.json` hold the facts and
+  digest; the `.md` beside each is the same entry for reading, which is what
+  an agent reads to look back over a stretch of work.
+- **Surfaces.** The Journal tab in the overview (`hub/Journal.tsx`,
+  `hub_journal_days`, `hub_journal_day`, `hub_journal_period`) and
+  `twapp journal [day|period]` (`--list`, `--json`, `--path`, `--regenerate`).
+
 ## Window layout
 
 - **Layouts.** `right` (the default) puts one sidebar right of the terminal,

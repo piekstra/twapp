@@ -4,6 +4,7 @@ import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinc
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
 import YakReport from "./YakReport";
+import Journal from "./Journal";
 import Linkify from "./Linkify";
 
 interface Props {
@@ -33,6 +34,7 @@ export default function Overview({
 }: Props) {
   const [triage, setTriage] = useState<Triage | null>(null);
   const [showYaks, setShowYaks] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
   // Per-viewer folding: lanes folded in the overview (Blocked starts folded)
   // and whether the full Waiting on list is open.
   const [folded, setFoldedState] = useState<string[]>(() => {
@@ -171,13 +173,16 @@ export default function Overview({
   return (
     <div className="overview">
       <div className="overview-tabs">
-        <button className={`overview-tab${!showLibrary && !showYaks ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowLibrary(false); }}>
+        <button className={`overview-tab${!showLibrary && !showYaks && !showJournal ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowLibrary(false); }}>
           Open sessions
         </button>
-        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowLibrary(true); }}>
+        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowLibrary(true); }}>
           All sessions
         </button>
-        <button className={`overview-tab${showYaks && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(true); }} title="Tangents your sessions took, across sessions and days">
+        <button className={`overview-tab${showJournal && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(false); setShowJournal(true); }} title="What each work day came to, across every session">
+          Journal
+        </button>
+        <button className={`overview-tab${showYaks && !showLibrary && !showJournal ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowJournal(false); setShowYaks(true); }} title="Tangents your sessions took, across sessions and days">
           Yaks
         </button>
         {returnTo && (
@@ -192,6 +197,10 @@ export default function Overview({
 
       {showLibrary ? (
         <div className="overview-library">{library}</div>
+      ) : showJournal ? (
+        <div className="overview-body">
+          <Journal onSelect={onSelect} />
+        </div>
       ) : showYaks ? (
         <div className="overview-body">
           <YakReport onSelect={onSelect} />

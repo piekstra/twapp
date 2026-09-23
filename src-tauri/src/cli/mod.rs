@@ -141,6 +141,25 @@ pub enum Commands {
         #[arg(long, default_value_t = 7)]
         days: u32,
     },
+    /// The work journal: one entry per work day, written from every
+    /// session's activity, and summaries of weeks, months and years
+    Journal {
+        /// A day (YYYY-MM-DD, today, yesterday, last) or a period (week,
+        /// month, year, last-week, last-month, last-year, 2026-W38, 2026-09,
+        /// 2026). Defaults to the last finished work day.
+        when: Option<String>,
+        #[arg(long)]
+        json: bool,
+        /// Write the entry again even when it is up to date
+        #[arg(long)]
+        regenerate: bool,
+        /// List the days in the journal
+        #[arg(long)]
+        list: bool,
+        /// Print the entry's Markdown file path (or the journal directory)
+        #[arg(long)]
+        path: bool,
+    },
     /// Install the twapp skill for agents (~/.claude/skills/twapp, and
     /// ~/.codex/skills/twapp when Codex is installed)
     #[command(name = "install-skill")]
@@ -539,6 +558,9 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
         Commands::InstallSkill => cmd_install_skill(),
+        Commands::Journal { when, json, regenerate, list, path } => {
+            crate::journal::cmd::cmd_journal(when.as_deref(), json, regenerate, list, path)
+        }
         Commands::Yaks { json, dir, all, days } => {
             if all {
                 yaks::cmd_yak_report(days, json)

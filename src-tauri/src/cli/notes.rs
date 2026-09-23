@@ -40,6 +40,11 @@ fn resolve_notes_path(work_dir: &Path) -> PathBuf {
     }
 }
 
+/// The notes kept for the session in `work_dir`.
+pub fn load_for(work_dir: &Path) -> Vec<Note> {
+    load_notes(&resolve_notes_path(work_dir))
+}
+
 fn load_notes(path: &Path) -> Vec<Note> {
     if !path.exists() {
         return Vec::new();
