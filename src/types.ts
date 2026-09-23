@@ -152,6 +152,7 @@ export interface AgentHarnessInfo {
 
 export interface DiscoveredSession {
   session_id: string;
+  provider: AgentProvider;
   original_cwd: string;
   summary: string | null;
   first_message: string | null;

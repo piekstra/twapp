@@ -1960,3 +1960,12 @@ kbd {
   color: var(--text-3);
   text-align: center;
 }
+
+.hub .import-view .import-provider-filter {
+  margin: 10px 24px 0;
+  align-self: flex-start;
+}
+
+.hub .import-view .launcher-search {
+  padding: 10px 24px 4px;
+}

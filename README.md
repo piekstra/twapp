@@ -185,9 +185,9 @@ summaries:
 
 `auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes.
 
-### Importing Claude sessions
+### Importing sessions
 
-Open **All sessions** in the overview and use the import button to adopt Claude conversations started outside twapp. Each imported conversation gets its own session directory under your work directory.
+Open **All sessions** in the overview and use the import button to adopt conversations started outside twapp, from every harness you have configured: Claude conversations in `~/.claude/projects`, Codex threads in `~/.codex/sessions`, and the latest Antigravity conversation of each workspace. Each imported conversation gets its own session directory under your work directory, and opening it resumes the conversation in the directory it was started in.
 
 ## Configuration
 

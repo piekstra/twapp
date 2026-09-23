@@ -97,6 +97,8 @@ pub struct DeletePreflight {
 #[derive(Clone, serde::Serialize)]
 pub struct DiscoveredSession {
     pub session_id: String,
+    /// Harness that owns the conversation: `claude`, `codex` or `antigravity`.
+    pub provider: String,
     pub original_cwd: String,
     pub summary: Option<String>,
     pub first_message: Option<String>,
@@ -124,6 +126,9 @@ pub struct ImportPreview {
 pub struct ImportRequest {
     pub session_id: String,
     pub proposed_name: String,
+    /// Harness that owns the conversation; Claude when absent.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]

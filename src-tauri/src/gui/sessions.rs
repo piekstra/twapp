@@ -779,41 +779,15 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
     Ok(())
 }
 
-#[tauri::command]
-pub async fn discover_claude_sessions() -> Result<ImportPreview, String> {
-    let home = dirs::home_dir().ok_or("No home directory")?;
-    let projects_dir = home.join(".claude/projects");
-
-    if !projects_dir.exists() {
-        return Ok(ImportPreview {
-            groups: Vec::new(),
-            total_sessions: 0,
-            work_directory: String::new(),
-        });
-    }
-
-    let global_config = crate::cli::config::GlobalConfig::load()?;
-    let work_directory = global_config.work_directory.to_string_lossy().to_string();
-
-    // Collect all known twapp session IDs
-    let twapp_sessions = crate::cli::session::list_sessions(&global_config.work_directory);
-    let known_ids: std::collections::HashSet<String> = twapp_sessions
-        .iter()
-        .map(|(data, _)| data.session_id.clone())
-        .collect();
-
-    // Walk ~/.claude/projects/ directories
-    let mut groups_map: std::collections::HashMap<String, Vec<DiscoveredSession>> =
-        std::collections::HashMap::new();
-
-    let Ok(project_dirs) = std::fs::read_dir(&projects_dir) else {
-        return Ok(ImportPreview {
-            groups: Vec::new(),
-            total_sessions: 0,
-            work_directory,
-        });
+/// Claude conversations under `projects_dir` that no twapp session owns.
+fn discover_claude_in(
+    projects_dir: &std::path::Path,
+    known_ids: &std::collections::HashSet<String>,
+) -> Vec<DiscoveredSession> {
+    let mut found = Vec::new();
+    let Ok(project_dirs) = std::fs::read_dir(projects_dir) else {
+        return found;
     };
-
     for project_entry in project_dirs.flatten() {
         let project_path = project_entry.path();
         if !project_path.is_dir() {
@@ -908,6 +882,7 @@ pub async fn discover_claude_sessions() -> Result<ImportPreview, String> {
 
             let session = DiscoveredSession {
                 session_id,
+                provider: "claude".to_string(),
                 original_cwd: original_cwd.clone(),
                 summary,
                 first_message,
@@ -918,8 +893,63 @@ pub async fn discover_claude_sessions() -> Result<ImportPreview, String> {
                 git_branch,
             };
 
-            groups_map.entry(original_cwd).or_default().push(session);
+            found.push(session);
         }
+    }
+
+    found
+}
+
+/// Conversations from every configured harness that no twapp session owns,
+/// grouped by the directory they were started in.
+#[tauri::command]
+pub async fn discover_sessions() -> Result<ImportPreview, String> {
+    let home = dirs::home_dir().ok_or("No home directory")?;
+    let global_config = crate::cli::config::GlobalConfig::load()?;
+    let work_directory = global_config.work_directory.to_string_lossy().to_string();
+
+    // Every conversation id any twapp session already holds, per harness.
+    let twapp_sessions = crate::cli::session::list_sessions(&global_config.work_directory);
+    let known_ids: std::collections::HashSet<String> = twapp_sessions
+        .iter()
+        .flat_map(|(data, _)| {
+            [
+                Some(data.session_id.clone()),
+                data.codex_session_id.clone(),
+                data.antigravity_session_id.clone(),
+            ]
+        })
+        .flatten()
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    let roots = super::import::HarnessRoots::under(&home);
+    let mut found = Vec::new();
+    for provider in crate::cli::config::get_configured_agent_providers() {
+        match provider {
+            AgentProvider::Claude => {
+                found.extend(discover_claude_in(&home.join(".claude/projects"), &known_ids))
+            }
+            AgentProvider::Codex => found.extend(super::import::discover_codex_in(
+                &roots.codex_sessions,
+                &roots.codex_index,
+                &known_ids,
+            )),
+            AgentProvider::Antigravity => found.extend(super::import::discover_antigravity_in(
+                &roots.antigravity_cache,
+                &roots.antigravity_conversations,
+                &known_ids,
+            )),
+        }
+    }
+
+    let mut groups_map: std::collections::HashMap<String, Vec<DiscoveredSession>> =
+        std::collections::HashMap::new();
+    for session in found {
+        groups_map
+            .entry(session.original_cwd.clone())
+            .or_default()
+            .push(session);
     }
 
     // Sort sessions within each group by last_timestamp (most recent first)
@@ -959,7 +989,16 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
     let mut imported_count: u32 = 0;
     let mut dirs_created: Vec<String> = Vec::new();
 
+    let roots = super::import::HarnessRoots::under(&home);
     for req in &requests {
+        let provider = req
+            .provider
+            .as_deref()
+            .and_then(AgentProvider::parse)
+            .unwrap_or(AgentProvider::Claude);
+        // Where the conversation started and when, from its harness's files.
+        let origin: Option<(String, Option<String>)> = match provider {
+            AgentProvider::Claude => (|| {
         // Find the JSONL file to get metadata
         let mut jsonl_path: Option<std::path::PathBuf> = None;
         let mut original_cwd = String::new();
@@ -1015,9 +1054,19 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             }
         }
 
-        if jsonl_path.is_none() {
-            continue; // JSONL not found, skip
-        }
+        let (_, _, first_ts, _, _, _) = extract_jsonl_metadata(jsonl_path.as_ref()?);
+        Some((original_cwd, first_ts))
+
+            })(),
+            AgentProvider::Codex => super::import::codex_cwd(&roots.codex_sessions, &req.session_id),
+            AgentProvider::Antigravity => {
+                super::import::antigravity_cwd(&roots.antigravity_cache, &req.session_id)
+                    .map(|cwd| (cwd, None))
+            }
+        };
+        let Some((original_cwd, first_ts)) = origin else {
+            continue;
+        };
 
         // Sanitize name for directory
         let safe_name: String = req
@@ -1058,9 +1107,6 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
             )
         })?;
 
-        // Get first timestamp from JSONL for created field
-        let (_, _, first_ts, _, _, _) = extract_jsonl_metadata(jsonl_path.as_ref().unwrap());
-
         // Pick color
         let color = if color_pref == "random" {
             THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())].to_string()
@@ -1069,30 +1115,20 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
         };
 
         // Write .twapp-session.json
-        let session_data = crate::cli::session::SessionData {
-            session_id: req.session_id.clone(),
-            name: req.proposed_name.clone(),
+        let session_data = imported_session_data(
+            provider,
+            &req.session_id,
+            &req.proposed_name,
             color,
-            ticket_key: None,
-            claude_cwd: original_cwd.clone(),
-            created: first_ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
-            last_resumed: None,
-            provider: Some(AgentProvider::Claude),
-            codex_session_id: None,
-            codex_cwd: None,
-            antigravity_session_id: None,
-            antigravity_cwd: None,
-            migration_source_provider: None,
-            forked_from: None,
-            imported: Some(true),
-            imported_from: Some(original_cwd),
-            use_chrome: None,
-            override_terminal_theme: None,
-        };
+            &original_cwd,
+            first_ts,
+        );
         crate::cli::session::write_session(&session_dir, &session_data)?;
 
         // Set up Claude trust + permissions for the new directory
-        crate::cli::session::run_health_checks(&session_dir, Some(&session_data));
+        if provider == AgentProvider::Claude {
+            crate::cli::session::run_health_checks(&session_dir, Some(&session_data));
+        }
 
         dirs_created.push(session_dir.to_string_lossy().to_string());
         imported_count += 1;
@@ -1102,6 +1138,67 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
         imported: imported_count,
         directories_created: dirs_created,
     })
+}
+
+/// The session record for an imported conversation: the owning harness's
+/// conversation id and directory are set, so opening it resumes that
+/// conversation where it began.
+fn imported_session_data(
+    provider: AgentProvider,
+    session_id: &str,
+    name: &str,
+    color: String,
+    original_cwd: &str,
+    first_ts: Option<String>,
+) -> crate::cli::session::SessionData {
+    let native = |p: AgentProvider| (provider == p).then(|| session_id.to_string());
+    let native_cwd = |p: AgentProvider| (provider == p).then(|| original_cwd.to_string());
+    crate::cli::session::SessionData {
+        session_id: native(AgentProvider::Claude).unwrap_or_default(),
+        name: name.to_string(),
+        color,
+        ticket_key: None,
+        claude_cwd: original_cwd.to_string(),
+        created: first_ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        last_resumed: None,
+        provider: Some(provider),
+        codex_session_id: native(AgentProvider::Codex),
+        codex_cwd: native_cwd(AgentProvider::Codex),
+        antigravity_session_id: native(AgentProvider::Antigravity),
+        antigravity_cwd: native_cwd(AgentProvider::Antigravity),
+        migration_source_provider: None,
+        forked_from: None,
+        imported: Some(true),
+        imported_from: Some(original_cwd.to_string()),
+        use_chrome: None,
+        override_terminal_theme: None,
+    }
+}
+
+#[cfg(test)]
+mod import_record_tests {
+    use super::*;
+
+    #[test]
+    fn each_harness_gets_its_own_conversation_fields() {
+        let codex = imported_session_data(AgentProvider::Codex, "thread-aaa", "Uploader", "#ffe0e0".into(), "/work/app", None);
+        assert_eq!(codex.provider, Some(AgentProvider::Codex));
+        assert_eq!(codex.session_id, "");
+        assert_eq!(codex.codex_session_id.as_deref(), Some("thread-aaa"));
+        assert_eq!(codex.codex_cwd.as_deref(), Some("/work/app"));
+        assert_eq!(codex.antigravity_session_id, None);
+        assert_eq!(codex.imported, Some(true));
+
+        let agy = imported_session_data(AgentProvider::Antigravity, "conv-1", "Site", "#ffe0e0".into(), "/work/site", None);
+        assert_eq!(agy.antigravity_session_id.as_deref(), Some("conv-1"));
+        assert_eq!(agy.antigravity_cwd.as_deref(), Some("/work/site"));
+        assert_eq!(agy.codex_session_id, None);
+
+        let claude = imported_session_data(AgentProvider::Claude, "c-1", "Api", "#ffe0e0".into(), "/work/api", Some("2026-01-01T00:00:00Z".into()));
+        assert_eq!(claude.session_id, "c-1");
+        assert_eq!(claude.claude_cwd, "/work/api");
+        assert_eq!(claude.created, "2026-01-01T00:00:00Z");
+    }
 }
 
 #[tauri::command]

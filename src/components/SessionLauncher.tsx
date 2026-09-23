@@ -27,6 +27,13 @@ function providerLabel(provider: AgentProvider): string {
   return "Claude";
 }
 
+/** "Claude", "Claude and Codex", "Claude, Codex and Antigravity". */
+function harnessList(providers: AgentProvider[]): string {
+  const names = (providers.length > 0 ? providers : (["claude"] as AgentProvider[])).map(providerLabel);
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 function SessionLauncher({
   initialView = "sessions",
   onOpened,
@@ -107,6 +114,8 @@ function SessionLauncher({
   const [importNames, setImportNames] = useState<Map<string, string>>(new Map());
   const [importSearch, setImportSearch] = useState("");
   const [showImported, setShowImported] = useState(true);
+  const [importProvider, setImportProvider] = useState<AgentProvider | "all">("all");
+  const [importHarnesses, setImportHarnesses] = useState<AgentProvider[]>([]);
 
   // Check for updates on mount
   useEffect(() => {
@@ -628,8 +637,12 @@ function SessionLauncher({
     setImportExpanded(new Set());
     setImportNames(new Map());
     setImportSearch("");
+    setImportProvider("all");
+    invoke<GlobalConfig>("get_global_config")
+      .then((config) => setImportHarnesses(config.agent_providers))
+      .catch(() => setImportHarnesses(["claude"]));
     try {
-      const result = await invoke<ImportPreview>("discover_claude_sessions");
+      const result = await invoke<ImportPreview>("discover_sessions");
       setImportPreview(result);
       // Auto-expand first group
       if (result.groups.length > 0) {
@@ -666,9 +679,15 @@ function SessionLauncher({
 
   const filteredImportGroups = useMemo(() => {
     if (!importPreview) return [];
-    if (!importSearch.trim()) return importPreview.groups;
+    const groups =
+      importProvider === "all"
+        ? importPreview.groups
+        : importPreview.groups
+            .map((g) => ({ ...g, sessions: g.sessions.filter((s) => s.provider === importProvider) }))
+            .filter((g) => g.sessions.length > 0);
+    if (!importSearch.trim()) return groups;
     const q = importSearch.toLowerCase();
-    return importPreview.groups
+    return groups
       .map((group) => {
         // Match against directory path
         const cwdMatch = group.original_cwd.toLowerCase().includes(q);
@@ -684,7 +703,13 @@ function SessionLauncher({
         return { ...group, sessions: filtered };
       })
       .filter((g): g is DiscoveredGroup => g !== null);
-  }, [importPreview, importSearch, importNames]);
+  }, [importPreview, importSearch, importNames, importProvider]);
+
+  const providersInPreview = useMemo<AgentProvider[]>(() => {
+    const seen = new Set<AgentProvider>();
+    for (const g of importPreview?.groups ?? []) for (const s of g.sessions) seen.add(s.provider);
+    return (["claude", "codex", "antigravity"] as AgentProvider[]).filter((p) => seen.has(p));
+  }, [importPreview]);
 
   const filteredImportSessionCount = useMemo(
     () => filteredImportGroups.reduce((sum, g) => sum + g.sessions.length, 0),
@@ -740,6 +765,7 @@ function SessionLauncher({
         return {
           session_id: id,
           proposed_name: session ? getImportName(session) : `Session ${id.slice(0, 8)}`,
+          provider: session?.provider ?? "claude",
         };
       });
       await invoke<ImportResult>("import_sessions", { requests });
@@ -1214,7 +1240,7 @@ function SessionLauncher({
                 <button
                   className="launcher-action-btn"
                   onClick={handleStartImport}
-                  title="Import Claude sessions"
+                  title="Import sessions"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M8 2v8M5 7l3 3 3-3" /><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" />
@@ -1368,7 +1394,7 @@ function SessionLauncher({
         {importScanning ? (
           <div className="import-scanning">
             <div className="launcher-spinner" />
-            <div>Discovering Claude sessions...</div>
+            <div>Looking for {harnessList(importHarnesses)} conversations...</div>
           </div>
         ) : importError && !importPreview ? (
           <div className="import-error">{importError}</div>
@@ -1376,7 +1402,7 @@ function SessionLauncher({
           <>
             <div className="import-summary">
               {importPreview.total_sessions === 0 ? (
-                <span>No unmanaged Claude sessions found.</span>
+                <span>No {harnessList(importHarnesses)} conversations outside twapp.</span>
               ) : (
                 <>
                   <span>
@@ -1392,6 +1418,26 @@ function SessionLauncher({
                 </>
               )}
             </div>
+
+            {importPreview.total_sessions > 0 && providersInPreview.length > 1 && (
+              <div className="launcher-sort import-provider-filter">
+                <button
+                  className={`launcher-sort-btn${importProvider === "all" ? " active" : ""}`}
+                  onClick={() => setImportProvider("all")}
+                >
+                  All
+                </button>
+                {providersInPreview.map((provider) => (
+                  <button
+                    key={provider}
+                    className={`launcher-sort-btn${importProvider === provider ? " active" : ""}`}
+                    onClick={() => setImportProvider(provider)}
+                  >
+                    {providerLabel(provider)}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {importPreview.total_sessions > 0 && (
               <div className="launcher-search">
@@ -1437,6 +1483,7 @@ function SessionLauncher({
                               title="Click to edit import name"
                             />
                             <div className="import-session-meta">
+                              <span className="import-session-branch import-session-provider">{providerLabel(s.provider)}</span>
                               {s.message_count > 0 && <span>{s.message_count} msgs</span>}
                               <span>{formatBytes(s.file_size_bytes)}</span>
                               {s.last_timestamp && <span>{formatRelativeTime(s.last_timestamp)}</span>}
