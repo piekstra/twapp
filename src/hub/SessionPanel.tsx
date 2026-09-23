@@ -44,6 +44,9 @@ interface Props {
   onRestart: () => void;
   onCloseSession: () => void;
   onFork: () => void;
+  onCollapse: () => void;
+  /** Whether the panel has its own collapse control (the split layout). */
+  showCollapse: boolean;
 }
 
 export default function SessionPanel({
@@ -57,6 +60,8 @@ export default function SessionPanel({
   onRestart,
   onCloseSession,
   onFork,
+  onCollapse,
+  showCollapse,
 }: Props) {
   const directory = session.key;
   const mdComponents = markdownComponents(onPreview);
@@ -299,287 +304,299 @@ export default function SessionPanel({
   const summary = session.summary;
   const status = session.status;
 
+  const Chevron = ({ open }: { open: boolean }) => (
+    <svg className={`section-chevron${open ? " open" : ""}`} width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3.5 2l3 3-3 3" />
+    </svg>
+  );
+
   return (
-    <aside className="session-panel">
-      <div className="panel-title-row">
-        <span className="panel-title" title={directory}>
-          {session.name}
-        </span>
-        <button className="sidebar-action-button" onClick={() => setSettingsOpen(true)} title="Session settings">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="6" cy="6" r="1.5" />
-            <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.17 2.17l1.06 1.06M8.77 8.77l1.06 1.06M9.83 2.17l-1.06 1.06M3.23 8.77l-1.06 1.06" />
+    <div className="session-panel">
+      <header className="panel-head">
+        <span className="panel-swatch" style={{ background: session.color ? (isDark ? getDarkModeAccentColor(session.color) : session.color) : undefined }} />
+        <div className="panel-head-text">
+          <span className="panel-title" title={directory}>{session.name}</span>
+          <span className="panel-path">{directory.replace(/^\/Users\/[^/]+/, "~")}</span>
+        </div>
+        <button className="icon-button" onClick={() => setSettingsOpen(true)} title="Session settings">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+            <circle cx="8" cy="8" r="2" />
+            <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" />
           </svg>
         </button>
-      </div>
+        {showCollapse && (
+          <button className="icon-button" onClick={onCollapse} title="Collapse (⌘\)">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6.5 4.5L10 8l-3.5 3.5" />
+            </svg>
+          </button>
+        )}
+      </header>
 
-      <div className={`summary-card state-${status.state}${session.attention ? " attention" : ""}`}>
+      <section className={`summary-card state-${status.state}${session.attention ? " attention" : ""}`}>
         <div className="summary-state">
           <span className={`state-dot state-${status.state}`} />
-          <span>{STATE_LABELS[status.state]}</span>
-          {status.state !== "suspended" && <span className="summary-since">for {sinceLabel(status.since, now)}</span>}
-          <button
-            className="summary-refresh"
-            title="Summarize again"
-            onClick={() => hubApi.summarize(session.key).catch(console.error)}
-          >
-            &#8635;
+          <span className="summary-state-label">{STATE_LABELS[status.state]}</span>
+          {status.state !== "suspended" && <span className="summary-since">{sinceLabel(status.since, now)}</span>}
+          {status.detail && <span className="summary-detail">{status.detail}</span>}
+          <button className="icon-button small" title="Summarize again" onClick={() => hubApi.summarize(session.key).catch(console.error)}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
+            </svg>
           </button>
         </div>
-        {status.detail && <div className="summary-detail">{status.detail}</div>}
         {summary ? (
           <>
             <div className="summary-headline">{summary.headline}</div>
             {summary.doing && <div className="summary-doing">{summary.doing}</div>}
             {summary.needs_user && (
               <div className="summary-needs">
-                <span className="summary-needs-label">Needs from you</span>
+                <span className="eyebrow">Needs from you</span>
                 {summary.needs_user}
               </div>
             )}
           </>
         ) : (
-          (status.title || status.last_message) && (
-            <div className="summary-doing">{status.title || status.last_message}</div>
-          )
+          (status.title || status.last_message) && <div className="summary-doing">{status.title || status.last_message}</div>
         )}
-      </div>
-
-      <div className="panel-actions">
-        <button className="panel-action" onClick={onRestart} title="Restart the harness">Restart</button>
-        <button className="panel-action" onClick={onFork} title="Fork (⌘⇧N)">Fork</button>
-        {history.length > 0 && (
-          <button className="panel-action" onClick={() => setHistoryOpen(true)}>
-            History ({history.length})
-          </button>
-        )}
-        <button className="panel-action danger" onClick={onCloseSession} title="Stop and remove from the window">Close</button>
-      </div>
-
-      {/* Ticket */}
-      <div className="ticket-panel">
-        <div className="ticket-header" onClick={() => setTicketExpanded(!ticketExpanded)}>
-          <h2>
-            <span className={`prompt-chevron${ticketExpanded ? " expanded" : ""}`}>&#9654;</span>
-            Ticket
-            {!ticketExpanded && ticket && <span className="notes-count">{formatTicketBadge(ticket.key)}</span>}
-          </h2>
-          <div className="ticket-header-actions">
-            {ticket && (
-              <>
-                <button
-                  className="ticket-refresh-button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    refreshTicket();
-                  }}
-                  disabled={refreshing}
-                >
-                  {refreshing ? "..." : "Refresh"}
-                </button>
-                <button
-                  className="ticket-change-button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setChangingTicket(true);
-                    setTicketExpanded(true);
-                  }}
-                >
-                  Change
-                </button>
-              </>
-            )}
-          </div>
+        <div className="summary-actions">
+          <button className="button ghost" onClick={onRestart} title="Restart the harness">Restart</button>
+          <button className="button ghost" onClick={onFork} title="Fork (⌘⇧N)">Fork</button>
+          {history.length > 0 && (
+            <button className="button ghost" onClick={() => setHistoryOpen(true)}>History</button>
+          )}
+          <span className="spacer" />
+          <button className="button ghost danger" onClick={onCloseSession} title="Stop and remove from the window">Close</button>
         </div>
-        {ticketExpanded && ticketError && <div className="ticket-link-error">{ticketError}</div>}
-        {ticketExpanded &&
-          (ticket && !changingTicket ? (
-            <div className="ticket-content">
-              <div className="ticket-badges">
-                <span className="ticket-key">{ticket.key}</span>
-                <span className="ticket-badge ticket-type">{ticket.type}</span>
-                <span className={`ticket-badge ticket-status ticket-status-${ticket.status.toLowerCase().replace(/\s+/g, "-")}`}>
-                  {ticket.status}
-                </span>
-                {ticket.points && <span className="ticket-badge ticket-points">{ticket.points} pts</span>}
-              </div>
-              <div className="ticket-title">{ticket.title}</div>
-              {ticket.epic && <div className="ticket-epic">{ticket.epic}</div>}
-              {ticket.description && (
-                <div
-                  className={`ticket-description ${descriptionExpanded ? "expanded" : ""}`}
-                  onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                >
-                  {ticket.description}
-                </div>
-              )}
-              {ticket.url && (
-                <a
-                  className="ticket-link"
-                  href={ticket.url}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    openUrl(ticket.url!).catch(console.error);
-                  }}
-                >
-                  Open in {ticket.source === "github" ? "GitHub" : "Jira"}
-                </a>
-              )}
-            </div>
-          ) : (
-            <div className="ticket-empty">
-              {!ticket && <div className="ticket-empty-label">No ticket linked</div>}
-              <div className="ticket-link-form">
-                <input
-                  type="text"
-                  className="ticket-link-input"
-                  placeholder="ABC-123, 123, or owner/repo#123"
-                  value={linkKey}
-                  onChange={(e) => setLinkKey(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") linkTicket();
-                    if (e.key === "Escape") setChangingTicket(false);
-                  }}
-                  disabled={linking}
-                  autoFocus={changingTicket}
-                />
-                <button className="ticket-link-button" onClick={linkTicket} disabled={linking || !linkKey.trim()}>
-                  {linking ? "..." : "Link"}
-                </button>
-              </div>
-              {ticket && changingTicket && (
-                <div className="ticket-change-actions">
-                  <button className="ticket-change-button" onClick={unlinkTicket}>Unlink</button>
-                  <button className="ticket-change-button" onClick={() => setChangingTicket(false)}>Cancel</button>
-                </div>
-              )}
-            </div>
-          ))}
-      </div>
+      </section>
 
-      {/* Notes */}
-      <div className="notes-section-header">
-        <h2 onClick={() => setNotesExpanded(!notesExpanded)}>
-          <span className={`prompt-chevron ${notesExpanded ? "expanded" : ""}`}>&#9654;</span>
-          Notes
-          {!notesExpanded && notes.length > 0 && <span className="notes-count">{notes.length}</span>}
-        </h2>
-        <button className="section-refresh-btn" onClick={reloadNotes} title="Reload notes from disk">&#8635;</button>
-      </div>
-      {notesExpanded && (
-        <div className="note-input">
-          <textarea
-            value={newNote}
-            onChange={(e) => setNewNote(e.target.value)}
-            placeholder="Add a note..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && e.metaKey) addNote();
-            }}
-          />
-          <button onClick={addNote}>Add</button>
-        </div>
-      )}
-      <div className={`notes-list ${notesExpanded ? "" : "collapsed"}`}>
-        {notes.map((note) => (
-          <div key={note.id} className="note">
-            <div className="note-header">
-              <span className="note-time">{formatTime(note.timestamp)}</span>
-              <div className="note-actions">
-                {editingNoteId === note.id ? (
-                  <button className="note-edit-save" onClick={saveEditNote} title="Save">✓</button>
-                ) : (
-                  <button
-                    className="note-edit"
-                    onClick={() => {
-                      setEditingNoteId(note.id);
-                      setEditingText(note.text);
-                    }}
-                    title="Edit"
-                  >
-                    ✎
-                  </button>
-                )}
-                <button
-                  className="note-send"
-                  onClick={() => {
-                    send(note.text);
-                    deleteNote(note.id);
-                  }}
-                  title="Type into the terminal"
-                >
-                  ↵
-                </button>
-                <button className="note-delete" onClick={() => deleteNote(note.id)}>×</button>
-              </div>
-            </div>
-            {editingNoteId === note.id ? (
-              <textarea
-                className="note-edit-input"
-                value={editingText}
-                onChange={(e) => setEditingText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.metaKey) saveEditNote();
-                  if (e.key === "Escape") {
-                    setEditingNoteId(null);
-                    setEditingText("");
-                  }
+      <section className="panel-section">
+        <div className="section-head" onClick={() => setTicketExpanded(!ticketExpanded)}>
+          <Chevron open={ticketExpanded} />
+          <span className="section-title">Ticket</span>
+          {!ticketExpanded && ticket && <span className="chip chip-mono">{formatTicketBadge(ticket.key)}</span>}
+          <span className="spacer" />
+          {ticket && ticketExpanded && (
+            <>
+              <button
+                className="button ghost small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  refreshTicket();
                 }}
-                autoFocus
-              />
+                disabled={refreshing}
+              >
+                {refreshing ? "Refreshing" : "Refresh"}
+              </button>
+              <button
+                className="button ghost small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setChangingTicket(true);
+                }}
+              >
+                Change
+              </button>
+            </>
+          )}
+        </div>
+        {ticketExpanded && (
+          <div className="section-body">
+            {ticketError && <div className="inline-error">{ticketError}</div>}
+            {ticket && !changingTicket ? (
+              <div className="ticket-card">
+                <div className="ticket-row">
+                  <span className="ticket-key">{ticket.key}</span>
+                  <span className="chip">{ticket.type}</span>
+                  <span className={`chip status-chip status-${ticket.status.toLowerCase().replace(/\s+/g, "-")}`}>{ticket.status}</span>
+                  {ticket.points && <span className="chip">{ticket.points} pts</span>}
+                </div>
+                <div className="ticket-title">{ticket.title}</div>
+                {ticket.epic && <div className="ticket-epic">{ticket.epic}</div>}
+                {ticket.description && (
+                  <div
+                    className={`ticket-description${descriptionExpanded ? " expanded" : ""}`}
+                    onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                  >
+                    {ticket.description}
+                  </div>
+                )}
+                {ticket.url && (
+                  <a
+                    className="text-link"
+                    href={ticket.url}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openUrl(ticket.url!).catch(console.error);
+                    }}
+                  >
+                    Open in {ticket.source === "github" ? "GitHub" : "Jira"}
+                  </a>
+                )}
+              </div>
             ) : (
-              <div className="note-text">
-                <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={mdComponents}>
-                  {note.text}
-                </Markdown>
+              <div className="ticket-linker">
+                <div className="input-row">
+                  <input
+                    className="input"
+                    placeholder="ABC-123, 123, or owner/repo#123"
+                    value={linkKey}
+                    onChange={(e) => setLinkKey(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") linkTicket();
+                      if (e.key === "Escape") setChangingTicket(false);
+                    }}
+                    disabled={linking}
+                    autoFocus={changingTicket}
+                  />
+                  <button className="button primary" onClick={linkTicket} disabled={linking || !linkKey.trim()}>
+                    {linking ? "Linking" : "Link"}
+                  </button>
+                </div>
+                {ticket && changingTicket && (
+                  <div className="input-row-actions">
+                    <button className="button ghost small" onClick={unlinkTicket}>Unlink</button>
+                    <button className="button ghost small" onClick={() => setChangingTicket(false)}>Cancel</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        ))}
-        {notes.length === 0 && (
-          <div className="notes-empty">
-            No notes yet.
-            <br />
-            <span>⌘+Enter to add</span>
+        )}
+      </section>
+
+      <section className="panel-section grow">
+        <div className="section-head" onClick={() => setNotesExpanded(!notesExpanded)}>
+          <Chevron open={notesExpanded} />
+          <span className="section-title">Notes</span>
+          {notes.length > 0 && <span className="count">{notes.length}</span>}
+          <span className="spacer" />
+          <button
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              reloadNotes();
+            }}
+            title="Reload notes from disk"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
+            </svg>
+          </button>
+        </div>
+        {notesExpanded && (
+          <div className="section-body">
+            <div className="note-composer">
+              <textarea
+                className="input"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="Add a note. ⌘↩ to save."
+                rows={2}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && e.metaKey) addNote();
+                }}
+              />
+              {newNote.trim() && (
+                <button className="button primary small" onClick={addNote}>Add note</button>
+              )}
+            </div>
+            <div className="note-list">
+              {notes.map((note) => (
+                <div key={note.id} className="note-card">
+                  <div className="note-meta">
+                    <span>{formatTime(note.timestamp)}</span>
+                    <span className="spacer" />
+                    {editingNoteId === note.id ? (
+                      <button className="icon-button small" onClick={saveEditNote} title="Save">✓</button>
+                    ) : (
+                      <button
+                        className="icon-button small"
+                        onClick={() => {
+                          setEditingNoteId(note.id);
+                          setEditingText(note.text);
+                        }}
+                        title="Edit"
+                      >
+                        ✎
+                      </button>
+                    )}
+                    <button
+                      className="icon-button small"
+                      onClick={() => {
+                        send(note.text);
+                        deleteNote(note.id);
+                      }}
+                      title="Type into the terminal"
+                    >
+                      ↵
+                    </button>
+                    <button className="icon-button small" onClick={() => deleteNote(note.id)} title="Delete">×</button>
+                  </div>
+                  {editingNoteId === note.id ? (
+                    <textarea
+                      className="input"
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && e.metaKey) saveEditNote();
+                        if (e.key === "Escape") {
+                          setEditingNoteId(null);
+                          setEditingText("");
+                        }
+                      }}
+                      autoFocus
+                    />
+                  ) : (
+                    <div className="note-text">
+                      <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={mdComponents}>
+                        {note.text}
+                      </Markdown>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {notes.length === 0 && <div className="empty-hint">No notes yet.</div>}
+            </div>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Quick prompts */}
-      <div className="prompts-panel">
-        <div className="prompts-header" onClick={() => setPromptsExpanded(!promptsExpanded)}>
-          <h2>
-            <span className={`prompt-chevron ${promptsExpanded ? "expanded" : ""}`}>&#9654;</span>
-            Quick Prompts
-          </h2>
-          <div className="prompts-header-actions">
-            <button
-              className="section-refresh-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                reloadPrompts();
-              }}
-              title="Reload prompts from disk"
-            >
-              &#8635;
-            </button>
-            <button
-              className="sidebar-action-button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPromptsExpanded(true);
-                setEditingPrompt({ mode: "new-section", scope: "global", sectionId: null, promptId: null, title: "", text: "" });
-              }}
-              title="Add section"
-            >
-              +
-            </button>
-          </div>
+      <section className="panel-section">
+        <div className="section-head" onClick={() => setPromptsExpanded(!promptsExpanded)}>
+          <Chevron open={promptsExpanded} />
+          <span className="section-title">Quick prompts</span>
+          <span className="spacer" />
+          <button
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              reloadPrompts();
+            }}
+            title="Reload prompts from disk"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
+            </svg>
+          </button>
+          <button
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPromptsExpanded(true);
+              setEditingPrompt({ mode: "new-section", scope: "global", sectionId: null, promptId: null, title: "", text: "" });
+            }}
+            title="Add section"
+          >
+            +
+          </button>
         </div>
         {promptsExpanded && (
-          <div className="prompts-content">
+          <div className="section-body prompts-content">
             {editingPrompt?.mode === "new-section" && (
               <div className="prompt-edit-form">
                 <input
+                  className="input"
                   placeholder="Section name"
                   value={editingPrompt.title}
                   onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
@@ -590,8 +607,8 @@ export default function SessionPanel({
                   autoFocus
                 />
                 <div className="prompt-edit-form-actions">
-                  <button className="prompt-form-cancel" onClick={() => setEditingPrompt(null)}>Cancel</button>
-                  <button className="prompt-form-save" onClick={savePromptEdit}>Save</button>
+                  <button className="button ghost small" onClick={() => setEditingPrompt(null)}>Cancel</button>
+                  <button className="button primary small" onClick={savePromptEdit}>Save</button>
                 </div>
               </div>
             )}
@@ -625,11 +642,11 @@ export default function SessionPanel({
               sendPrompt={send}
             />
             {globalPrompts.sections.length === 0 && !editingPrompt && (
-              <div className="prompts-empty">No prompts yet. Click + to add a section.</div>
+              <div className="empty-hint">No prompts yet. + adds a section.</div>
             )}
           </div>
         )}
-      </div>
+      </section>
 
       {settingsOpen && (
         <div className="config-overlay" onClick={() => setSettingsOpen(false)}>
@@ -765,6 +782,6 @@ export default function SessionPanel({
           </div>
         </div>
       )}
-    </aside>
+    </div>
   );
 }

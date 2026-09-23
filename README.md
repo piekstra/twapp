@@ -17,7 +17,7 @@
 
 You run several agent sessions at once. Each one is somewhere between working, waiting for an answer, and blocked on a permission prompt, and finding the one that needs you means cycling through windows. twapp puts every session in one window and keeps track of that for you.
 
-- **Every session in one rail.** Each row shows the session's name, ticket, state, how long it has been in that state, and a one-line summary. Sessions that need you are pinned at the top.
+- **Every session in one sidebar.** The sidebar lists every session with its state, how long it has been in that state, and a one-line summary, above the selected session's details. It sits on the right by default so the terminal starts at the window's left edge; it can move to the left, split into a session list on the left and details on the right, or collapse to a strip a few pixels wide with one colored tick per session.
 - **Live state, no setup.** twapp reads the signals the harnesses already produce (Claude's session status files and transcripts, Codex's session logs, terminal titles and notifications) to tell working, needs approval, your turn, errored, and exited apart.
 - **Summaries.** When a session finishes a turn or stops on a prompt, twapp asks your preferred harness, headless and with no tools, to summarize what the session did and what it needs from you. Sessions carry their own titles until a summary arrives.
 - **Triage.** The overview has a Triage action that reads every running session and suggests which ones to look at first and why. It is advice for you; twapp never tells an agent what to do.
@@ -148,15 +148,16 @@ The dock icon shows how many sessions need you and bounces once when a session s
 | `⌘N` / `⌘⇧N` | New session / fork the current one |
 | `⌘T` / `⌘W` | New shell tab / close the shell tab |
 | `⌘⇧[` / `⌘⇧]` | Previous or next tab |
-| `⌘B` | Show or hide the session panel |
+| `⌘\` | Collapse the sidebar to a thin bar, or expand it |
+| `⌘⇧\` | In the split layout, collapse or expand the session list |
 | `⌘,` | Settings |
 | `⌘=` / `⌘-` / `⌘⇧0` | Zoom in, out, reset |
 
-Drag rows in the rail to reorder them; the order is kept between launches.
+Drag rows in the session list to reorder them; the order is kept between launches. The layout button in the list's header picks where the sidebar goes. A collapsed sidebar shows the full sidebar while you hover it, and a one-line status bar above the terminal carries the selected session's state, what it needs from you, and how many other sessions need you.
 
 ### Notes, tickets and prompts
 
-The session panel on the right holds the session's summary, its linked ticket, its notes, and your quick prompts.
+The details below the session list hold the session's summary, its linked ticket, its notes, and your quick prompts.
 
 - **Notes** are Markdown and belong to the session. `↵` on a note types it into the terminal and removes it from the list.
 - **Tickets** accept a Jira key (`ABC-1234`), a bare number (prefixed with your configured Jira project), or a GitHub issue (`owner/repo#42` or `#42`). Change or unlink them from the panel, or with `twapp ticket link <ref>`.
