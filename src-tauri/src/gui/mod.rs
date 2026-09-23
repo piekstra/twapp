@@ -129,6 +129,7 @@ pub fn run(args: GuiArgs) {
             hub::hub_close,
             hub::hub_summarize,
             hub::hub_triage,
+            hub::hub_usage,
         ])
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {

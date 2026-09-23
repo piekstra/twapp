@@ -571,7 +571,7 @@ export default function Hub() {
       setLayout((l) => {
         if (which === "sidebar") return { ...l, sidebarWidth: clamp(start.sidebarWidth + grows * (ev.clientX - startX), 260, 640) };
         if (which === "rail") return { ...l, railWidth: clamp(start.railWidth + grows * (ev.clientX - startX), 200, 420) };
-        return { ...l, switcherShare: clamp(start.switcherShare + (ev.clientY - startY) / height, 0.15, 0.8) };
+        return { ...l, switcherShare: clamp(start.switcherShare + (grows * (ev.clientY - startY)) / height, 0.15, 0.8) };
       });
     };
     const onUp = () => {
@@ -582,8 +582,9 @@ export default function Hub() {
     document.addEventListener("mouseup", onUp);
   };
 
-  const rail = (variant: "rail" | "switcher", onCollapse: () => void) => (
+  const rail = (variant: "rail" | "switcher", onCollapse: () => void, part: "all" | "header" | "list" = "all") => (
     <SessionRail
+      part={part}
       sessions={sessions}
       selected={selected}
       overviewActive={overview}
@@ -648,14 +649,30 @@ export default function Hub() {
           onMouseDown={(e) => startResize("sidebar", e, sidebarSide === "right" ? -1 : 1)}
         />
       )}
-      <div className="switcher-area" style={{ height: details ? `${layout.switcherShare * 100}%` : "100%" }}>
-        {rail("switcher", toggleSidebar)}
-      </div>
-      {details && (
+      {details ? (
         <>
-          <div className="row-resizer" onMouseDown={(e) => startResize("switcher", e, 1)} />
+          {rail("switcher", toggleSidebar, "header")}
+          {layout.listPosition === "top" && (
+            <>
+              <div className="switcher-area" style={{ height: `${layout.switcherShare * 100}%` }}>
+                {rail("switcher", toggleSidebar, "list")}
+              </div>
+              <div className="row-resizer" onMouseDown={(e) => startResize("switcher", e, 1)} />
+            </>
+          )}
           <div className="details-area">{details}</div>
+          {layout.listPosition === "bottom" && (
+            <>
+              <div className="row-resizer" onMouseDown={(e) => startResize("switcher", e, -1)} />
+              <div className="switcher-area" style={{ height: `${layout.switcherShare * 100}%` }}>
+                <div className="switcher-label">Sessions</div>
+                {rail("switcher", toggleSidebar, "list")}
+              </div>
+            </>
+          )}
         </>
+      ) : (
+        <div className="switcher-area" style={{ height: "100%" }}>{rail("switcher", toggleSidebar)}</div>
       )}
       {versionFooter}
     </aside>
@@ -807,6 +824,27 @@ export default function Hub() {
                 </span>
               </button>
             ))}
+            {!split && (
+              <>
+                <div className="menu-separator" />
+                <div className="menu-label">Session list</div>
+                {([
+                  ["bottom", "Below the details", "The session you are in stays at the top"],
+                  ["top", "Above the details", "Switch sessions from the top"],
+                ] as const).map(([pos, label, hint]) => (
+                  <button
+                    key={pos}
+                    className={`menu-item${layout.listPosition === pos ? " checked" : ""}`}
+                    onClick={() => setLayout((l) => ({ ...l, listPosition: pos }))}
+                  >
+                    <span className="menu-item-text">
+                      <span>{label}</span>
+                      <span className="menu-item-hint">{hint}</span>
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
             <div className="menu-separator" />
             <button className="menu-item" onClick={() => { setLayoutMenuOpen(false); toggleSidebar(); }}>
               <span className="menu-item-text">

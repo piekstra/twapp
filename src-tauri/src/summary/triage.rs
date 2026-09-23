@@ -47,7 +47,7 @@ pub struct Triage {
 }
 
 pub fn triage(inputs: &[TriageInput], cfg: &SummarizerConfig) -> Result<Triage, String> {
-    let runner = cfg.runner().ok_or("summaries are off")?;
+    let runner = cfg.metered_runner("triage").ok_or("summaries are off")?;
     triage_with(inputs, &runner)
 }
 
@@ -136,6 +136,7 @@ mod tests {
             Ok(RunOutput {
                 text: self.0.clone(),
                 cost_usd: None,
+                tokens: None,
             })
         }
     }

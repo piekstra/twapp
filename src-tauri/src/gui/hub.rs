@@ -396,6 +396,12 @@ impl Hub {
     pub fn set_focused(&self, focused: bool) {
         self.focused
             .store(focused, std::sync::atomic::Ordering::SeqCst);
+        if !focused {
+            let selected = self.inner.lock().selected.clone();
+            if let Some(key) = selected {
+                self.summarize_on_leave(&key);
+            }
+        }
         if focused {
             let selected = self.inner.lock().selected.clone();
             if let Some(key) = selected {
@@ -652,7 +658,31 @@ impl Hub {
             .ok_or_else(|| "launch arguments have no --cwd".to_string())
     }
 
+    /// Summarize a session the user is leaving, if it waits on them and its
+    /// summary predates what it is waiting on. The summarizer's cache makes a
+    /// fresh summary a no-op.
+    fn summarize_on_leave(&self, key: &str) {
+        let request = {
+            let mut inner = self.inner.lock();
+            inner.session(key).and_then(|s| {
+                matches!(
+                    s.status.state,
+                    State::YourTurn | State::NeedsApproval | State::Errored
+                )
+                .then(|| summary_request(s, false))
+                .flatten()
+            })
+        };
+        if let Some(req) = request {
+            self.summarizer.request(req);
+        }
+    }
+
     pub fn select(&self, key: &str) {
+        let previous = self.inner.lock().selected.clone();
+        if let Some(prev) = previous.filter(|p| p != key) {
+            self.summarize_on_leave(&prev);
+        }
         let name = {
             let mut inner = self.inner.lock();
             inner.selected = Some(key.to_string());
@@ -1271,10 +1301,12 @@ impl Hub {
                         State::YourTurn | State::NeedsApproval | State::Errored
                     )
                 {
-                    if let Some(req) = summary_request(session, false) {
-                        summaries.push(req);
-                    }
+                    // The session on screen is summarized when the user leaves
+                    // it (see `summarize_on_leave`), not while they read it.
                     if !w.viewing {
+                        if let Some(req) = summary_request(session, false) {
+                            summaries.push(req);
+                        }
                         newly_waiting = true;
                     }
                 }
@@ -1708,4 +1740,24 @@ mod tests {
         s.status = SessionStatus::in_state_now(State::Working);
         assert!(!s.attention());
     }
+}
+
+/// What the summarizer and triage spent over the last `days`, next to what
+/// the user's own Claude sessions used, so the cost of the smart features
+/// can be judged against real work.
+#[tauri::command]
+pub async fn hub_usage(days: Option<u32>) -> Result<crate::summary::UsageReport, String> {
+    let days = days.unwrap_or(7).clamp(1, 90);
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = SummarizerConfig::from_config(std::env::var("PATH").ok());
+        let mut report = crate::summary::UsageLedger::new(cfg.ledger_path.clone()).report(days, cfg.daily_limit);
+        let since = SystemTime::now() - Duration::from_secs(u64::from(days) * 86_400);
+        report.claude_session_tokens = Some(crate::summary::claude_session_tokens(
+            &StatusRoots::from_home().claude_projects,
+            since,
+        ));
+        report
+    })
+    .await
+    .map_err(|e| e.to_string())
 }

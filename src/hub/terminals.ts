@@ -19,6 +19,9 @@ interface HostedTerminal {
   starting: Promise<void> | null;
   /** The PTY exited; the screen stays, and Enter starts it again. */
   exited: boolean;
+  /** The last start failure shown, so the event and the rejected call that
+   * both report it print it once. */
+  lastFailure?: { error: string; at: number };
 }
 
 function isResetMarker(message: unknown): boolean {
@@ -225,6 +228,9 @@ export class TerminalManager {
     if (!hosted) return;
     hosted.started = false;
     hosted.exited = true;
+    const now = Date.now();
+    if (hosted.lastFailure && hosted.lastFailure.error === error && now - hosted.lastFailure.at < 5000) return;
+    hosted.lastFailure = { error, at: now };
     hosted.term.write(`\r\n\x1b[31mCould not start this terminal: ${error}\x1b[0m\r\n\x1b[2m[Press Enter to try again.]\x1b[0m\r\n`);
   }
 

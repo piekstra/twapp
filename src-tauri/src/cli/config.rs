@@ -150,6 +150,17 @@ fn parse_summaries_settings(yaml: &serde_yaml::Value) -> (Option<String>, Option
     (field("provider"), field("model"))
 }
 
+/// `summaries.daily_limit` from `config.yaml`: the most summary and triage
+/// model calls twapp makes per day.
+pub fn get_summaries_daily_limit() -> Option<u32> {
+    let content = std::fs::read_to_string(config_file()).ok()?;
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(&content).ok()?;
+    yaml.get("summaries")?
+        .get("daily_limit")?
+        .as_u64()
+        .map(|n| n.min(u64::from(u32::MAX)) as u32)
+}
+
 pub fn get_agent_provider_preference() -> AgentProvider {
     let path = config_file();
     if !path.exists() {

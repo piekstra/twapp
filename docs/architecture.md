@@ -143,7 +143,9 @@ itself.
   harness's own title (Claude `ai-title`, Codex thread title), then the last
   assistant message.
 - **When a summary runs.** A summary is requested when a session enters
-  `your_turn`, `needs_approval` or `errored`. The cached summary is reused when
+  `your_turn`, `needs_approval` or `errored`, unless the user is looking at
+  it in the focused window; that session is summarized when the user
+  selects another one or the window loses focus. The cached summary is reused when
   the transcript has not grown and the state is the one it was written for.
   Requests are debounced per session and run one at a time.
 - **Input.** A condensed transcript tail: the latest user prompt, the last few
@@ -160,8 +162,15 @@ itself.
     environment with the `CLAUDE*` variables removed.
 - **Cache.** Summaries are cached in `~/.local/state/twapp/summaries/`, keyed by
   session key, with the transcript size they were built from.
-- **Settings.** `summaries.provider` (`auto`, `claude`, `codex`, `off`) and
-  `summaries.model` in `config.yaml`. `off` keeps the free text.
+- **Settings.** `summaries.provider` (`auto`, `claude`, `codex`, `off`),
+  `summaries.model` and `summaries.daily_limit` in `config.yaml`. `off` keeps
+  the free text.
+- **Usage.** Every summary and triage call goes through a metered runner that
+  appends its tokens, cost and duration to `~/.local/state/twapp/usage.jsonl`
+  and refuses calls past the daily limit (the summarizer then writes a free
+  summary). The overview compares the ledger's last seven days with the
+  tokens the user's Claude transcripts (subagents included) recorded over the
+  same days, both counted as input, cache writes and output.
 
 The overview's **Triage** action sends every hosted session's state, wait time
 and summary to the same harness in one call. It returns an ordered list of which
@@ -172,7 +181,8 @@ result is advice shown to the user; twapp takes no action from it.
 ## Window layout
 
 - **Layouts.** `right` (the default) puts one sidebar right of the terminal,
-  with the session list above the selected session's details; `left` puts the
+  with the selected session's details above the session list (the list can
+  move above the details); `left` puts the
   same sidebar on the left; `split` puts the list on the left and the details
   on the right. Widths and the list's share of the sidebar are adjustable and
   kept per viewer.

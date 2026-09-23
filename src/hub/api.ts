@@ -74,6 +74,34 @@ export interface Triage {
   generated_at: string;
 }
 
+export interface UsageReport {
+  days: number;
+  summaries: number;
+  triages: number;
+  failed: number;
+  tokens: number;
+  cost_usd: number;
+  calls_today: number;
+  daily_limit: number;
+  claude_session_tokens: number | null;
+}
+
+export function compactNumber(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+
+/** twapp's share of the user's Claude tokens, as a readable percentage. */
+export function usageShare(r: UsageReport): string | null {
+  if (!r.claude_session_tokens) return null;
+  const pct = (100 * r.tokens) / r.claude_session_tokens;
+  if (pct === 0) return "0%";
+  if (pct < 0.01) return "under 0.01%";
+  return `${pct < 1 ? pct.toFixed(2) : pct.toFixed(1)}%`;
+}
+
 export const hubApi = {
   snapshot: () => invoke<HubSnapshot>("hub_snapshot"),
   open: (directory: string) => invoke<string>("hub_open", { directory }),
@@ -91,6 +119,7 @@ export const hubApi = {
   close: (key: string) => invoke("hub_close", { key }),
   summarize: (key: string) => invoke("hub_summarize", { key }),
   triage: () => invoke<Triage>("hub_triage"),
+  usage: (days = 7) => invoke<UsageReport>("hub_usage", { days }),
 };
 
 export const STATE_LABELS: Record<SessionState, string> = {

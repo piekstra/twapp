@@ -36,6 +36,9 @@ pub struct RunOutput {
     pub text: String,
     /// Cost reported by the harness, when it reports one.
     pub cost_usd: Option<f64>,
+    /// Tokens the call used, when the harness reports them: input (including
+    /// cache writes and reads) plus output.
+    pub tokens: Option<u64>,
 }
 
 /// One headless model call: a system prompt, an instruction, and input text.
@@ -165,6 +168,7 @@ impl Runner for HarnessRunner {
                     Ok(RunOutput {
                         text,
                         cost_usd: None,
+                        tokens: None,
                     })
                 }
             }
@@ -245,7 +249,19 @@ pub fn parse_claude_envelope(stdout: &str) -> Result<RunOutput, String> {
     Ok(RunOutput {
         text,
         cost_usd: envelope["total_cost_usd"].as_f64(),
+        tokens: usage_tokens(&envelope["usage"]),
     })
+}
+
+/// Tokens in an Anthropic `usage` object that represent new work: input,
+/// cache writes and output. Cache reads are left out; long sessions re-read
+/// their whole context every turn at a small fraction of the weight, and
+/// counting them would bury every other number. twapp counts its own calls
+/// and the user's sessions the same way.
+pub fn usage_tokens(usage: &Value) -> Option<u64> {
+    let fields = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
+    let values: Vec<u64> = fields.iter().filter_map(|f| usage[*f].as_u64()).collect();
+    (!values.is_empty()).then(|| values.iter().sum())
 }
 
 /// Find the JSON object in a model's answer, tolerating code fences and text
@@ -400,11 +416,12 @@ mod tests {
     #[test]
     fn claude_envelope_yields_result_and_cost() {
         let out = parse_claude_envelope(
-            r#"{"type":"result","is_error":false,"result":"{\"a\":1}","total_cost_usd":0.006}"#,
+            r#"{"type":"result","is_error":false,"result":"{\"a\":1}","total_cost_usd":0.006,"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":300}}"#,
         )
         .unwrap();
         assert_eq!(out.text, "{\"a\":1}");
         assert_eq!(out.cost_usd, Some(0.006));
+        assert_eq!(out.tokens, Some(30), "cache reads are not counted");
         assert!(
             parse_claude_envelope(r#"{"is_error":true,"result":"Not logged in"}"#)
                 .unwrap_err()
