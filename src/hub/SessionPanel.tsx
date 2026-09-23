@@ -386,6 +386,31 @@ export default function SessionPanel({
         </div>
       )}
 
+      {session.ticket_suggestion && (
+        <div className="name-suggestion">
+          <span className="name-suggestion-text">
+            Working on <strong>{session.ticket_suggestion}</strong> now. Link it?
+          </span>
+          <button
+            className="button small"
+            onClick={() => {
+              const key = session.ticket_suggestion!;
+              invoke<TicketInfo>("link_ticket", { directory, key })
+                .then((info) => setTicket(info))
+                .catch((e) => setTicketError(e instanceof Error ? e.message : String(e)));
+            }}
+          >
+            Link
+          </button>
+          <button
+            className="button ghost small"
+            onClick={() => hubApi.dismissTicket(directory, session.ticket_suggestion!).catch(console.error)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="panel-lane">
         <div className="segmented" role="radiogroup" aria-label="Lane">
           {LANES.map(({ lane, label }) => (

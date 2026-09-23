@@ -162,6 +162,17 @@ itself.
   the number of summaries and the transcript growth, split by whether the
   summary found a tangent; the Yaks report (`hub_yak_report`) sums those days
   across every session on disk and every hosted session.
+- **Ticket.** The same call names the ticket (a Jira key or `owner/repo#N`)
+  the main effort is worked under, when the excerpt shows the work is for it.
+  A key the input does not contain as a whole token is dropped. A session with
+  no ticket gets that one linked, fetched like `twapp ticket link` and
+  recorded as `linked_by: auto` in `.twapp-ticket.json`. A ticket linked that
+  way moves to another once two summaries in a row name the other one. A
+  ticket the user or an agent linked is never replaced; the panel offers the
+  other one with Link and Dismiss. Dismissing it, or unlinking an automatic
+  link, keeps that ticket from being linked or offered again for the session
+  (`dismissed_tickets` in `hub.json`). A ticket whose fetch fails is not tried
+  again while the window runs.
 - **Name suggestions.** The same call returns a suggested name when the
   session's name no longer describes its work. The panel offers it with Rename
   and Dismiss; a suggestion matching the current name or one the user

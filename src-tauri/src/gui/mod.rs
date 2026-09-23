@@ -124,6 +124,7 @@ pub fn run(args: GuiArgs) {
             hub::hub_reorder,
             hub::hub_set_lane,
             hub::hub_dismiss_name,
+            hub::hub_dismiss_ticket,
             hub::hub_blocker_check,
             hub::hub_blocker_set,
             hub::hub_blocker_note,

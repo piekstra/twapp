@@ -20,6 +20,35 @@ pub struct TicketInfo {
     pub assignee: Option<String>,
     pub description: Option<String>,
     pub url: Option<String>,
+    /// `auto` when twapp linked the ticket from the session's summaries;
+    /// otherwise the user or an agent linked it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_by: Option<String>,
+}
+
+impl TicketInfo {
+    pub fn linked_automatically(&self) -> bool {
+        self.linked_by.as_deref() == Some("auto")
+    }
+}
+
+pub const TICKET_FILE: &str = ".twapp-ticket.json";
+
+pub fn read_linked(dir: &std::path::Path) -> Option<TicketInfo> {
+    serde_json::from_str(&std::fs::read_to_string(dir.join(TICKET_FILE)).ok()?).ok()
+}
+
+/// Link `ticket` to the session in `dir`: its ticket file, and the key on the
+/// session file so the rail and search show it.
+pub fn write_linked(dir: &std::path::Path, ticket: &TicketInfo) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(ticket).map_err(|e| e.to_string())?;
+    super::fsutil::write_atomic(&dir.join(TICKET_FILE), json)
+        .map_err(|e| format!("Failed to write ticket file: {}", e))?;
+    if let Ok(mut data) = super::session::read_session(dir) {
+        data.ticket_key = Some(ticket.key.clone());
+        let _ = super::session::write_session(dir, &data);
+    }
+    Ok(())
 }
 
 /// Fields requested from `jtk issues get`. Description stays last because
@@ -74,13 +103,14 @@ pub fn fetch_ticket(input: &str, force_github: bool) -> Result<TicketInfo, Strin
 
 /// Re-fetch a previously linked ticket from the source it was linked from.
 pub fn refresh_ticket_info(old: &TicketInfo) -> Result<TicketInfo, String> {
-    match old.source.as_str() {
+    let fetched = match old.source.as_str() {
         "github" => {
             let config = GlobalConfig::load().ok();
             fetch_github_issue(&old.key, config.as_ref().and_then(|c| c.github_repo.as_deref()))
         }
         _ => fetch_jira_ticket(&old.key),
-    }
+    };
+    fetched.map(|ticket| TicketInfo { linked_by: old.linked_by.clone(), ..ticket })
 }
 
 /// Fetch a Jira ticket using jtk CLI and return normalized ticket info.
@@ -206,6 +236,7 @@ pub fn parse_jtk_issue(stdout: &str, key_hint: &str, base_url: Option<&str>) -> 
             .and_then(|d| field_value(&d))
             .map(|d| truncate_str(&d, DESCRIPTION_LIMIT)),
         url,
+        linked_by: None,
     }
 }
 
@@ -384,6 +415,7 @@ pub fn fetch_github_issue(identifier: &str, default_repo: Option<&str>) -> Resul
             .get("url")
             .and_then(|u| u.as_str())
             .map(String::from),
+        linked_by: None,
     })
 }
 

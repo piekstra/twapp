@@ -79,6 +79,10 @@ struct PersistedHub {
     dismissed_names: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     efforts: HashMap<String, EffortInfo>,
+    /// Tickets not to link or offer, per session: ones the user dismissed or
+    /// unlinked after twapp linked them.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    dismissed_tickets: HashMap<String, Vec<String>>,
 }
 
 /// The larger effort a session serves, set by the user or found by
@@ -161,6 +165,9 @@ pub struct SessionView {
     /// The summarizer's suggested name, unless it matches the current name
     /// or the user dismissed it.
     pub name_suggestion: Option<String>,
+    /// A ticket the summaries find the session working under, offered when
+    /// the user linked a different one.
+    pub ticket_suggestion: Option<String>,
     /// Open blockers recorded in the session directory.
     pub blockers: Vec<super::blockers::BlockerView>,
     /// Tangents the session took, and its main effort, as summaries saw them.
@@ -206,6 +213,44 @@ struct StartFailedEvent {
     key: String,
     tab: String,
     error: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TicketPlan {
+    Keep,
+    /// Link this ticket, found by the summaries.
+    Link(String),
+    /// Offer this ticket; the user linked another.
+    Offer(String),
+}
+
+/// What to do with the session's ticket given the one the latest summary
+/// names (`seen`) and the one the summary before it named (`previous`). A
+/// session with no ticket takes the one seen. A ticket twapp linked moves to
+/// another once two summaries in a row name it. A ticket the user linked is
+/// never replaced; another one seen is offered instead.
+fn ticket_plan(
+    current: Option<&crate::cli::ticket::TicketInfo>,
+    seen: Option<&str>,
+    previous: Option<&str>,
+    dismissed: &[String],
+) -> TicketPlan {
+    let Some(seen) = seen else { return TicketPlan::Keep };
+    if dismissed.iter().any(|d| d.eq_ignore_ascii_case(seen)) {
+        return TicketPlan::Keep;
+    }
+    match current {
+        None => TicketPlan::Link(seen.to_string()),
+        Some(t) if t.key.eq_ignore_ascii_case(seen) => TicketPlan::Keep,
+        Some(t) if t.linked_automatically() => {
+            if previous.is_some_and(|p| p.eq_ignore_ascii_case(seen)) {
+                TicketPlan::Link(seen.to_string())
+            } else {
+                TicketPlan::Keep
+            }
+        }
+        Some(_) => TicketPlan::Offer(seen.to_string()),
+    }
 }
 
 fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) -> Option<String> {
@@ -307,6 +352,12 @@ struct HubSession {
     restored: bool,
     lane: LaneInfo,
     dismissed_names: Vec<String>,
+    dismissed_tickets: Vec<String>,
+    /// The ticket the previous summary named, so an automatic link moves to
+    /// another ticket only once two summaries in a row agree.
+    ticket_seen: Option<String>,
+    /// Tickets whose fetch failed, not tried again while the window runs.
+    ticket_failed: Vec<String>,
     /// Blockers whose check output changed since the user last looked.
     blocker_updates: usize,
     effort: Option<EffortInfo>,
@@ -329,6 +380,9 @@ impl HubSession {
             restored: false,
             lane: LaneInfo::default(),
             dismissed_names: Vec::new(),
+            dismissed_tickets: Vec::new(),
+            ticket_seen: None,
+            ticket_failed: Vec::new(),
             blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
             effort: None,
             launch_kind: None,
@@ -382,6 +436,15 @@ impl HubSession {
         SessionView {
             key: self.key.clone(),
             name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
+            ticket_suggestion: match ticket_plan(
+                crate::cli::ticket::read_linked(Path::new(&self.key)).as_ref(),
+                self.summary.as_ref().and_then(|s| s.ticket.as_deref()),
+                None,
+                &self.dismissed_tickets,
+            ) {
+                TicketPlan::Offer(key) => Some(key),
+                _ => None,
+            },
             blockers: super::blockers::open_blockers(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
             effort: self.effort.clone(),
@@ -462,6 +525,12 @@ impl HubInner {
                 .iter()
                 .filter(|s| !s.dismissed_names.is_empty())
                 .map(|s| (s.key.clone(), s.dismissed_names.clone()))
+                .collect(),
+            dismissed_tickets: self
+                .sessions
+                .iter()
+                .filter(|s| !s.dismissed_tickets.is_empty())
+                .map(|s| (s.key.clone(), s.dismissed_tickets.clone()))
                 .collect(),
             efforts: self
                 .sessions
@@ -704,6 +773,7 @@ impl Hub {
             session.last_viewed = persisted.last_viewed.get(&key).cloned();
             session.lane = persisted.lanes.get(&key).cloned().unwrap_or_default();
             session.dismissed_names = persisted.dismissed_names.get(&key).cloned().unwrap_or_default();
+            session.dismissed_tickets = persisted.dismissed_tickets.get(&key).cloned().unwrap_or_default();
             session.effort = persisted.efforts.get(&key).cloned();
             session.summary = self.summarizer.cached(&key);
             for info in live.iter().filter(|i| i.session_key == key && i.alive) {
@@ -752,7 +822,7 @@ impl Hub {
         save_persisted(&state);
     }
 
-    fn emit_changed(&self) {
+    pub(crate) fn emit_changed(&self) {
         let _ = self.app.emit("hub:changed", ());
     }
 
@@ -1219,6 +1289,46 @@ impl Hub {
         self.emit_changed();
     }
 
+    /// Stop linking or offering a ticket for a session.
+    pub fn dismiss_ticket(&self, key: &str, ticket: &str) {
+        {
+            let mut inner = self.inner.lock();
+            let Some(session) = inner.session(key) else { return };
+            if session.dismissed_tickets.iter().any(|t| t.eq_ignore_ascii_case(ticket)) {
+                return;
+            }
+            session.dismissed_tickets.push(ticket.to_string());
+            let excess = session.dismissed_tickets.len().saturating_sub(20);
+            session.dismissed_tickets.drain(..excess);
+        }
+        self.persist();
+        self.emit_changed();
+    }
+
+    /// Fetch `ticket` and link it to the session as found by its summaries.
+    fn auto_link_ticket(&self, key: &str, ticket: String) {
+        let key = key.to_string();
+        std::thread::spawn(move || {
+            let result = crate::cli::ticket::fetch_ticket(&ticket, false).and_then(|info| {
+                let info = crate::cli::ticket::TicketInfo { linked_by: Some("auto".into()), ..info };
+                crate::cli::ticket::write_linked(Path::new(&key), &info)
+            });
+            let Some(hub) = hub() else { return };
+            match result {
+                Ok(()) => {
+                    log::info!("linked {} to {} from its summaries", ticket, key);
+                    hub.emit_changed();
+                }
+                Err(e) => {
+                    log::warn!("could not link {} to {}: {}", ticket, key, e);
+                    if let Some(session) = hub.inner.lock().session(&key) {
+                        session.ticket_failed.push(ticket);
+                    }
+                }
+            }
+        });
+    }
+
     /// File a session in a lane. Marking it blocked starts its blocked and
     /// checked clocks; moving it out of blocked clears them.
     pub fn set_lane(&self, key: &str, lane: Lane) {
@@ -1405,13 +1515,22 @@ impl Hub {
             ..Default::default()
         };
         let session_summary = Some(summary);
-        let (suggestion, effort) = {
+        let seen = session_summary.as_ref().and_then(|s| s.ticket.clone());
+        let linked = crate::cli::ticket::read_linked(Path::new(key));
+        let (suggestion, effort, plan) = {
             let mut inner = self.inner.lock();
             let session = inner.session(key)?;
             let suggestion = name_suggestion(&name, session_summary.as_ref(), &session.dismissed_names);
             session.summary = session_summary;
-            (suggestion, session.effort.as_ref().map(|e| e.name.clone()))
+            let mut skip = session.dismissed_tickets.clone();
+            skip.extend(session.ticket_failed.iter().cloned());
+            let plan = ticket_plan(linked.as_ref(), seen.as_deref(), session.ticket_seen.as_deref(), &skip);
+            session.ticket_seen = seen;
+            (suggestion, session.effort.as_ref().map(|e| e.name.clone()), plan)
         };
+        if let TicketPlan::Link(ticket) = plan {
+            self.auto_link_ticket(key, ticket);
+        }
         let ticket = std::fs::read_to_string(Path::new(key).join(".twapp-ticket.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok());
@@ -2138,6 +2257,12 @@ pub fn hub_blocker_set(key: String, id: String, action: String) -> Result<(), St
 }
 
 #[tauri::command]
+pub fn hub_dismiss_ticket(key: String, ticket: String) -> Result<(), String> {
+    require_hub()?.dismiss_ticket(&key, &ticket);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn hub_dismiss_name(key: String, name: String) -> Result<(), String> {
     require_hub()?.dismiss_name(&key, &name);
     Ok(())
@@ -2409,6 +2534,38 @@ mod tests {
     }
 
     #[test]
+    fn a_ticket_is_linked_switched_or_offered_by_who_linked_the_current_one() {
+        let ticket = |key: &str, by: Option<&str>| crate::cli::ticket::TicketInfo {
+            source: "jira".into(),
+            key: key.into(),
+            title: String::new(),
+            r#type: String::new(),
+            status: String::new(),
+            priority: None,
+            points: None,
+            sprint: None,
+            epic: None,
+            assignee: None,
+            description: None,
+            url: None,
+            linked_by: by.map(str::to_string),
+        };
+        let none: Vec<String> = Vec::new();
+        let link = |k: &str| TicketPlan::Link(k.into());
+        assert_eq!(ticket_plan(None, None, None, &none), TicketPlan::Keep);
+        assert_eq!(ticket_plan(None, Some("ABC-1"), None, &none), link("ABC-1"), "a session with no ticket takes the one seen");
+        let auto = ticket("ABC-1", Some("auto"));
+        assert_eq!(ticket_plan(Some(&auto), Some("abc-1"), None, &none), TicketPlan::Keep);
+        assert_eq!(ticket_plan(Some(&auto), Some("ABC-2"), Some("ABC-1"), &none), TicketPlan::Keep, "one summary is not enough to move");
+        assert_eq!(ticket_plan(Some(&auto), Some("ABC-2"), Some("ABC-2"), &none), link("ABC-2"));
+        let user = ticket("ABC-1", None);
+        assert_eq!(ticket_plan(Some(&user), Some("ABC-2"), Some("ABC-2"), &none), TicketPlan::Offer("ABC-2".into()), "the user's ticket is never replaced");
+        let dismissed = vec!["ABC-2".to_string()];
+        assert_eq!(ticket_plan(Some(&user), Some("ABC-2"), None, &dismissed), TicketPlan::Keep);
+        assert_eq!(ticket_plan(None, Some("abc-2"), None, &dismissed), TicketPlan::Keep);
+    }
+
+    #[test]
     fn a_name_suggestion_is_offered_until_taken_or_dismissed() {
         let summary = |n: &str| Summary {
             headline: "h".into(),
@@ -2421,6 +2578,7 @@ mod tests {
             suggested_name: Some(n.into()),
             main_effort: None,
             tangent: None,
+            ticket: None,
         };
         let none: Vec<String> = Vec::new();
         assert_eq!(

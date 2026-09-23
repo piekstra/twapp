@@ -9,7 +9,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 **Commands an agent in a session uses:**
 - `twapp note add|list|remove`: notes for the current session (the panel shows them).
 - `twapp blocker add|list|show|note|update|check|seen|resolve|remove`: what the session waits on outside itself (a vendor ticket, an email, a review), with an optional check command whose output change the window flags. `skills/twapp/SKILL.md` tells agents how to use it; the window installs and refreshes it at start (`twapp install-skill` by hand), and every harness twapp launches gets `hub::SESSION_CONTEXT` (Claude `--append-system-prompt`, Codex `developer_instructions`).
-- `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`).
+- `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`). The window also links the ticket the session's summaries find it working under, and never replaces one linked by hand.
 - `twapp prompt add|list|remove`: quick prompts, shared by every session.
 - `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
 - `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
