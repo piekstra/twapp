@@ -1,0 +1,2 @@
+{"parentUuid": null, "isSidechain": false, "type": "user", "message": {"role": "user", "content": "Summarize the design doc."}, "uuid": "u", "timestamp": "2026-01-01T00:00:00Z", "sessionId": "00000000-0000-4000-8000-000000000001"}
+{"type": "assistant", "isApiErrorMessage": true, "message": {"role": "assistant", "content": [{"type": "text", "text": "API Error: 529 overloaded_error"}], "stop_reason": "stop_sequence"}, "sessionId": "00000000-0000-4000-8000-000000000001"}

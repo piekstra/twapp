@@ -1,0 +1,15 @@
+{"timestamp": "t", "ordinal": 0, "type": "session_meta", "payload": {"session_id": "s", "cwd": "/tmp/x"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "task_started", "turn_id": "1"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "developer", "content": [{"type": "input_text", "text": "<permissions instructions>...</permissions instructions>"}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "user", "content": [{"type": "input_text", "text": "<environment_context><cwd>/tmp/x</cwd></environment_context>"}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "user", "content": [{"type": "input_text", "text": "Add a --dry-run flag to the sync command."}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "reasoning", "id": "r", "summary": [], "encrypted_content": "x"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "assistant", "content": [{"type": "output_text", "text": "I'll look at the sync command first."}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "function_call", "id": "f", "name": "exec_command", "arguments": "{}", "call_id": "c1"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "function_call_output", "id": "f", "call_id": "c1", "output": [{"type": "input_text", "text": "ok"}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "custom_tool_call", "id": "c", "status": "completed", "call_id": "c2", "name": "apply_patch", "input": "*** Begin Patch"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "custom_tool_call_output", "id": "c", "call_id": "c2", "output": [{"type": "input_text", "text": "ok"}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "response_item", "payload": {"type": "message", "id": "i", "role": "assistant", "content": [{"type": "output_text", "text": "Added --dry-run. It prints the planned changes and exits without writing. Tests pass."}]}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "thread_name_updated", "thread_id": "s", "thread_name": "Sync dry run flag"}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "token_count", "info": null}}
+{"timestamp": "2026-01-01T00:00:00Z", "ordinal": 0, "type": "event_msg", "payload": {"type": "task_complete", "turn_id": "1", "last_agent_message": "Added --dry-run. It prints the planned changes and exits without writing. Tests pass.", "duration_ms": 9000}}
