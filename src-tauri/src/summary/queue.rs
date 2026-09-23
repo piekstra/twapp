@@ -74,6 +74,8 @@ impl SummaryProvider {
     }
 }
 
+const JOURNAL_TIMEOUT: Duration = Duration::from_secs(600);
+
 #[derive(Debug, Clone)]
 pub struct SummarizerConfig {
     /// Resolved provider: `Claude`, `Codex` or `Off` once built by
@@ -124,6 +126,22 @@ impl SummarizerConfig {
             format!("{:?}", runner.harness).to_lowercase(),
             Some(runner.model.clone()),
             self.daily_limit,
+        ))
+    }
+
+    /// The runner for journal entries: metered but not limited, since it
+    /// runs once a day or on request, and given longer, since an entry reads
+    /// a whole day.
+    pub fn journal_runner(&self) -> Option<super::usage::MeteredRunner> {
+        let mut runner = self.runner()?;
+        runner.timeout = JOURNAL_TIMEOUT;
+        Some(super::usage::MeteredRunner::new(
+            Arc::new(runner.clone()),
+            super::usage::UsageLedger::new(self.ledger_path.clone()),
+            "journal",
+            format!("{:?}", runner.harness).to_lowercase(),
+            Some(runner.model.clone()),
+            u32::MAX,
         ))
     }
 

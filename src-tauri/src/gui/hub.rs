@@ -25,6 +25,8 @@ use crate::summary::{Summarizer, SummarizerConfig, Summary, SummaryRequest};
 
 const MAIN_TAB: &str = "main";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Journal entries written per catch-up, most recent days first.
+const JOURNAL_CATCH_UP: usize = 3;
 
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
 
@@ -551,6 +553,8 @@ impl Hub {
         std::thread::spawn(move || listener.socket_loop());
         let checker = Arc::clone(&hub);
         std::thread::spawn(move || super::blockers::check_loop(checker));
+        let journal = Arc::clone(&hub);
+        std::thread::spawn(move || journal.journal_loop());
         // Sessions are told to follow the twapp skill, so it is kept current
         // with the window's version.
         std::thread::spawn(|| match crate::cli::install_skill() {
@@ -1388,13 +1392,62 @@ impl Hub {
                 }
             }
         }
-        let name = read_session(Path::new(key)).ok().map(|d| d.name).unwrap_or_default();
+        let data = read_session(Path::new(key)).ok();
+        let name = data.as_ref().map(|d| d.name.clone()).unwrap_or_default();
+        let activity = crate::journal::Activity {
+            at: summary.generated_at.clone(),
+            key: key.to_string(),
+            session: name.clone(),
+            headline: summary.headline.clone(),
+            doing: summary.doing.clone(),
+            main_effort: summary.main_effort.clone(),
+            tangent: summary.tangent.as_ref().map(|t| t.title.clone()),
+            ..Default::default()
+        };
         let session_summary = Some(summary);
-        let mut inner = self.inner.lock();
-        let session = inner.session(key)?;
-        let suggestion = name_suggestion(&name, session_summary.as_ref(), &session.dismissed_names);
-        session.summary = session_summary;
+        let (suggestion, effort) = {
+            let mut inner = self.inner.lock();
+            let session = inner.session(key)?;
+            let suggestion = name_suggestion(&name, session_summary.as_ref(), &session.dismissed_names);
+            session.summary = session_summary;
+            (suggestion, session.effort.as_ref().map(|e| e.name.clone()))
+        };
+        let ticket = std::fs::read_to_string(Path::new(key).join(".twapp-ticket.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok());
+        let activity = crate::journal::Activity {
+            effort,
+            ticket: ticket.as_ref().map(|t| t.key.clone()).or_else(|| data.and_then(|d| d.ticket_key)),
+            ticket_title: ticket.map(|t| t.title),
+            ..activity
+        };
+        if let Err(e) = crate::journal::record(&crate::journal::default_root(), &activity) {
+            log::warn!("journal trail for {}: {}", key, e);
+        }
         suggestion
+    }
+
+    /// Write journal entries for finished days that lack one, once at start
+    /// and again whenever a new work day begins.
+    fn journal_loop(&self) {
+        let mut done_for: Option<chrono::NaiveDate> = None;
+        loop {
+            let today = crate::journal::today();
+            if done_for != Some(today) {
+                let cfg = crate::summary::SummarizerConfig::from_config(std::env::var("PATH").ok());
+                let runner = cfg.journal_runner();
+                let ctx = crate::journal::store::Context::load(crate::journal::default_root(), &self.hosted_keys());
+                let written = {
+                    let _build = crate::journal::store::BUILD_LOCK.lock();
+                    crate::journal::store::catch_up(&ctx, runner.as_ref().map(|r| r as &dyn crate::summary::Runner), JOURNAL_CATCH_UP)
+                };
+                if !written.is_empty() {
+                    let _ = self.app.emit("hub:journal", ());
+                }
+                done_for = Some(today);
+            }
+            std::thread::sleep(Duration::from_secs(600));
+        }
     }
 
     pub fn triage(&self) -> Result<crate::summary::Triage, String> {
@@ -2177,6 +2230,93 @@ pub async fn hub_yak_report(days: u32) -> Result<crate::cli::yaks::YakReport, St
             }
         }
         Ok(crate::cli::yaks::report(&sessions, days.clamp(1, 366)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn journal_context() -> crate::journal::store::Context {
+    let hosted: Vec<String> = hub().map(|h| h.hosted_keys()).unwrap_or_default();
+    crate::journal::store::Context::load(crate::journal::default_root(), &hosted)
+}
+
+fn journal_runner() -> Option<crate::summary::usage::MeteredRunner> {
+    SummarizerConfig::from_config(std::env::var("PATH").ok()).journal_runner()
+}
+
+#[derive(Serialize)]
+pub struct JournalDay {
+    pub record: Option<crate::journal::store::DayRecord>,
+    /// The entry's Markdown file, once it is written.
+    pub path: Option<String>,
+}
+
+/// Days in the journal, most recent first.
+#[tauri::command]
+pub async fn hub_journal_days() -> Result<Vec<crate::journal::store::DayRow>, String> {
+    tauri::async_runtime::spawn_blocking(|| Ok(crate::journal::store::list_days(&journal_context())))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// A day's entry. `read` returns the entry as written, or the day's facts
+/// when it has none; `write` writes it when it is missing or out of date;
+/// `rewrite` writes it again.
+#[tauri::command]
+pub async fn hub_journal_day(day: String, mode: String) -> Result<JournalDay, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let day = crate::journal::parse_day(&day).ok_or_else(|| format!("bad day {}", day))?;
+        let ctx = journal_context();
+        let record = if mode == "read" {
+            crate::journal::store::peek_day(&ctx, day)
+        } else {
+            let runner = journal_runner();
+            let _build = crate::journal::store::BUILD_LOCK.lock();
+            crate::journal::store::build_day(&ctx, day, runner.as_ref().map(|r| r as &dyn crate::summary::Runner), mode == "rewrite")?
+        };
+        let path = crate::journal::store::day_markdown_path(&ctx.root, day);
+        Ok(JournalDay { record, path: path.exists().then(|| path.to_string_lossy().to_string()) })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct JournalPeriod {
+    pub id: String,
+    pub label: String,
+    pub previous: String,
+    pub next: Option<String>,
+    pub record: Option<crate::journal::period::PeriodRecord>,
+    pub path: Option<String>,
+}
+
+/// A week, month or year (`2026-W38`, `2026-09`, `2026`, or `week`, `month`,
+/// `year`), with the same modes as a day.
+#[tauri::command]
+pub async fn hub_journal_period(id: String, mode: String) -> Result<JournalPeriod, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::journal::period::{build_period, load_period, period_markdown_path, Period};
+        let today = crate::journal::today();
+        let period = Period::parse(&id, today).ok_or_else(|| format!("bad period {}", id))?;
+        let ctx = journal_context();
+        let record = if mode == "read" {
+            load_period(&ctx.root, &period.id)
+        } else {
+            let runner = journal_runner();
+            let _build = crate::journal::store::BUILD_LOCK.lock();
+            Some(build_period(&ctx, &period, runner.as_ref().map(|r| r as &dyn crate::summary::Runner), mode == "rewrite")?)
+        };
+        let path = period_markdown_path(&ctx.root, &period.id);
+        let next = period.next();
+        Ok(JournalPeriod {
+            id: period.id.clone(),
+            label: period.label(),
+            previous: period.previous().id,
+            next: (next.from <= today).then_some(next.id),
+            record,
+            path: path.exists().then(|| path.to_string_lossy().to_string()),
+        })
     })
     .await
     .map_err(|e| e.to_string())?

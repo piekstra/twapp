@@ -179,6 +179,9 @@ export const hubApi = {
   setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),
   findEfforts: () => invoke<number>("hub_find_efforts"),
   yakReport: (days: number) => invoke<YakReport>("hub_yak_report", { days }),
+  journalDays: () => invoke<JournalDayRow[]>("hub_journal_days"),
+  journalDay: (day: string, mode: JournalMode) => invoke<JournalDay>("hub_journal_day", { day, mode }),
+  journalPeriod: (id: string, mode: JournalMode) => invoke<JournalPeriod>("hub_journal_period", { id, mode }),
   /** Resolves true when the check's output changed. `command` is the text the user was shown. */
   blockerCheck: (key: string, id: string, approve: boolean, once = false, command: string | null = null) =>
     invoke<boolean>("hub_blocker_check", { key, id, approve, once, command }),
@@ -314,6 +317,86 @@ export interface YakReport {
   sessions: { key: string; name: string; main_effort: string | null; stat: DayStat; yaks_started: number }[];
   yaks: { key: string; session: string; title: string; status: Yak["status"]; first_seen: string; sightings: number; transcript_bytes: number }[];
   first_day: string | null;
+}
+
+/** `read` shows what is on disk; `write` writes a missing or stale entry; `rewrite` writes it again. */
+export type JournalMode = "read" | "write" | "rewrite";
+
+export interface JournalDayRow {
+  day: string;
+  headline: string | null;
+  sessions: number;
+  complete: boolean;
+  pending: boolean;
+}
+
+export interface JournalDigest {
+  headline: string;
+  overview: string;
+  efforts: { name: string; sessions: string[]; done: string[]; state?: string | null }[];
+}
+
+export interface JournalFacts {
+  day: string;
+  sessions: {
+    key: string;
+    name: string;
+    effort?: string | null;
+    ticket?: string | null;
+    ticket_title?: string | null;
+    main_effort?: string | null;
+    headlines: string[];
+    prompts: string[];
+    replies?: string[];
+    notes: string[];
+  }[];
+  blockers: {
+    session: string;
+    title: string;
+    party?: string | null;
+    reference?: string | null;
+    since: string;
+    opened_today: boolean;
+    resolved_today: boolean;
+    waiting: boolean;
+    events: string[];
+  }[];
+  yaks: { session: string; title: string; status: Yak["status"]; started_today: boolean }[];
+  stat: DayStat;
+}
+
+export interface JournalDayRecord {
+  day: string;
+  generated_at: string;
+  complete: boolean;
+  facts: JournalFacts;
+  digest?: JournalDigest | null;
+  error?: string | null;
+}
+
+export interface JournalDay {
+  record: JournalDayRecord | null;
+  path: string | null;
+}
+
+export interface JournalPeriod {
+  id: string;
+  label: string;
+  previous: string;
+  next: string | null;
+  record: {
+    id: string;
+    kind: "week" | "month" | "year";
+    label: string;
+    from: string;
+    to: string;
+    generated_at: string;
+    complete: boolean;
+    entries: { id: string; label: string; headline: string }[];
+    digest?: JournalDigest | null;
+    error?: string | null;
+  } | null;
+  path: string | null;
 }
 
 export function formatBytes(n: number): string {

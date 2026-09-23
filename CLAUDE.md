@@ -16,6 +16,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
+- `twapp journal [day|period]`: the work journal, one entry per work day across every session, and summaries of weeks, months and years (`--list`, `--path`, `--json`).
 
 Run `twapp <command> --help` for flags.
 
@@ -27,6 +28,7 @@ Run `twapp <command> --help` for flags.
 - Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, efforts, dismissed name suggestions, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).
 - Summaries cache: `~/.local/state/twapp/summaries/`.
+- Journal: `~/.local/share/twapp/journal/` (`activity/` trail, `days/` and `periods/` entries as `.json` and `.md`).
 
 **Harnesses:** `defaults.agent_providers` in `config.yaml` lists the harnesses offered for new sessions (Claude, Codex, Antigravity). Each session keeps its active harness and a separate conversation id per harness; switching stages a migration briefing when the target has no conversation yet. Default permissions are Claude-only.
 
@@ -39,6 +41,7 @@ Run `twapp <command> --help` for flags.
 - **Terminal host** (`src-tauri/src/ptyd/`): headless PTY daemon, framed protocol, client.
 - **Status engine** (`src-tauri/src/status/`): per-session state from Claude status files and transcripts, Codex rollouts, OSC titles and notifications, and the process tree.
 - **Summarizer** (`src-tauri/src/summary/`): transcript condensing, headless harness runs, cache, triage.
+- **Journal** (`src-tauri/src/journal/`): the activity trail, each day's facts, day and period digests, Markdown entries, `twapp journal`.
 - **CLI** (`src-tauri/src/cli/`): subcommands; `create_session_core()` in `mod.rs` is shared with the GUI; `hub_link.rs` hands sessions to the window.
 
 ## Dev Process
