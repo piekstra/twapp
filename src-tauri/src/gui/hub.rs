@@ -482,7 +482,19 @@ impl Hub {
     }
 
     fn restore(&self) {
-        let persisted = load_persisted();
+        let first_run = !hub_state_path().exists();
+        let mut persisted = load_persisted();
+        // The first run of the single window adopts the sessions open in the
+        // per-session windows of older versions, so they appear in the rail
+        // and resume here once their old window is closed.
+        if first_run {
+            for dir in crate::cli::app_bundle::running_legacy_session_dirs() {
+                let key = session_key(&dir);
+                if !persisted.order.contains(&key) {
+                    persisted.order.push(key);
+                }
+            }
+        }
         let live = self
             .ptyd()
             .and_then(|c| c.list().map_err(|e| e.to_string()))
@@ -832,6 +844,12 @@ impl Hub {
         rows: u16,
         cols: u16,
     ) -> Result<(SpawnRequest, GuiArgs), String> {
+        if let Some(pid) = conversation_running_elsewhere(key) {
+            return Err(format!(
+                "its conversation is still open in another terminal (process {}); quit it there first",
+                pid
+            ));
+        }
         let pending = self
             .inner
             .lock()
@@ -1378,6 +1396,32 @@ fn reset_marker() -> InvokeResponseBody {
     InvokeResponseBody::Json("{\"reset\":true}".to_string())
 }
 
+/// The pid of a live Claude process already holding this session's
+/// conversation, outside this window. Resuming it again would put two harnesses
+/// on one conversation; a session still open in an older twapp window or in a
+/// plain terminal is the usual case.
+fn conversation_running_elsewhere(key: &str) -> Option<u32> {
+    let data = read_session(Path::new(key)).ok()?;
+    if data.last_provider() != AgentProvider::Claude {
+        return None;
+    }
+    let id = data.native_session_id(AgentProvider::Claude)?.to_string();
+    let roots = StatusRoots::from_home();
+    let files = crate::status::claude::read_status_files(&roots.claude_sessions);
+    live_holder(&files, &crate::status::proctree::ProcTable::snapshot(), &id)
+}
+
+fn live_holder(
+    files: &[crate::status::claude::ClaudeStatusFile],
+    procs: &crate::status::proctree::ProcTable,
+    session_id: &str,
+) -> Option<u32> {
+    files
+        .iter()
+        .find(|f| f.session_id.as_deref() == Some(session_id) && procs.contains(f.pid))
+        .map(|f| f.pid)
+}
+
 fn summary_request(session: &HubSession, force: bool) -> Option<SummaryRequest> {
     let transcript = session.status.transcript_path.clone()?;
     let data = read_session(Path::new(&session.key)).ok()?;
@@ -1615,6 +1659,18 @@ mod tests {
         assert!(s.tabs.iter().all(|t| t.pty.is_none() && t.exited));
         assert_eq!(s.shell_pid, None);
         assert_eq!(s.status.state, State::Exited);
+    }
+
+    #[test]
+    fn a_conversation_held_by_a_live_process_is_found() {
+        let files: Vec<crate::status::claude::ClaudeStatusFile> = serde_json::from_str(
+            r#"[{"pid": 111, "sessionId": "live-id"}, {"pid": 222, "sessionId": "stale-id"}]"#,
+        )
+        .unwrap();
+        let procs = crate::status::proctree::ProcTable::parse("  111     1 claude\n");
+        assert_eq!(live_holder(&files, &procs, "live-id"), Some(111));
+        assert_eq!(live_holder(&files, &procs, "stale-id"), None, "its process is gone");
+        assert_eq!(live_holder(&files, &procs, "other"), None);
     }
 
     #[test]

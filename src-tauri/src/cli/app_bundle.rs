@@ -99,6 +99,56 @@ pub fn resign_app_bundle(app_path: &Path) -> Result<(), String> {
     }
 }
 
+fn legacy_bundle_running(bundle: &Path) -> bool {
+    let needle = format!("{}/Contents/MacOS/", bundle.to_string_lossy());
+    std::process::Command::new("pgrep")
+        .args(["-f", &needle])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(true)
+}
+
+/// The `--cwd` value in a saved launch-argument list.
+fn cwd_from_args(args: &[String]) -> Option<String> {
+    args.iter()
+        .position(|a| a == "--cwd")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+/// Session directories of the per-session windows older versions opened and
+/// that are still running, read from the launch arguments saved beside each
+/// bundle.
+pub fn running_legacy_session_dirs() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(instances_dir()) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let bundle = entry.path();
+        if bundle.extension().and_then(|e| e.to_str()) != Some("app") {
+            continue;
+        }
+        if !legacy_bundle_running(&bundle) {
+            continue;
+        }
+        let args_path = bundle.with_extension("args.json");
+        let Some(args) = std::fs::read_to_string(&args_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        else {
+            continue;
+        };
+        if let Some(cwd) = cwd_from_args(&args) {
+            if Path::new(&cwd).join(".twapp-session.json").is_file() {
+                dirs.push(cwd);
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
 /// Remove the per-session app bundles older versions cloned for every session
 /// window. A bundle whose process is still running is left alone.
 pub fn remove_legacy_instances() -> usize {
@@ -111,13 +161,7 @@ pub fn remove_legacy_instances() -> usize {
         let path = entry.path();
         let is_bundle = path.extension().and_then(|e| e.to_str()) == Some("app");
         if is_bundle {
-            let needle = format!("{}/Contents/MacOS/", path.to_string_lossy());
-            let running = std::process::Command::new("pgrep")
-                .args(["-f", &needle])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(true);
-            if running {
+            if legacy_bundle_running(&path) {
                 continue;
             }
             if std::fs::remove_dir_all(&path).is_ok() {
@@ -132,4 +176,19 @@ pub fn remove_legacy_instances() -> usize {
     }
     let _ = std::fs::remove_dir(&dir);
     removed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cwd_from_args;
+
+    #[test]
+    fn reads_the_cwd_from_saved_launch_args() {
+        let args: Vec<String> = ["--name", "x", "--cwd", "/work/a", "--command", "claude"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(cwd_from_args(&args).as_deref(), Some("/work/a"));
+        assert_eq!(cwd_from_args(&args[..2]), None);
+    }
 }
