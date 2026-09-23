@@ -1,5 +1,6 @@
 pub mod app_bundle;
 pub mod blockers;
+pub mod yaks;
 pub mod config;
 pub mod harness;
 pub mod hub_link;
@@ -125,6 +126,14 @@ pub enum Commands {
     /// Create code signing certificate
     #[command(name = "setup-cert")]
     SetupCert,
+    /// Tangents ("yaks") the session took away from its main effort, as the
+    /// window's summaries saw them
+    Yaks {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Install the twapp skill for agents (~/.claude/skills/twapp, and
     /// ~/.codex/skills/twapp when Codex is installed)
     #[command(name = "install-skill")]
@@ -490,6 +499,7 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
         Commands::InstallSkill => cmd_install_skill(),
+        Commands::Yaks { json, dir } => yaks::cmd_yaks(dir.as_deref(), json),
         Commands::Rename { name, suggested } => match (name, suggested) {
             (Some(name), false) => cmd_rename(&name),
             _ => cmd_rename_suggested(),

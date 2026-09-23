@@ -16,6 +16,12 @@ const TAIL_BYTES: u64 = 1024 * 1024;
 const MAX_ASSISTANT_MESSAGES: usize = 4;
 const MAX_TOOLS: usize = 8;
 const PROMPT_CHARS: usize = 1500;
+/// How much of the file start is read for the prompt the session opened with.
+const HEAD_BYTES: u64 = 512 * 1024;
+const OPENING_CHARS: usize = 1200;
+const MAX_EARLIER_PROMPTS: usize = 6;
+const RECAP_CHARS: usize = 2000;
+const EARLIER_PROMPT_CHARS: usize = 300;
 const MESSAGE_CHARS: usize = 1500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +40,14 @@ pub struct Condensed {
     /// The harness's latest recap of the session, when it writes one.
     pub away_summary: Option<String>,
     pub last_user_prompt: Option<String>,
+    /// The first prompt the user typed in the session: what it was opened for.
+    pub opening_prompt: Option<String>,
+    /// Prompts before the latest one, oldest first: a spread across the
+    /// whole session for Claude, the tail's for Codex.
+    pub earlier_prompts: Vec<String>,
+    /// The harness's summary of earlier work, written when it compacted the
+    /// conversation.
+    pub compact_recap: Option<String>,
     /// The last few assistant messages, oldest first.
     pub assistant_messages: Vec<String>,
     /// Tools used recently, most recent first, without repeats.
@@ -50,11 +64,26 @@ impl Condensed {
             title: None,
             away_summary: None,
             last_user_prompt: None,
+            opening_prompt: None,
+            earlier_prompts: Vec::new(),
+            compact_recap: None,
             assistant_messages: Vec::new(),
             recent_tools: Vec::new(),
             outcome: TurnOutcome::Unknown,
             transcript_len,
             excerpt: String::new(),
+        }
+    }
+
+    fn push_prompt(&mut self, prompt: &str) {
+        if self.opening_prompt.is_none() {
+            self.opening_prompt = Some(prompt.to_string());
+        }
+        if let Some(previous) = self.last_user_prompt.replace(prompt.to_string()) {
+            self.earlier_prompts.push(previous);
+            if self.earlier_prompts.len() > MAX_EARLIER_PROMPTS {
+                self.earlier_prompts.remove(0);
+            }
         }
     }
 
@@ -79,7 +108,68 @@ impl Condensed {
 pub fn condense_claude(path: &Path, budget_chars: usize) -> Result<Condensed, String> {
     let (lines, len) = read_tail(path, TAIL_BYTES)?;
     let mut out = Condensed::empty(len);
-    for line in &lines {
+    parse_claude(&lines, &mut out);
+    if len > TAIL_BYTES {
+        // The tail starts mid-session; the session's arc is in the rest.
+        let history = claude_history(path)?;
+        out.opening_prompt = history.prompts.first().cloned().or(out.opening_prompt);
+        out.earlier_prompts = spread(&history.prompts, out.last_user_prompt.as_ref());
+        out.compact_recap = history.compact_recap;
+    }
+    out.excerpt = render(&out, budget_chars);
+    Ok(out)
+}
+
+struct ClaudeHistory {
+    prompts: Vec<String>,
+    compact_recap: Option<String>,
+}
+
+/// Every typed prompt and the latest compaction summary in a whole
+/// transcript. Only user lines are parsed, and those are a small share of a
+/// long transcript, so one pass stays cheap.
+fn claude_history(path: &Path) -> Result<ClaudeHistory, String> {
+    use std::io::BufRead;
+    let file = File::open(path).map_err(|e| format!("open {}: {}", path.display(), e))?;
+    let mut history = ClaudeHistory { prompts: Vec::new(), compact_recap: None };
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        if !line.contains("\"type\":\"user\"") || line.contains("\"tool_result\"") {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
+        let text = match &entry["message"]["content"] {
+            Value::String(text) => Some(text.as_str()),
+            Value::Array(blocks) => blocks.iter().find(|b| b["type"] == "text").and_then(|b| b["text"].as_str()),
+            _ => None,
+        };
+        let Some(text) = text.map(str::trim) else { continue };
+        if entry.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
+            history.compact_recap = Some(truncate_chars(text, RECAP_CHARS));
+        } else if entry.get("isMeta").and_then(Value::as_bool) != Some(true) && is_typed_prompt(text) {
+            history.prompts.push(truncate_chars(text, OPENING_CHARS));
+        }
+    }
+    Ok(history)
+}
+
+/// Up to `MAX_EARLIER_PROMPTS` prompts spread evenly between the first and
+/// the latest, oldest first.
+fn spread(prompts: &[String], latest: Option<&String>) -> Vec<String> {
+    let middle: Vec<&String> = prompts
+        .iter()
+        .skip(1)
+        .filter(|p| Some(*p) != latest)
+        .collect();
+    if middle.len() <= MAX_EARLIER_PROMPTS {
+        return middle.into_iter().cloned().collect();
+    }
+    (0..MAX_EARLIER_PROMPTS)
+        .map(|i| middle[i * (middle.len() - 1) / (MAX_EARLIER_PROMPTS - 1)].clone())
+        .collect()
+}
+
+fn parse_claude(lines: &[String], out: &mut Condensed) {
+    for line in lines {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -102,13 +192,11 @@ pub fn condense_claude(path: &Path, budget_chars: usize) -> Result<Condensed, St
                 }
                 _ => {}
             },
-            Some("user") => read_claude_user(&entry, &mut out),
-            Some("assistant") => read_claude_assistant(&entry, &mut out),
+            Some("user") => read_claude_user(&entry, out),
+            Some("assistant") => read_claude_assistant(&entry, out),
             _ => {}
         }
     }
-    out.excerpt = render(&out, budget_chars);
-    Ok(out)
 }
 
 fn read_claude_user(entry: &Value, out: &mut Condensed) {
@@ -130,7 +218,7 @@ fn read_claude_user(entry: &Value, out: &mut Condensed) {
         _ => None,
     };
     if let Some(prompt) = prompt.map(str::trim).filter(|p| is_typed_prompt(p)) {
-        out.last_user_prompt = Some(prompt.to_string());
+        out.push_prompt(prompt);
         out.outcome = TurnOutcome::InProgress;
     }
 }
@@ -171,7 +259,18 @@ fn read_claude_assistant(entry: &Value, out: &mut Condensed) {
 pub fn condense_codex(path: &Path, budget_chars: usize) -> Result<Condensed, String> {
     let (lines, len) = read_tail(path, TAIL_BYTES)?;
     let mut out = Condensed::empty(len);
-    for line in &lines {
+    parse_codex(&lines, &mut out);
+    if len > TAIL_BYTES {
+        let mut head = Condensed::empty(len);
+        parse_codex(&read_head(path, HEAD_BYTES)?, &mut head);
+        out.opening_prompt = head.opening_prompt;
+    }
+    out.excerpt = render(&out, budget_chars);
+    Ok(out)
+}
+
+fn parse_codex(lines: &[String], out: &mut Condensed) {
+    for line in lines {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -187,7 +286,7 @@ pub fn condense_codex(path: &Path, budget_chars: usize) -> Result<Condensed, Str
                                 .map(str::trim)
                                 .filter(|p| is_typed_prompt(p))
                             {
-                                out.last_user_prompt = Some(prompt.to_string());
+                                out.push_prompt(prompt);
                             }
                         }
                         Some("assistant") => {
@@ -229,8 +328,6 @@ pub fn condense_codex(path: &Path, budget_chars: usize) -> Result<Condensed, Str
             _ => {}
         }
     }
-    out.excerpt = render(&out, budget_chars);
-    Ok(out)
 }
 
 fn message_text(payload: &Value) -> Option<String> {
@@ -255,6 +352,21 @@ fn is_typed_prompt(text: &str) -> bool {
 
 fn str_field<'a>(entry: &'a Value, name: &str) -> Option<&'a str> {
     entry.get(name).and_then(Value::as_str)
+}
+
+/// Read up to `max_bytes` from the start of `path` as whole lines.
+fn read_head(path: &Path, max_bytes: u64) -> Result<Vec<String>, String> {
+    let file = File::open(path).map_err(|e| format!("open {}: {}", path.display(), e))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if bytes.len() as u64 == max_bytes && !text.ends_with('\n') {
+        lines.pop();
+    }
+    Ok(lines)
 }
 
 /// Read up to `max_bytes` from the end of `path` as lines. When the read
@@ -283,6 +395,26 @@ fn render(c: &Condensed, budget_chars: usize) -> String {
     let mut head = Vec::new();
     if let Some(title) = &c.title {
         head.push(format!("Session title: {}", title));
+    }
+    // The opening prompt and the requests since frame the session's main
+    // effort, so a detour in the latest turn is not mistaken for the whole.
+    let mut opening = Vec::new();
+    if let Some(prompt) = c.opening_prompt.as_ref().filter(|o| Some(*o) != c.last_user_prompt.as_ref()) {
+        opening.push(format!("Session opened with: {}", truncate_chars(prompt, OPENING_CHARS)));
+    }
+    let mut recap = Vec::new();
+    if let Some(text) = &c.compact_recap {
+        recap.push(format!("Harness summary of earlier work: {}", text));
+    }
+    let mut earlier = Vec::new();
+    let earlier_prompts: Vec<&String> = c
+        .earlier_prompts
+        .iter()
+        .filter(|p| Some(*p) != c.opening_prompt.as_ref())
+        .collect();
+    if !earlier_prompts.is_empty() {
+        earlier.push("Earlier user requests, oldest first:".to_string());
+        earlier.extend(earlier_prompts.iter().map(|p| format!("- {}", truncate_chars(p, EARLIER_PROMPT_CHARS))));
     }
     if let Some(recap) = &c.away_summary {
         head.push(format!(
@@ -315,16 +447,27 @@ fn render(c: &Condensed, budget_chars: usize) -> String {
         .iter()
         .map(|m| format!("- {}", truncate_chars(m, MESSAGE_CHARS)))
         .collect();
-    // Drop the oldest messages first; the newest carry what the session needs.
-    for skip in 0..=messages.len() {
-        let mut parts = head.clone();
-        if skip < messages.len() {
-            parts.push("Recent assistant messages, oldest first:".to_string());
-            parts.extend(messages[skip..].iter().cloned());
-        }
-        let text = parts.join("\n");
-        if text.chars().count() <= budget_chars {
-            return text;
+    // Drop the oldest messages first; the newest carry what the session
+    // needs. When even the newest does not fit, the earlier requests go, then
+    // the opening prompt.
+    let contexts = [
+        [opening.clone(), recap.clone(), earlier].concat(),
+        [opening.clone(), recap].concat(),
+        opening,
+        Vec::new(),
+    ];
+    for context in &contexts {
+        let keep_last = if messages.is_empty() { 0 } else { messages.len() - 1 };
+        for skip in 0..=keep_last {
+            let mut parts = [context.clone(), head.clone()].concat();
+            if skip < messages.len() {
+                parts.push("Recent assistant messages, oldest first:".to_string());
+                parts.extend(messages[skip..].iter().cloned());
+            }
+            let text = parts.join("\n");
+            if text.chars().count() <= budget_chars {
+                return text;
+            }
         }
     }
     truncate_chars(&head.join("\n"), budget_chars)
@@ -420,6 +563,32 @@ mod tests {
         assert!(c.excerpt.contains("Should I open a PR?"));
         let tiny = condense_claude(&fixture("claude_finished.jsonl"), 80).unwrap();
         assert!(tiny.excerpt.chars().count() <= 80);
+    }
+
+    #[test]
+    fn a_long_session_still_shows_what_it_was_opened_for() {
+        let dir = std::env::temp_dir().join(format!("twapp-condense-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let user = |text: &str| format!("{{\"type\":\"user\",\"message\":{{\"content\":\"{}\"}}}}\n", text);
+        let assistant = format!(
+            "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{}\"}}]}}}}\n",
+            "y".repeat(4000)
+        );
+        let mut body = user("Add CSV export to the invoices page");
+        while body.len() < (TAIL_BYTES + 200_000) as usize {
+            body.push_str(&assistant);
+        }
+        body.push_str(&user("The linter crashes on the new file, fix the linter config"));
+        body.push_str(&user("Now make the linter run in CI too"));
+        std::fs::write(&path, body).unwrap();
+
+        let c = condense_claude(&path, DEFAULT_BUDGET).unwrap();
+        assert_eq!(c.opening_prompt.as_deref(), Some("Add CSV export to the invoices page"));
+        assert_eq!(c.last_user_prompt.as_deref(), Some("Now make the linter run in CI too"));
+        assert!(c.excerpt.contains("Session opened with: Add CSV export"), "{}", c.excerpt);
+        assert!(c.excerpt.contains("- The linter crashes"), "{}", c.excerpt);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

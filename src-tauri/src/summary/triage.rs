@@ -230,6 +230,7 @@ mod tests {
                 name: format!("session-{}", i),
                 force: true,
                 state: None,
+                tangents: Vec::new(),
             };
             let summary =
                 crate::summary::queue::model_summary(&runner, &request, &condensed).unwrap();

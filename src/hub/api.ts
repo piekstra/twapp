@@ -33,6 +33,24 @@ export interface Summary {
   source: "model" | "free";
   for_state?: string | null;
   suggested_name?: string | null;
+  main_effort?: string | null;
+  tangent?: { title: string; done: boolean } | null;
+}
+
+/** A tangent the session took away from its main effort. */
+export interface Yak {
+  id: string;
+  title: string;
+  status: "shaving" | "shaved" | "set_aside";
+  first_seen: string;
+  last_seen: string;
+  sightings: number;
+  transcript_bytes: number;
+}
+
+export interface YakLog {
+  yaks: Yak[];
+  main_effort?: string | null;
 }
 
 export interface TabView {
@@ -63,6 +81,7 @@ export interface SessionView {
   name_suggestion?: string | null;
   /** Open blockers recorded in the session directory. */
   blockers?: Blocker[];
+  yaks?: YakLog;
 }
 
 /** Something the session waits on outside itself (`twapp blocker`). */

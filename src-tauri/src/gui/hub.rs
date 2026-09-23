@@ -150,6 +150,8 @@ pub struct SessionView {
     pub name_suggestion: Option<String>,
     /// Open blockers recorded in the session directory.
     pub blockers: Vec<super::blockers::BlockerView>,
+    /// Tangents the session took, and its main effort, as summaries saw them.
+    pub yaks: crate::cli::yaks::YakLog,
 }
 
 #[derive(Serialize, Clone)]
@@ -317,6 +319,7 @@ impl HubSession {
             key: self.key.clone(),
             name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
             blockers: super::blockers::open_blockers(Path::new(&self.key)),
+            yaks: crate::cli::yaks::load(Path::new(&self.key)),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
@@ -1227,6 +1230,14 @@ impl Hub {
     /// Store a new summary; returns the name suggestion it carries for the
     /// session, if any is left to offer.
     fn on_summary(&self, key: &str, summary: Summary) -> Option<String> {
+        if summary.source == crate::summary::SummarySource::Model {
+            let mut log = crate::cli::yaks::load(Path::new(key));
+            if log.record(&summary) {
+                if let Err(e) = crate::cli::yaks::save(Path::new(key), &log) {
+                    log::warn!("yak log for {}: {}", key, e);
+                }
+            }
+        }
         let name = read_session(Path::new(key)).ok().map(|d| d.name).unwrap_or_default();
         let session_summary = Some(summary);
         let mut inner = self.inner.lock();
@@ -1682,6 +1693,7 @@ fn summary_request(session: &HubSession, force: bool) -> Option<SummaryRequest> 
         name: data.name.clone(),
         force,
         state: state_in_words(&session.status),
+        tangents: crate::cli::yaks::load(Path::new(&session.key)).titles(),
     })
 }
 
@@ -2020,6 +2032,8 @@ mod tests {
             source: crate::summary::SummarySource::Model,
             for_state: None,
             suggested_name: Some(n.into()),
+            main_effort: None,
+            tangent: None,
         };
         let none: Vec<String> = Vec::new();
         assert_eq!(

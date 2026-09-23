@@ -77,6 +77,7 @@ export default function SessionPanel({
   const [notes, setNotes] = useState<Note[]>([]);
   const deletedNotes = useRef<Set<string>>(new Set());
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
+  const [yaksOpen, setYaksOpen] = useState(false);
   // Until the user toggles it, the section is open only when it has notes.
   const [notesOpen, setNotesExpanded] = useState<boolean | null>(null);
   const [newNote, setNewNote] = useState("");
@@ -431,6 +432,17 @@ export default function SessionPanel({
         )}
         {summary ? (
           <>
+            {(summary.main_effort || session.yaks?.main_effort) && (
+              <div className="summary-effort">
+                <span className="eyebrow">Main effort</span>
+                {summary.main_effort || session.yaks?.main_effort}
+              </div>
+            )}
+            {summary.tangent && !summary.tangent.done && (
+              <div className="summary-tangent" title="The current work is a detour from the main effort">
+                On a tangent: {summary.tangent.title}
+              </div>
+            )}
             <div className="summary-headline">{summary.headline}</div>
             {summary.doing && <div className="summary-doing">{summary.doing}</div>}
             {summary.needs_user && (
@@ -562,13 +574,39 @@ export default function SessionPanel({
         </div>
         {blockersExpanded &&
           (blockers.length > 0 ? (
-            <BlockerList items={blockers.map((blocker) => ({ blocker, session }))} now={now} />
+            <div className="section-body">
+              <BlockerList items={blockers.map((blocker) => ({ blocker, session }))} now={now} />
+            </div>
           ) : (
             <div className="section-empty blocker-empty">
               Nothing recorded. The session's agent can add what it waits on with <code>twapp blocker add</code>.
             </div>
           ))}
       </section>
+
+      {(session.yaks?.yaks.length ?? 0) > 0 && (
+        <section className="panel-section">
+          <div className="section-head" onClick={() => setYaksOpen(!yaksOpen)}>
+            <Chevron open={yaksOpen} />
+            <span className="section-title" title="Tangents the session took away from its main effort">Yaks</span>
+            <span className="count">{session.yaks!.yaks.length}</span>
+            {session.yaks!.yaks.some((y) => y.status === "shaving") && <span className="yak-chip yak-shaving">shaving</span>}
+          </div>
+          {yaksOpen && (
+            <ul className="yak-list section-body">
+              {[...session.yaks!.yaks].reverse().map((yak) => (
+                <li key={yak.id} className="yak-row">
+                  <span className={`yak-chip yak-${yak.status}`}>{yak.status === "set_aside" ? "set aside" : yak.status}</span>
+                  <span className="yak-title">{yak.title}</span>
+                  <span className="yak-meta" title={`First seen ${new Date(yak.first_seen).toLocaleString()}; seen by ${yak.sightings} summaries; the transcript grew ${Math.round(yak.transcript_bytes / 1024)} KB while on it`}>
+                    {sinceLabel(yak.first_seen, now)} ago · {yak.sightings}×
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section className="panel-section grow">
         <div className="section-head" onClick={() => setNotesExpanded(!notesExpanded)}>

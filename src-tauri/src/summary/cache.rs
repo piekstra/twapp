@@ -90,6 +90,8 @@ mod tests {
             source,
             for_state: None,
             suggested_name: None,
+            main_effort: None,
+            tangent: None,
         }
     }
 
