@@ -1611,7 +1611,7 @@ fn cmd_ticket_link(ticket_key: &str, dir: Option<&str>, github: bool) -> i32 {
     }
 
     let ti = match ticket::fetch_ticket(ticket_key, github) {
-        Ok(t) => t,
+        Ok(t) => ticket::TicketInfo { linked_by: Some("user".into()), ..t },
         Err(e) => {
             eprintln!("{}", e);
             return 1;
@@ -1624,12 +1624,10 @@ fn cmd_ticket_link(ticket_key: &str, dir: Option<&str>, github: bool) -> i32 {
         std::env::current_dir().unwrap_or_default()
     };
 
-    let ticket_file = target_dir.join(".twapp-ticket.json");
-    if let Ok(json) = serde_json::to_string_pretty(&ti) {
-        if let Err(e) = std::fs::write(&ticket_file, json) {
-            eprintln!("Error writing ticket file: {}", e);
-            return 1;
-        }
+    let ticket_file = target_dir.join(ticket::TICKET_FILE);
+    if let Err(e) = ticket::write_linked(&target_dir, &ti) {
+        eprintln!("Error: {}", e);
+        return 1;
     }
 
     println!("Linked {}: {}", ti.key, ti.title);

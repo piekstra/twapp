@@ -37,12 +37,17 @@ it in tangent; if it matches one of the known tangents listed in the input, use 
 tangent.done is true when the tangent is finished and the work can return to the main effort. When \
 the current work serves the main effort, tangent is null.
 
+ticket is the Jira key (PROJ-123) or GitHub issue (owner/repo#123) the main effort is being worked \
+under, when the excerpt shows the work is for it: the agent is implementing, fixing, reviewing or \
+filing work under that ticket. Copy it exactly as the excerpt writes it. A ticket that is only \
+mentioned, looked up, linked to, or belongs to a tangent is not it; when unsure, ticket is null.
+
 Reply with only a JSON object: \
 {\"headline\": \"<at most 80 characters naming the task at hand>\", \"doing\": \"<one or two \
 sentences on where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" \
 or null, \"main_effort\": \"<at most 80 characters naming what the session is for>\", \
 \"suggested_name\": \"<at most 48 characters>\" or null, \"tangent\": {\"title\": \"<at most 60 \
-characters>\", \"done\": false} or null}.";
+characters>\", \"done\": false} or null, \"ticket\": \"<key>\" or null}.";
 
 const INSTRUCTION: &str = "Summarize the session excerpt on stdin.";
 
@@ -447,6 +452,7 @@ pub(crate) fn model_summary(
                 .unwrap_or(title),
             done: value["tangent"]["done"].as_bool().unwrap_or(false),
         });
+    let ticket = value["ticket"].as_str().and_then(|t| ticket_ref(t, &input));
     Ok(Summary {
         headline: clean_text(
             headline.ok_or("the answer had no headline")?,
@@ -461,6 +467,42 @@ pub(crate) fn model_summary(
         suggested_name,
         main_effort,
         tangent,
+        ticket,
+    })
+}
+
+/// A ticket the answer named, kept only when it is a Jira key or GitHub issue
+/// reference that the input itself contains, so a guessed key is dropped.
+fn ticket_ref(answer: &str, input: &str) -> Option<String> {
+    let t = answer.trim().trim_matches(|c: char| c == '`' || c == '"');
+    let jira = {
+        let mut parts = t.splitn(2, '-');
+        let (project, number) = (parts.next()?, parts.next().unwrap_or(""));
+        project.len() >= 2
+            && project.starts_with(|c: char| c.is_ascii_uppercase())
+            && project.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            && !number.is_empty()
+            && number.chars().all(|c| c.is_ascii_digit())
+    };
+    let github = t.split_once('#').is_some_and(|(repo, number)| {
+        let mut parts = repo.split('/');
+        let ok_part = |p: Option<&str>| {
+            p.is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)))
+        };
+        ok_part(parts.next()) && ok_part(parts.next()) && parts.next().is_none()
+            && !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
+    });
+    ((jira || github) && contains_ref(input, t)).then(|| t.to_string())
+}
+
+/// Whether `text` holds `reference` as a whole token, so `ABC-12` is not
+/// found inside `ABC-123`.
+fn contains_ref(text: &str, reference: &str) -> bool {
+    text.match_indices(reference).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + reference.len()..].chars().next();
+        let boundary = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/'));
+        boundary(before) && boundary(after)
     })
 }
 
@@ -566,6 +608,18 @@ mod tests {
         );
         let input = runner.inputs.lock()[0].clone();
         assert!(input.starts_with("Session name: login-fix\nTicket: ABC-1 Flaky login\n"));
+    }
+
+    #[test]
+    fn a_ticket_is_kept_only_when_the_input_names_it() {
+        let input = "Ticket: ABC-123 Fix\nworking on ABC-1234 and acme/api#77, see ABC-12";
+        assert_eq!(ticket_ref("ABC-1234", input).as_deref(), Some("ABC-1234"));
+        assert_eq!(ticket_ref(" `acme/api#77` ", input).as_deref(), Some("acme/api#77"));
+        assert_eq!(ticket_ref("ABC-99", input), None, "not in the input");
+        assert_eq!(ticket_ref("ABC-12", "only ABC-123 here"), None, "a prefix of another key");
+        assert_eq!(ticket_ref("abc-123", input), None);
+        assert_eq!(ticket_ref("null", input), None);
+        assert_eq!(ticket_ref("#77", "fix #77"), None, "a bare issue number has no repo");
     }
 
     #[test]

@@ -51,6 +51,10 @@ pub struct Summary {
     /// The detour the current work is on, when it is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tangent: Option<Tangent>,
+    /// The ticket or issue the main effort is being worked under, as the
+    /// excerpt names it: a Jira key or `owner/repo#N`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
 }
 
 /// Work the session took on away from its main effort.
@@ -98,6 +102,7 @@ pub fn free_summary(condensed: &Condensed) -> Summary {
         suggested_name: None,
         main_effort: None,
         tangent: None,
+        ticket: None,
     }
 }
 

@@ -79,14 +79,25 @@ fn write_ticket_file(
 #[tauri::command]
 pub async fn link_ticket(directory: String, key: String) -> Result<serde_json::Value, String> {
     let ticket = fetch_blocking(move || crate::cli::ticket::fetch_ticket(&key, false)).await?;
-    let value = write_ticket_file(&ticket_path(&directory), &ticket)?;
-    set_session_ticket_key(&directory, Some(ticket.key.clone()));
-    Ok(value)
+    let ticket = crate::cli::ticket::TicketInfo { linked_by: Some("user".into()), ..ticket };
+    crate::cli::ticket::write_linked(std::path::Path::new(&directory), &ticket)?;
+    if let Some(hub) = super::hub::hub() {
+        hub.emit_changed();
+    }
+    serde_json::to_value(&ticket).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn unlink_ticket(directory: String) -> Result<(), String> {
     let path = ticket_path(&directory);
+    // A ticket twapp linked on its own is not linked again once removed.
+    if let Some(ticket) = crate::cli::ticket::read_linked(std::path::Path::new(&directory)) {
+        if ticket.linked_automatically() {
+            if let Some(hub) = super::hub::hub() {
+                hub.dismiss_ticket(&super::hub::session_key(&directory), &ticket.key);
+            }
+        }
+    }
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }

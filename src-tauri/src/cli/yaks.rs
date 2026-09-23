@@ -208,6 +208,7 @@ mod tests {
             suggested_name: None,
             main_effort: Some("CSV export".into()),
             tangent: tangent.map(|(title, done)| Tangent { title: title.into(), done }),
+            ticket: None,
         }
     }
 
