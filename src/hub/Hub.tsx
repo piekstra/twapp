@@ -54,6 +54,8 @@ function terminalThemeFor(session: SessionView | undefined, isDark: boolean) {
   return isDark ? getDarkTheme(bg) : getLightTheme(bg);
 }
 
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+
 export default function Hub() {
   const hub = useHub();
   const { selected } = hub;
@@ -162,7 +164,9 @@ export default function Hub() {
   const checkForUpdate = useCallback(
     async (force = false) => {
       if (!appVersion) return;
-      if (!force && Date.now() - updateLastChecked.current < 30 * 60 * 1000) return;
+      if (!force && Date.now() - updateLastChecked.current < UPDATE_CHECK_INTERVAL) return;
+      // Counted before the request, so a failing check is not retried on every focus.
+      updateLastChecked.current = Date.now();
       setUpdateError(null);
       try {
         const res = await fetch("https://api.github.com/repos/piekstra/twapp/releases/latest");
@@ -172,7 +176,6 @@ export default function Hub() {
         }
         const data = await res.json();
         const latest = (data.tag_name as string).replace(/^v/, "");
-        updateLastChecked.current = Date.now();
         if (isNewerVersion(appVersion, latest)) {
           const asset = data.assets?.find((a: { name: string }) => a.name === "twapp-macos-aarch64.tar.gz");
           setUpdateInfo({
@@ -203,12 +206,14 @@ export default function Hub() {
   }, []);
   useEffect(() => {
     if (!appVersion) return;
-    // The window stays open for days, so check again every few hours too.
+    // The window stays open for days: check again when it comes to the
+    // front, at most once a day, rather than on a timer while nobody looks.
     const t = setTimeout(() => checkForUpdate(), 5000);
-    const every = setInterval(() => checkForUpdate(), 3 * 60 * 60 * 1000);
+    const onFocus = () => checkForUpdate();
+    window.addEventListener("focus", onFocus);
     return () => {
       clearTimeout(t);
-      clearInterval(every);
+      window.removeEventListener("focus", onFocus);
     };
   }, [appVersion, checkForUpdate]);
 
