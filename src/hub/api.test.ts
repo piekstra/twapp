@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { headlineOf, railGroup, sinceLabel, type SessionView } from "./api";
+import { byLane, headlineOf, railGroup, sinceLabel, type SessionView } from "./api";
+import { blockedLabel } from "./SessionRail";
 import { fuzzyScore } from "./CommandPalette";
 
 function session(over: Partial<SessionView> = {}): SessionView {
@@ -26,6 +27,9 @@ function session(over: Partial<SessionView> = {}): SessionView {
     summary: null,
     last_viewed: null,
     attention: false,
+    lane: "background",
+    blocked_since: null,
+    checked_at: null,
     ...over,
   };
 }
@@ -74,5 +78,28 @@ describe("fuzzyScore", () => {
     expect(fuzzyScore("inv", "ABC-398 Invoice export")).toBeGreaterThan(fuzzyScore("inv", "infra review"));
     expect(fuzzyScore("xyz", "Invoice export")).toBe(-1);
     expect(fuzzyScore("", "anything")).toBe(0);
+  });
+});
+
+describe("lanes", () => {
+  it("orders sessions priority, background, blocked, keeping the order within each", () => {
+    const list = [
+      session({ key: "b1", lane: "blocked" }),
+      session({ key: "g1" }),
+      session({ key: "p1", lane: "priority" }),
+      session({ key: "g2" }),
+      session({ key: "p2", lane: "priority" }),
+    ];
+    expect(byLane(list).map((s) => s.key)).toEqual(["p1", "p2", "g1", "g2", "b1"]);
+  });
+
+  it("shows how long a session has been blocked and when it was last checked", () => {
+    const now = Date.parse("2026-09-23T12:00:00Z");
+    const since = "2026-09-20T12:00:00Z";
+    expect(blockedLabel(session({ lane: "blocked", blocked_since: since, checked_at: since }), now)).toBe("blocked 3d");
+    expect(
+      blockedLabel(session({ lane: "blocked", blocked_since: since, checked_at: "2026-09-23T10:00:00Z" }), now),
+    ).toBe("blocked 3d · checked 2h ago");
+    expect(blockedLabel(session({ lane: "priority", blocked_since: since }), now)).toBeNull();
   });
 });

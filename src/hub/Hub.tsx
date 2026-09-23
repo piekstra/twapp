@@ -17,7 +17,7 @@ import FilePreviewOverlay, { type FilePreviewHandle } from "../components/FilePr
 import { markdownComponents } from "../components/markdown";
 import SessionLauncher from "../components/SessionLauncher";
 import type { LauncherView } from "../types";
-import { hubApi, type SessionView } from "./api";
+import { byLane, hubApi, type Lane, type SessionView } from "./api";
 import { TerminalManager } from "./terminals";
 import { useHub } from "./useHub";
 import SessionRail from "./SessionRail";
@@ -54,7 +54,9 @@ function terminalThemeFor(session: SessionView | undefined, isDark: boolean) {
 
 export default function Hub() {
   const hub = useHub();
-  const { sessions, selected } = hub;
+  const { selected } = hub;
+  // Every view lists sessions by lane, keeping the user's order within each.
+  const sessions = useMemo(() => byLane(hub.sessions), [hub.sessions]);
   const [overview, setOverview] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryView, setLibraryView] = useState<LauncherView>("sessions");
@@ -432,7 +434,9 @@ export default function Hub() {
       if (!e.metaKey) return;
       const key = e.key;
       if (/^[1-9]$/.test(key) && !e.shiftKey && !e.altKey) {
-        const target = sessions[Number(key) - 1];
+        // Numbers follow the list as shown: folded lanes are skipped.
+        const folded = layout.mode === "split" || !current ? layout.collapsedLanes : layout.switcherCollapsedLanes;
+        const target = sessions.filter((s) => !folded.includes(s.lane ?? "background"))[Number(key) - 1];
         if (target) {
           e.preventDefault();
           selectSession(target.key);
@@ -525,7 +529,7 @@ export default function Hub() {
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, toggleSidebar, toggleRail, layout.mode, openLibrary, newTab, closeTab]);
+  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, toggleSidebar, toggleRail, layout.mode, layout.collapsedLanes, layout.switcherCollapsedLanes, openLibrary, newTab, closeTab]);
 
   // --- Render ----------------------------------------------------------------
   const releaseNotesComponents = markdownComponents((path) => previewRef.current?.open(path, null));
@@ -545,13 +549,37 @@ export default function Hub() {
     />
   );
 
-  const reorder = (keys: string[]) => {
+  const withLane = (s: SessionView, lane: Lane): SessionView => {
+    if ((s.lane ?? "background") === lane) return s;
+    const at = new Date().toISOString();
+    return lane === "blocked"
+      ? { ...s, lane, blocked_since: at, checked_at: at, attention: s.attention && s.status.state === "needs_approval" }
+      : { ...s, lane, blocked_since: null, checked_at: null };
+  };
+  const moveSession = (keys: string[], moved: string, lane: Lane) => {
+    const lanePrev = hub.sessions.find((s) => s.key === moved)?.lane ?? "background";
     hub.setState((prev) => ({
       ...prev,
-      sessions: keys.map((k) => prev.sessions.find((s) => s.key === k)!).filter(Boolean),
+      sessions: keys
+        .map((k) => prev.sessions.find((s) => s.key === k)!)
+        .filter(Boolean)
+        .map((s) => (s.key === moved ? withLane(s, lane) : s)),
     }));
     hubApi.reorder(keys).catch(console.error);
+    if (lanePrev !== lane) hubApi.setLane(moved, lane).catch(console.error);
   };
+  const setLane = (key: string, lane: Lane) => {
+    hub.setState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) => (s.key === key ? withLane(s, lane) : s)),
+    }));
+    hubApi.setLane(key, lane).catch(console.error);
+  };
+  const toggleLane = (field: "collapsedLanes" | "switcherCollapsedLanes", lane: Lane) =>
+    setLayout((l) => ({
+      ...l,
+      [field]: l[field].includes(lane) ? l[field].filter((x) => x !== lane) : [...l[field], lane],
+    }));
   const goOverview = () => {
     setShowLibrary(false);
     setOverview(true);
@@ -582,6 +610,10 @@ export default function Hub() {
     document.addEventListener("mouseup", onUp);
   };
 
+  // The compact list next to a session's details folds lanes on its own; the
+  // full rail and the sidebar without details share the roomier setting.
+  const laneField = (variant: "rail" | "switcher") =>
+    variant === "switcher" && current && showingTerminal ? "switcherCollapsedLanes" : "collapsedLanes";
   const rail = (variant: "rail" | "switcher", onCollapse: () => void, part: "all" | "header" | "list" = "all") => (
     <SessionRail
       part={part}
@@ -593,7 +625,10 @@ export default function Hub() {
       variant={variant}
       onSelect={selectSession}
       onOverview={goOverview}
-      onReorder={reorder}
+      collapsedLanes={laneField(variant) === "collapsedLanes" ? layout.collapsedLanes : layout.switcherCollapsedLanes}
+      onToggleLane={(lane) => toggleLane(laneField(variant), lane)}
+      onMove={moveSession}
+      onSetLane={setLane}
       onNew={() => openLibrary("new-session")}
       onPalette={() => setPaletteOpen(true)}
       onCollapse={onCollapse}
@@ -616,6 +651,7 @@ export default function Hub() {
       onFork={() => setForkOpen(true)}
       onCloseSession={() => setConfirmClose(current)}
       onCollapse={toggleSidebar}
+      onSetLane={(lane) => setLane(current.key, lane)}
       showCollapse={split}
     />
   );
@@ -665,7 +701,6 @@ export default function Hub() {
             <>
               <div className="row-resizer" onMouseDown={(e) => startResize("switcher", e, -1)} />
               <div className="switcher-area" style={{ height: `${layout.switcherShare * 100}%` }}>
-                <div className="switcher-label">Sessions</div>
                 {rail("switcher", toggleSidebar, "list")}
               </div>
             </>

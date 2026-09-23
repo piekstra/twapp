@@ -11,7 +11,8 @@ import { getDarkModeAccentColor } from "../color";
 import PromptSections from "../components/PromptSections";
 import type { EditingPromptState } from "../components/PromptSections";
 import { markdownComponents } from "../components/markdown";
-import { STATE_LABELS, hubApi, sinceLabel, type SessionView } from "./api";
+import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
+import { blockedLabel } from "./SessionRail";
 
 export const SESSION_COLORS = [
   { hex: "#ffe0e0", name: "Rose" },
@@ -45,6 +46,7 @@ interface Props {
   onCloseSession: () => void;
   onFork: () => void;
   onCollapse: () => void;
+  onSetLane: (lane: Lane) => void;
   /** Whether the panel has its own collapse control (the split layout). */
   showCollapse: boolean;
 }
@@ -61,6 +63,7 @@ export default function SessionPanel({
   onCloseSession,
   onFork,
   onCollapse,
+  onSetLane,
   showCollapse,
 }: Props) {
   const directory = session.key;
@@ -345,6 +348,24 @@ export default function SessionPanel({
           </button>
         )}
       </header>
+
+      <div className="panel-lane">
+        <div className="segmented" role="radiogroup" aria-label="Lane">
+          {LANES.map(({ lane, label }) => (
+            <button
+              key={lane}
+              role="radio"
+              aria-checked={(session.lane ?? "background") === lane}
+              className={`segment${(session.lane ?? "background") === lane ? " active" : ""}`}
+              onClick={() => onSetLane(lane)}
+            >
+              <span className={`lane-dot lane-dot-${lane}`} />
+              {label}
+            </button>
+          ))}
+        </div>
+        {session.lane === "blocked" && <span className="panel-lane-since">{blockedLabel(session, now)}</span>}
+      </div>
 
       <section className={`summary-card state-${status.state}${session.attention ? " attention" : ""}${summaryOpen ? "" : " collapsed"}`}>
         <div className="summary-state" onClick={() => toggleSummary()} role="button">

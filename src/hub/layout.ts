@@ -24,9 +24,22 @@ export interface LayoutPrefs {
   /** Where the session list sits in a single sidebar: below the selected
    * session's details (the default) or above them. */
   listPosition: "bottom" | "top";
+  /** Lanes folded away in the full session list (the split layout's rail). */
+  collapsedLanes: LaneName[];
+  /** Lanes folded away in the compact list beside a session's details. It
+   * starts with only Priority open: those are the sessions switched between
+   * most while working in one. */
+  switcherCollapsedLanes: LaneName[];
 }
 
+type LaneName = "priority" | "background" | "blocked";
+
 const KEY = "twapp-layout";
+
+function lanesOr(value: unknown, fallback: LaneName[]): LaneName[] {
+  if (!Array.isArray(value)) return fallback;
+  return value.filter((l): l is LaneName => l === "priority" || l === "background" || l === "blocked");
+}
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {
   mode: "right",
@@ -36,6 +49,8 @@ export const DEFAULT_LAYOUT: LayoutPrefs = {
   railWidth: 264,
   switcherShare: 0.3,
   listPosition: "bottom",
+  collapsedLanes: ["blocked"],
+  switcherCollapsedLanes: ["background", "blocked"],
 };
 
 export function loadLayout(): LayoutPrefs {
@@ -49,6 +64,8 @@ export function loadLayout(): LayoutPrefs {
       ...parsed,
       mode,
       listPosition: parsed.listPosition === "top" ? "top" : "bottom",
+      collapsedLanes: lanesOr(parsed.collapsedLanes, DEFAULT_LAYOUT.collapsedLanes),
+      switcherCollapsedLanes: lanesOr(parsed.switcherCollapsedLanes, DEFAULT_LAYOUT.switcherCollapsedLanes),
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth, 260, 640),
       railWidth: clamp(parsed.railWidth ?? DEFAULT_LAYOUT.railWidth, 200, 420),
       switcherShare: clamp(parsed.switcherShare ?? DEFAULT_LAYOUT.switcherShare, 0.15, 0.8),

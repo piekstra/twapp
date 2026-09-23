@@ -19,7 +19,7 @@ Run `twapp <command> --help` for flags.
 
 **Config and state:**
 - Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json` in the session directory.
-- Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, selection, last-viewed).
+- Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).
 - Summaries cache: `~/.local/state/twapp/summaries/`.
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
-import { STATE_LABELS, compactNumber, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
-import { StateDot } from "./SessionRail";
+import { LANES, STATE_LABELS, compactNumber, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
+import { StateDot, blockedLabel } from "./SessionRail";
 
 interface Props {
   sessions: SessionView[];
@@ -131,8 +131,18 @@ export default function Overview({
               No sessions are open. Open one from <button className="link-button" onClick={() => setShowLibrary(true)}>All sessions</button> or press ⌘N.
             </div>
           ) : (
+            LANES.map(({ lane, label }) => {
+              const inLane = sessions.filter((s) => (s.lane ?? "background") === lane);
+              if (inLane.length === 0) return null;
+              return (
+            <section key={lane} className={`overview-lane lane-${lane}`}>
+            <div className="overview-lane-head">
+              <span className={`lane-dot lane-dot-${lane}`} />
+              {label}
+              <span className="count">{inLane.length}</span>
+            </div>
             <div className="overview-grid">
-              {sessions.map((s) => {
+              {inLane.map((s) => {
                 const accent = s.color ? (isDark ? getDarkModeAccentColor(s.color) : s.color) : undefined;
                 return (
                   <button
@@ -151,6 +161,7 @@ export default function Overview({
                       {s.status.state !== "suspended" && ` for ${sinceLabel(s.status.since, now)}`}
                       {s.status.detail && ` · ${s.status.detail}`}
                     </div>
+                    {blockedLabel(s, now) && <div className="overview-card-blocked">{blockedLabel(s, now)}</div>}
                     {headlineOf(s) && <div className="overview-card-headline">{headlineOf(s)}</div>}
                     {s.summary?.doing && <div className="overview-card-doing">{s.summary.doing}</div>}
                     {s.summary?.needs_user && (
@@ -163,6 +174,9 @@ export default function Overview({
                 );
               })}
             </div>
+            </section>
+              );
+            })
           )}
         </div>
       )}
