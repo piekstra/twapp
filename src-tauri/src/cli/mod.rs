@@ -1,31 +1,17 @@
 pub mod app_bundle;
 pub mod config;
-pub mod coordinator;
 pub mod harness;
 pub mod models;
-pub mod monitor;
-pub mod msg;
-pub mod msg_archive;
-pub mod msg_channel;
-pub mod msg_claim;
-pub mod msg_cursors;
-pub mod msg_migrate;
-pub mod msg_presence;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
 pub mod session;
 pub mod session_attribution;
-pub mod stop;
-#[cfg(test)]
-pub mod test_env;
 pub mod theme;
 pub mod ticket;
 pub mod transcript;
 
 use clap::Subcommand;
-use coordinator::CoordinatorCommands;
-use msg::MsgCommands;
 use session::{
     build_antigravity_run_command, build_claude_run_command, build_codex_run_command,
     shell_escape_single, AgentProvider,
@@ -34,7 +20,7 @@ use session::{
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
-    #[command(after_help = "Examples:\n  twapp work MON-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name worker --from-file /path/brief.md    Spawn agent to read a briefing file\n  twapp work --name worker --model sonnet                Pin the spawned agent to a specific model\n  twapp work MON-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket\n\nShutdown: use `twapp stop --name <name>` to gracefully shut down a spawned instance.")]
+    #[command(after_help = "Examples:\n  twapp work ABC-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name research --model sonnet              Pin the session to a specific model\n  twapp work ABC-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket")]
     Work {
         /// Ticket ID (e.g. MON-1234, 1234, owner/repo#123)
         ticket: Option<String>,
@@ -44,11 +30,6 @@ pub enum Commands {
         /// Override the selected harness startup command
         #[arg(long)]
         run: Option<String>,
-        /// Spawn the selected harness with 'Read <path> and execute.'; safer
-        /// than --run for long prompts with special characters. Path must
-        /// exist at spawn time. Supported by Claude and Codex.
-        #[arg(long)]
-        from_file: Option<String>,
         /// Model name passed through to the provider CLI (Claude: `--model`,
         /// Codex: `-c model='<name>'`, Antigravity: `--model`). twapp does not
         /// validate the name; the provider CLI rejects unknown models.
@@ -70,39 +51,6 @@ pub enum Commands {
         /// Use Chrome instead of Claude desktop
         #[arg(long)]
         chrome: bool,
-        /// Set the role archetype for this session (e.g., coordinator,
-        /// implementer, reviewer). Stored in .twapp-session.json for later UI tagging.
-        #[arg(long)]
-        role: Option<String>,
-        /// Mark this session as agent-spawned (not user-initiated).
-        /// Use when launching this session from another twapp session
-        /// programmatically (e.g., via --from-file).
-        #[arg(long)]
-        spawned: bool,
-        /// Explicit provenance override ("user" or "spawned"). Wins over
-        /// --spawned and over the implicit default from --from-file.
-        #[arg(long)]
-        provenance: Option<String>,
-        /// Name of the co-lab group this session belongs to. When paired
-        /// with `--from-file` and left unset, twapp auto-inherits the
-        /// spawning session's group (traversing upward from cwd to find
-        /// its `.twapp-session.json`). Pass `--colab-group ""` is rejected.
-        #[arg(long = "colab-group")]
-        colab_group: Option<String>,
-    },
-    /// Stop a running session by name (SIGTERM claude child + twapp host).
-    ///
-    /// Used to cleanly shut down sessions started by `twapp work`, especially
-    /// long-running agent spawns. Pair with `twapp work --from-file` for a
-    /// scriptable spawn/stop lifecycle.
-    #[command(after_help = "Examples:\n  twapp stop --name my-worker           Graceful shutdown (SIGTERM, 3s grace)\n  twapp stop --name my-worker --force   Escalate to SIGKILL if SIGTERM doesn't land")]
-    Stop {
-        /// Session name (matches `--name` used at `twapp work` time)
-        #[arg(long, short = 'n')]
-        name: String,
-        /// Escalate to SIGKILL if SIGTERM doesn't land in ~3s
-        #[arg(long)]
-        force: bool,
     },
     /// Resume session in current directory
     #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
@@ -157,51 +105,11 @@ pub enum Commands {
     /// Create code signing certificate
     #[command(name = "setup-cert")]
     SetupCert,
-    /// Run a background command with live monitoring
-    #[command(after_help = "Examples:\n  twapp monitor \"npm run dev\"    Start monitoring a command\n  twapp monitor --stop           Stop the running monitor\n  twapp monitor --status         Show what's running\n  twapp monitor --logs           Show log file and recent output")]
-    Monitor {
-        /// Command to run (e.g. "npm run dev")
-        command: Option<String>,
-        /// Stop the running monitor
-        #[arg(long)]
-        stop: bool,
-        /// Show monitor status
-        #[arg(long)]
-        status: bool,
-        /// Show log file and recent output
-        #[arg(long)]
-        logs: bool,
-        /// Target directory
-        #[arg(long)]
-        dir: Option<String>,
-    },
     /// Rename the current session
     #[command(after_help = "Examples:\n  twapp rename \"MON-5678 Better Name\"    Rename session in current directory")]
     Rename {
         /// New session name
         name: String,
-    },
-    /// Launch or claim a coordinator session.
-    ///
-    /// A coordinator is a long-running twapp session that orchestrates other
-    /// agent sessions — writing briefings, watching the shared mailbox,
-    /// merging PRs. See `skills/agent-coordinator/SKILL.md` for its operating
-    /// manual.
-    #[command(after_help = "Examples:\n  twapp coordinator launch                                 Spawn a coordinator named 'coordinator' with the bundled bootstrap\n  twapp coordinator launch --briefing /path/to/brief.md    Override the bootstrap\n  twapp coordinator launch --name ux-coord                 Custom session name\n  twapp coordinator launch --shared-dir /tmp/collab        Point at a specific shared mailbox\n  twapp coordinator claim                                  Re-tag the current session as coordinator\n  twapp coordinator claim --name worker-a --force          Overwrite an existing non-coordinator role")]
-    Coordinator {
-        #[command(subcommand)]
-        command: CoordinatorCommands,
-    },
-    /// Send / fetch / broadcast messages in a shared filesystem mailbox.
-    ///
-    /// Writes fenced-frontmatter markdown into `<mailbox>/inbox/` and tolerates
-    /// both the new shape and bare legacy files on read. The mailbox directory
-    /// is taken from `TWAPP_MAILBOX_DIR` (preferred), or `TWAPP_SHARED_DIR/mailbox/`
-    /// as a fallback. See `docs/designs/agent-messaging.md`.
-    #[command(after_help = "Examples:\n  twapp msg send reviewer \"PR-1 is up\"\n  twapp msg broadcast --priority urgent \"merge freeze\"\n  twapp msg fetch --for reviewer --since 20260420T120000Z --limit 20")]
-    Msg {
-        #[command(subcommand)]
-        command: MsgCommands,
     },
     /// Inspect or refresh the provider model cache used by --model.
     ///
@@ -391,34 +299,23 @@ pub fn run(cmd: Commands) -> i32 {
             ticket,
             name,
             run,
-            from_file,
             model,
             provider,
             github,
             session_id: fork_session_id,
             claude_cwd,
             chrome,
-            role,
-            spawned,
-            provenance,
-            colab_group,
         } => cmd_work(
             ticket,
             name,
             run,
-            from_file,
             model,
             provider,
             github,
             fork_session_id,
             claude_cwd,
             chrome,
-            role,
-            spawned,
-            provenance,
-            colab_group,
         ),
-        Commands::Stop { name, force } => stop::cmd_stop(&name, force),
         Commands::Resume { fork } => cmd_resume(fork),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
@@ -469,129 +366,7 @@ pub fn run(cmd: Commands) -> i32 {
         } => cmd_set_session(&session_id, cwd.as_deref(), dir.as_deref()),
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
-        Commands::Monitor {
-            command,
-            stop,
-            status,
-            logs,
-            dir,
-        } => {
-            if stop {
-                monitor::cmd_monitor_stop(dir.as_deref())
-            } else if status {
-                monitor::cmd_monitor_status(dir.as_deref())
-            } else if logs {
-                monitor::cmd_monitor_logs(dir.as_deref())
-            } else if let Some(cmd) = command {
-                monitor::cmd_monitor_start(&cmd, dir.as_deref())
-            } else {
-                eprintln!("Provide a command to monitor, or use --stop/--status/--logs");
-                1
-            }
-        }
         Commands::Rename { name } => cmd_rename(&name),
-        Commands::Coordinator { command } => coordinator::run(command),
-        Commands::Msg { command } => match command {
-            MsgCommands::Send {
-                to,
-                from,
-                priority,
-                subject,
-                thread,
-                reply_to,
-                cc,
-                channel,
-                body,
-            } => msg::cmd_send(
-                to, from, priority, subject, thread, reply_to, cc, channel, body,
-            ),
-            MsgCommands::Broadcast {
-                from,
-                priority,
-                subject,
-                channel,
-                body,
-            } => msg::cmd_broadcast(from, priority, subject, channel, body),
-            MsgCommands::Fetch {
-                for_handle,
-                since,
-                priority,
-                thread,
-                channel,
-                mark_read,
-                limit,
-                format,
-                all,
-            } => msg::cmd_fetch(
-                for_handle, since, priority, thread, channel, mark_read, limit, format, all,
-            ),
-            MsgCommands::Claim {
-                lane_id,
-                from,
-                note,
-                stale_seconds,
-                list,
-                lane_prefix,
-                format,
-            } => msg_claim::cmd_claim(
-                lane_id, from, note, stale_seconds, list, lane_prefix, format,
-            ),
-            MsgCommands::Release {
-                lane_id,
-                from,
-                note,
-            } => msg_claim::cmd_release(lane_id, from, note),
-            MsgCommands::Archive { command } => match command {
-                msg_archive::ArchiveCommands::Rotate { dry_run } => {
-                    msg_archive::cmd_rotate(dry_run)
-                }
-                msg_archive::ArchiveCommands::Purge {
-                    retain_days,
-                    dry_run,
-                } => msg_archive::cmd_purge(retain_days, dry_run),
-                msg_archive::ArchiveCommands::List { since, format } => {
-                    msg_archive::cmd_list(since, format)
-                }
-            },
-            MsgCommands::Thread { thread_id, format } => msg::cmd_thread(thread_id, format),
-            MsgCommands::Ack { msg_id, from, note } => msg_cursors::cmd_ack(msg_id, from, note),
-            MsgCommands::Migrate {
-                dry_run,
-                drop_legacy,
-            } => msg_migrate::cmd_migrate(dry_run, drop_legacy),
-            MsgCommands::Presence { command } => match command {
-                msg_presence::PresenceCommands::Heartbeat {
-                    handle,
-                    status,
-                    task,
-                    interval,
-                    inbox_cursor,
-                    claims,
-                } => msg_presence::cmd_heartbeat(
-                    handle,
-                    status,
-                    task,
-                    interval,
-                    inbox_cursor,
-                    claims,
-                ),
-                msg_presence::PresenceCommands::List { stale, format } => {
-                    msg_presence::cmd_list(stale, format)
-                }
-                msg_presence::PresenceCommands::Get { handle, format } => {
-                    msg_presence::cmd_get(handle, format)
-                }
-                msg_presence::PresenceCommands::Clear { handle } => {
-                    msg_presence::cmd_clear(handle)
-                }
-            },
-            MsgCommands::Channel { command } => match command {
-                msg_channel::ChannelCommands::List { format } => msg_channel::cmd_list(format),
-                msg_channel::ChannelCommands::Subscribers { name, format } => {
-                    msg_channel::cmd_subscribers(name, format)
-                }
-            },
-        },
         Commands::Models { command } => match command {
             ModelsCommands::List { provider, format } => models::cmd_list(provider, format),
             ModelsCommands::Refresh { provider } => models::cmd_refresh(provider),
@@ -665,20 +440,7 @@ pub fn create_session_core(
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
     chrome: bool,
-    role: Option<String>,
-    provenance: Option<String>,
-    colab_group: Option<String>,
 ) -> Result<SessionCreationResult, String> {
-    if let Some(ref r) = role {
-        if r.trim().is_empty() {
-            return Err("--role cannot be empty".to_string());
-        }
-    }
-    if let Some(ref g) = colab_group {
-        if g.trim().is_empty() {
-            return Err("--colab-group cannot be empty".to_string());
-        }
-    }
     if ticket_id.is_none() && session_name.is_none() {
         return Err("Provide a ticket or session name".to_string());
     }
@@ -694,27 +456,8 @@ pub fn create_session_core(
     let dir_already_existed;
 
     if let Some(ref tid) = ticket_id {
-        let is_github = tid.contains('#') || github;
-
-        let fetched = if is_github {
-            ticket::fetch_github_issue(tid, global_config.github_repo.as_deref())
-        } else {
-            let resolved_key = if tid.chars().all(|c| c.is_ascii_digit()) {
-                if let Some(ref proj) = global_config.jira_project {
-                    format!("{}-{}", proj, tid)
-                } else {
-                    tid.clone()
-                }
-            } else {
-                tid.clone()
-            };
-            ticket::fetch_jira_ticket(&resolved_key)
-        };
-
-        let ti = match fetched {
-            Some(t) => t,
-            None => return Err(format!("Failed to fetch ticket: {}", tid)),
-        };
+        let ti = ticket::fetch_ticket(tid, github)
+            .map_err(|e| format!("Failed to fetch ticket {}: {}", tid, e))?;
 
         let dir_name = ti.key.replace('/', "-").replace('#', "-");
         work_dir = global_config.work_directory.join(&dir_name);
@@ -798,9 +541,6 @@ pub fn create_session_core(
         imported_from: None,
         use_chrome: if chrome { Some(true) } else { None },
         override_terminal_theme: None,
-        role,
-        provenance,
-        colab_group,
     };
     session::write_session(&work_dir, &session_data)?;
 
@@ -893,17 +633,12 @@ fn cmd_work(
     ticket_id: Option<String>,
     session_name: Option<String>,
     run_command: Option<String>,
-    from_file: Option<String>,
     model: Option<String>,
     provider_arg: Option<AgentProvider>,
     github: bool,
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
     chrome: bool,
-    role: Option<String>,
-    spawned: bool,
-    provenance_arg: Option<String>,
-    colab_group_arg: Option<String>,
 ) -> i32 {
     if ticket_id.is_none() && session_name.is_none() {
         eprintln!("Error: Provide a ticket or --name for the session.");
@@ -912,12 +647,7 @@ fn cmd_work(
         return 1;
     }
 
-    if run_command.is_some() && from_file.is_some() {
-        eprintln!("Error: --run and --from-file are mutually exclusive.");
-        return 1;
-    }
-
-    let provider = match select_provider_for_new_session(provider_arg, from_file.is_some()) {
+    let provider = match select_provider_for_new_session(provider_arg) {
         Ok(provider) => provider,
         Err(error) => {
             eprintln!("Error: {}", error);
@@ -941,42 +671,7 @@ fn cmd_work(
         return 1;
     }
 
-    let role = match validate_role(role) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
-    };
-
-    let provenance = match resolve_provenance(provenance_arg, spawned, from_file.is_some()) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
-    };
-
-    let colab_group = match resolve_colab_group(colab_group_arg, from_file.is_some()) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
-    };
-
-    // Feature: --from-file. Resolve to an absolute path and verify the file
-    // exists BEFORE launching any terminal, then wrap it as a provider prompt.
-    let effective_run = match from_file {
-        Some(path) => match resolve_from_file(&path, provider, model.as_deref()) {
-            Ok(cmd) => Some(cmd),
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return 2;
-            }
-        },
-        None => run_command,
-    };
+    let effective_run = run_command;
 
     // Pre-flight: --claude-cwd must exist if supplied.
     if let Some(ref cwd) = claude_cwd_arg {
@@ -1016,9 +711,6 @@ fn cmd_work(
         fork_session_id,
         claude_cwd_arg,
         chrome,
-        role,
-        Some(provenance),
-        colab_group,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -1207,9 +899,6 @@ fn cmd_resume(fork: bool) -> i32 {
             imported_from: None,
             use_chrome: if chrome { Some(true) } else { None },
             override_terminal_theme: None,
-            role: session_data.role.clone(),
-            provenance: session_data.provenance.clone(),
-            colab_group: session_data.colab_group.clone(),
         };
         session_id = new_id;
         if let Err(e) = session::write_session(&work_dir, &session_data) {
@@ -1418,7 +1107,6 @@ enum ProviderChoice {
 fn resolve_new_session_provider(
     configured: &[AgentProvider],
     explicit: Option<AgentProvider>,
-    has_from_file: bool,
     interactive: bool,
 ) -> Result<ProviderChoice, String> {
     if let Some(provider) = explicit {
@@ -1428,22 +1116,7 @@ fn resolve_new_session_provider(
                 provider.display_name()
             ));
         }
-        if has_from_file && provider == AgentProvider::Antigravity {
-            return Err("--from-file is not supported by the Antigravity harness".to_string());
-        }
         return Ok(ProviderChoice::Chosen(provider));
-    }
-
-    // Preserve the established default for agent-spawned briefing sessions,
-    // while allowing Codex-only installations to use the same workflow.
-    if has_from_file {
-        if configured.contains(&AgentProvider::Claude) {
-            return Ok(ProviderChoice::Chosen(AgentProvider::Claude));
-        }
-        if configured.contains(&AgentProvider::Codex) {
-            return Ok(ProviderChoice::Chosen(AgentProvider::Codex));
-        }
-        return Err("--from-file requires Claude or Codex to be configured".to_string());
     }
 
     if configured.len() == 1 {
@@ -1464,12 +1137,11 @@ fn resolve_new_session_provider(
 
 fn select_provider_for_new_session(
     explicit: Option<AgentProvider>,
-    has_from_file: bool,
 ) -> Result<AgentProvider, String> {
     use std::io::{BufRead, Write};
 
     let configured = config::get_configured_agent_providers();
-    match resolve_new_session_provider(&configured, explicit, has_from_file, atty_stdin())? {
+    match resolve_new_session_provider(&configured, explicit, atty_stdin())? {
         ProviderChoice::Chosen(provider) => return Ok(provider),
         ProviderChoice::NeedsPrompt => {}
     }
@@ -1594,10 +1266,10 @@ fn cmd_sessions(path: Option<String>) -> i32 {
     }
 
     println!(
-        "{:<25} {:<12} {:<13} {:<16} {:<20} {:<16} {:<20} Directory",
-        "Name", "Ticket", "Harness", "Session ID", "Last Active", "Role", "Colab"
+        "{:<25} {:<12} {:<13} {:<16} {:<20} Directory",
+        "Name", "Ticket", "Harness", "Session ID", "Last Active"
     );
-    println!("{}", "-".repeat(151));
+    println!("{}", "-".repeat(113));
     for (s, dir) in &sessions {
         let name = &s.name[..s.name.len().min(24)];
         let ticket = s.ticket_key.as_deref().unwrap_or("-");
@@ -1614,87 +1286,31 @@ fn cmd_sessions(path: Option<String>) -> i32 {
             .or(Some(s.created.as_str()))
             .unwrap_or("?");
         let last = last[..last.len().min(19)].replace('T', " ");
-        let role_cell = format_role_cell(s.role.as_deref(), s.provenance.as_deref());
-        let colab_cell = format_colab_cell(s.colab_group.as_deref());
         println!(
-            "{:<25} {:<12} {:<13} {:<16} {:<20} {:<16} {:<20} {}",
+            "{:<25} {:<12} {:<13} {:<16} {:<20} {}",
             name,
             ticket,
             provider_name,
             sid,
             last,
-            role_cell,
-            colab_cell,
             dir.display()
         );
     }
     0
 }
 
-/// Format the co-lab group cell for `twapp sessions` output.
-/// Returns `colab=<group>` when a group is set (truncating names longer than
-/// the column budget of 13 glyphs), or `-` when unset — mirroring how
-/// `format_role_cell` elides the empty case.
-pub fn format_colab_cell(colab_group: Option<&str>) -> String {
-    match colab_group.map(|g| g.trim()).filter(|g| !g.is_empty()) {
-        Some(group) => {
-            let short: String = group.chars().take(13).collect();
-            format!("colab={}", short)
-        }
-        None => "-".to_string(),
-    }
-}
-
-/// Format the role + provenance cell for `twapp sessions` output.
-/// Returns e.g. `[impl] spawned`, `[coor]`, `spawned`, or `-`.
-/// Role is shown as the first 4 chars in brackets; `spawned` only shown for
-/// provenance == "spawned" (user-provenance is the common case, so elided).
-pub fn format_role_cell(role: Option<&str>, provenance: Option<&str>) -> String {
-    let role_part = role
-        .map(|r| r.trim())
-        .filter(|r| !r.is_empty())
-        .map(|r| {
-            let short: String = r.chars().take(4).collect();
-            format!("[{}]", short)
-        });
-    let prov_part = match provenance {
-        Some("spawned") => Some("spawned"),
-        _ => None,
-    };
-    match (role_part, prov_part) {
-        (Some(r), Some(p)) => format!("{} {}", r, p),
-        (Some(r), None) => r,
-        (None, Some(p)) => p.to_string(),
-        (None, None) => "-".to_string(),
-    }
-}
-
 fn cmd_ticket_link(ticket_key: &str, dir: Option<&str>, github: bool) -> i32 {
-    let global_config = match config::GlobalConfig::load() {
-        Ok(cfg) => cfg,
+    if let Err(e) = config::GlobalConfig::load() {
+        eprintln!("Error loading config: {}", e);
+        return 1;
+    }
+
+    let ti = match ticket::fetch_ticket(ticket_key, github) {
+        Ok(t) => t,
         Err(e) => {
-            eprintln!("Error loading config: {}", e);
+            eprintln!("{}", e);
             return 1;
         }
-    };
-
-    let mut key = ticket_key.to_string();
-    let is_github = key.contains('#') || github;
-
-    let ti = if is_github {
-        ticket::fetch_github_issue(&key, global_config.github_repo.as_deref())
-    } else {
-        if key.chars().all(|c| c.is_ascii_digit()) {
-            if let Some(ref proj) = global_config.jira_project {
-                key = format!("{}-{}", proj, key);
-            }
-        }
-        ticket::fetch_jira_ticket(&key)
-    };
-
-    let ti = match ti {
-        Some(t) => t,
-        None => return 1,
     };
 
     let target_dir = if let Some(d) = dir {
@@ -1733,53 +1349,10 @@ fn cmd_ticket_create(summary: &str, dir: Option<&str>, issue_type: &str) -> i32 
         }
     };
 
-    let result = std::process::Command::new("jtk")
-        .args([
-            "issues",
-            "create",
-            "--project",
-            &project,
-            "--summary",
-            summary,
-            "--type",
-            issue_type,
-            "-o",
-            "json",
-        ])
-        .output();
-
-    let output = match result {
-        Ok(o) => o,
+    let new_key = match ticket::create_jira_ticket(&project, summary, issue_type) {
+        Ok(k) => k,
         Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                eprintln!("Error: 'jtk' not found. Install jira-ticket-cli first.");
-            } else {
-                eprintln!("Error creating ticket: {}", e);
-            }
-            return 1;
-        }
-    };
-
-    if !output.status.success() {
-        eprintln!(
-            "Error creating ticket: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        return 1;
-    }
-
-    let create_data: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error parsing response: {}", e);
-            return 1;
-        }
-    };
-
-    let new_key = match create_data.get("key").and_then(|k| k.as_str()) {
-        Some(k) => k.to_string(),
-        None => {
-            eprintln!("Error: Could not parse created ticket key from response");
+            eprintln!("{}", e);
             return 1;
         }
     };
@@ -1788,9 +1361,9 @@ fn cmd_ticket_create(summary: &str, dir: Option<&str>, issue_type: &str) -> i32 
 
     // Fetch full details and write ticket file
     let ti = match ticket::fetch_jira_ticket(&new_key) {
-        Some(t) => t,
-        None => {
-            eprintln!("Warning: Created {} but could not fetch details.", new_key);
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Warning: Created {} but could not fetch details: {}", new_key, e);
             return 1;
         }
     };
@@ -1843,20 +1416,12 @@ fn cmd_ticket_refresh(dir: Option<&str>) -> i32 {
 
     println!("Refreshing {} ({})...", old_ticket.key, old_ticket.source);
 
-    let ti = match old_ticket.source.as_str() {
-        "github" => {
-            let global_config = config::GlobalConfig::load().ok();
-            ticket::fetch_github_issue(
-                &old_ticket.key,
-                global_config.as_ref().and_then(|c| c.github_repo.as_deref()),
-            )
+    let ti = match ticket::refresh_ticket_info(&old_ticket) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 1;
         }
-        _ => ticket::fetch_jira_ticket(&old_ticket.key),
-    };
-
-    let ti = match ti {
-        Some(t) => t,
-        None => return 1,
     };
 
     if let Ok(json) = serde_json::to_string_pretty(&ti) {
@@ -2373,154 +1938,6 @@ fn cmd_dev_reload(pid: Option<u32>, cwd: &str, gui_src: Option<&str>) -> i32 {
     }
 }
 
-/// Normalize a `--role` argument: reject empty/whitespace-only, otherwise pass through.
-pub fn validate_role(role: Option<String>) -> Result<Option<String>, String> {
-    match role {
-        Some(r) if r.trim().is_empty() => Err("--role cannot be empty.".to_string()),
-        other => Ok(other),
-    }
-}
-
-/// Decide the `colab_group` value for a new session given the CLI flags.
-///
-/// Precedence:
-/// 1. Explicit `--colab-group <name>` wins (empty/whitespace rejected).
-/// 2. `--from-file` present & no explicit flag → try to auto-inherit from
-///    the spawning session by walking upward from cwd looking for a
-///    `.twapp-session.json`. If one is found with a populated `colab_group`,
-///    inherit it verbatim. If the spawning session is missing, unreadable,
-///    or has no `colab_group`, leave the field unset (None).
-/// 3. No `--from-file` and no explicit flag → None.
-///
-/// The "user types `twapp work` directly" path (no `--from-file`) never
-/// auto-inherits; group membership has to be an explicit choice so
-/// manually-started sessions default to the ungrouped "My sessions" bucket.
-pub fn resolve_colab_group(
-    arg: Option<String>,
-    has_from_file: bool,
-) -> Result<Option<String>, String> {
-    if let Some(raw) = arg {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err("--colab-group cannot be empty.".to_string());
-        }
-        return Ok(Some(trimmed.to_string()));
-    }
-    if has_from_file {
-        if let Ok(cwd) = std::env::current_dir() {
-            return Ok(find_spawning_session_colab_group(&cwd));
-        }
-    }
-    Ok(None)
-}
-
-/// Walk upward from `start` (inclusive) looking for a `.twapp-session.json`.
-/// When one is found, parse permissively and return its `colab_group` field
-/// (or `None` if the field is absent / the file is unparseable). Returns
-/// `None` if the walk reaches the filesystem root without finding a session
-/// file — auto-inheritance silently no-ops rather than erroring so direct
-/// `twapp work --from-file` invocations from a plain shell still succeed.
-pub fn find_spawning_session_colab_group(start: &std::path::Path) -> Option<String> {
-    let mut current: &std::path::Path = start;
-    loop {
-        let candidate = current.join(".twapp-session.json");
-        if candidate.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&candidate) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                    return v
-                        .get("colab_group")
-                        .and_then(|x| x.as_str())
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.to_string());
-                }
-            }
-            return None;
-        }
-        match current.parent() {
-            Some(parent) if parent != current => current = parent,
-            _ => return None,
-        }
-    }
-}
-
-/// Decide the provenance value for a new session given the CLI flags.
-///
-/// Precedence: explicit `--provenance` wins; then `--spawned` → `"spawned"`;
-/// then `--from-file` implies `"spawned"`; otherwise `"user"`.
-/// Errors if `--provenance` and `--spawned` are both set with disagreeing values.
-///
-/// Accepts any non-empty string for `--provenance` (not allow-listed). The
-/// current consumers (`format_role_cell`, UI) treat the two known values
-/// `"user"` and `"spawned"` specially and render anything else as
-/// not-spawned. Keeping this free-form leaves room for later provenance
-/// kinds (e.g. `"imported"`) without a schema bump; typos like
-/// `--provenance spawnd` will ship verbatim and render as not-spawned.
-pub fn resolve_provenance(
-    provenance_arg: Option<String>,
-    spawned_flag: bool,
-    has_from_file: bool,
-) -> Result<String, String> {
-    if let Some(p) = provenance_arg {
-        let trimmed = p.trim();
-        if trimmed.is_empty() {
-            return Err("--provenance cannot be empty.".to_string());
-        }
-        if spawned_flag && trimmed != "spawned" {
-            return Err(format!(
-                "--spawned and --provenance {} disagree; pass only one.",
-                trimmed
-            ));
-        }
-        return Ok(trimmed.to_string());
-    }
-    if spawned_flag || has_from_file {
-        Ok("spawned".to_string())
-    } else {
-        Ok("user".to_string())
-    }
-}
-
-/// Translate `--from-file <path>` into the equivalent provider `--run` command.
-/// Resolves `<path>` to an absolute path so later `cd`s don't break it,
-/// and returns an error if the file does not exist.
-fn resolve_from_file(
-    path: &str,
-    provider: AgentProvider,
-    model: Option<&str>,
-) -> Result<String, String> {
-    let raw = std::path::PathBuf::from(path);
-    let abs = if raw.is_absolute() {
-        raw
-    } else {
-        let cwd = std::env::current_dir()
-            .map_err(|e| format!("cannot resolve current directory: {}", e))?;
-        cwd.join(&raw)
-    };
-    let resolved = abs.canonicalize().unwrap_or(abs.clone());
-    if !resolved.is_file() {
-        return Err(format!(
-            "--from-file does not exist or is not a regular file: {}",
-            resolved.display()
-        ));
-    }
-    let abs_str = resolved.to_string_lossy();
-    let prompt = format!("Read {} and execute.", abs_str);
-    match provider {
-        AgentProvider::Claude => {
-            // Keep the established Claude spawn command byte-for-byte stable.
-            let escaped = session::shell_escape_single(&prompt);
-            Ok(format!(
-                "claude --dangerously-skip-permissions '{}'",
-                escaped
-            ))
-        }
-        AgentProvider::Codex => Ok(build_codex_run_command(".", model, Some(&prompt))),
-        AgentProvider::Antigravity => {
-            Err("--from-file is not supported by the Antigravity harness".to_string())
-        }
-    }
-}
-
 /// If `cmd` begins with a `cd <dir> && ...` pattern, return the `<dir>`.
 /// Keeps parsing intentionally small: matches a leading `cd `, supports a
 /// single-quoted or unquoted bare-word directory, and requires ` && ` right
@@ -2608,494 +2025,29 @@ mod cd_prefix_tests {
 }
 
 #[cfg(test)]
-mod from_file_tests {
-    use super::{resolve_from_file, AgentProvider};
-
-    #[test]
-    fn missing_file_errors() {
-        let err = resolve_from_file(
-            "/tmp/definitely-not-a-real-twapp-test-file-xyz.md",
-            AgentProvider::Codex,
-            None,
-        )
-            .err()
-            .expect("expected an error");
-        assert!(err.contains("does not exist"), "got: {}", err);
-    }
-
-    #[test]
-    fn existing_file_produces_claude_command_with_absolute_path() {
-        let tmp = std::env::temp_dir().join(format!(
-            "twapp-from-file-test-{}.md",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::write(&tmp, "briefing body").unwrap();
-        let canonical = tmp.canonicalize().unwrap();
-        let cmd = resolve_from_file(tmp.to_str().unwrap(), AgentProvider::Claude, None).unwrap();
-        assert!(cmd.starts_with("claude --dangerously-skip-permissions '"));
-        assert!(
-            cmd.contains(&format!("Read {}", canonical.display())),
-            "got: {}",
-            cmd
-        );
-        assert!(cmd.trim_end().ends_with("and execute.'"));
-        let _ = std::fs::remove_file(&tmp);
-    }
-
-    #[test]
-    fn relative_path_is_resolved_to_absolute() {
-        let dir = std::env::temp_dir().join(format!(
-            "twapp-from-file-reldir-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("brief.md");
-        std::fs::write(&file, "x").unwrap();
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&dir).unwrap();
-        let cmd = resolve_from_file("brief.md", AgentProvider::Claude, None).unwrap();
-        std::env::set_current_dir(prev_cwd).unwrap();
-        assert!(
-            cmd.contains("/brief.md"),
-            "expected absolute path in command, got: {}",
-            cmd
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn codex_receives_metacharacter_path_as_one_literal_prompt_argument() {
-        use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
-
-        let dir = std::env::temp_dir().join(format!(
-            "twapp-from-file-codex-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let bin_dir = dir.join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-
-        let briefing = dir.join("brief ' $(touch pwned) ; $HOME `uname`.md");
-        std::fs::write(&briefing, "briefing body").unwrap();
-        let canonical = briefing.canonicalize().unwrap();
-
-        let fake_codex = bin_dir.join("codex");
-        std::fs::write(&fake_codex, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
-        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_codex, permissions).unwrap();
-
-        let command = resolve_from_file(
-            briefing.to_str().unwrap(),
-            AgentProvider::Codex,
-            Some("gpt-6-astra"),
-        )
-        .unwrap();
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(&command)
-            .current_dir(&dir)
-            .env("PATH", &bin_dir)
-            .output()
-            .unwrap();
-
-        assert!(output.status.success(), "command failed: {}", command);
-        assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            format!(
-                "-c\nmodel=gpt-6-astra\n-C\n.\nRead {} and execute.\n",
-                canonical.display()
-            )
-        );
-        assert!(
-            !dir.join("pwned").exists(),
-            "the shell interpolated briefing-path contents"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod provenance_tests {
-    use super::{format_role_cell, resolve_provenance, validate_role};
-
-    #[test]
-    fn empty_role_errors() {
-        let err = validate_role(Some("".to_string())).unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-    }
-
-    #[test]
-    fn whitespace_role_errors() {
-        let err = validate_role(Some("   ".to_string())).unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-    }
-
-    #[test]
-    fn populated_role_passes_through_verbatim() {
-        assert_eq!(
-            validate_role(Some("coordinator".to_string())).unwrap(),
-            Some("coordinator".to_string())
-        );
-    }
-
-    #[test]
-    fn missing_role_is_none() {
-        assert_eq!(validate_role(None).unwrap(), None);
-    }
-
-    #[test]
-    fn direct_work_defaults_to_user() {
-        assert_eq!(resolve_provenance(None, false, false).unwrap(), "user");
-    }
-
-    #[test]
-    fn spawned_flag_sets_spawned() {
-        assert_eq!(resolve_provenance(None, true, false).unwrap(), "spawned");
-    }
-
-    #[test]
-    fn from_file_implies_spawned_provenance() {
-        assert_eq!(resolve_provenance(None, false, true).unwrap(), "spawned");
-    }
-
-    #[test]
-    fn explicit_provenance_user_overrides_from_file_default() {
-        assert_eq!(
-            resolve_provenance(Some("user".to_string()), false, true).unwrap(),
-            "user"
-        );
-    }
-
-    #[test]
-    fn explicit_provenance_verbatim_passes_through() {
-        assert_eq!(
-            resolve_provenance(Some("audit".to_string()), false, false).unwrap(),
-            "audit"
-        );
-    }
-
-    #[test]
-    fn empty_provenance_errors() {
-        let err = resolve_provenance(Some("  ".to_string()), false, false).unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-    }
-
-    #[test]
-    fn provenance_and_spawned_disagreement_errors() {
-        let err = resolve_provenance(Some("user".to_string()), true, false).unwrap_err();
-        assert!(err.contains("disagree"), "got: {}", err);
-    }
-
-    #[test]
-    fn provenance_spawned_plus_spawned_flag_is_fine() {
-        assert_eq!(
-            resolve_provenance(Some("spawned".to_string()), true, false).unwrap(),
-            "spawned"
-        );
-    }
-
-    #[test]
-    fn role_cell_both_set() {
-        assert_eq!(
-            format_role_cell(Some("implementer"), Some("spawned")),
-            "[impl] spawned"
-        );
-    }
-
-    #[test]
-    fn role_cell_short_role_preserved() {
-        assert_eq!(format_role_cell(Some("qa"), Some("spawned")), "[qa] spawned");
-    }
-
-    #[test]
-    fn role_cell_role_only() {
-        assert_eq!(format_role_cell(Some("coordinator"), Some("user")), "[coor]");
-    }
-
-    #[test]
-    fn role_cell_none_shown_as_dash() {
-        assert_eq!(format_role_cell(None, None), "-");
-        assert_eq!(format_role_cell(None, Some("user")), "-");
-    }
-
-    #[test]
-    fn role_cell_provenance_only() {
-        assert_eq!(format_role_cell(None, Some("spawned")), "spawned");
-    }
-}
-
-#[cfg(test)]
-mod colab_group_tests {
-    use super::{
-        create_session_core, find_spawning_session_colab_group, format_colab_cell,
-        resolve_colab_group,
-    };
-    use std::fs;
-
-    fn unique_tmp(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("twapp-colab-{}-{}", tag, uuid::Uuid::new_v4()))
-    }
-
-    fn write_session_json(dir: &std::path::Path, body: &serde_json::Value) {
-        fs::create_dir_all(dir).unwrap();
-        fs::write(
-            dir.join(".twapp-session.json"),
-            serde_json::to_string_pretty(body).unwrap(),
-        )
-        .unwrap();
-    }
-
-    // ---- empty_colab_group_errors ------------------------------------------
-
-    #[test]
-    fn empty_colab_group_errors() {
-        let err = resolve_colab_group(Some("".to_string()), false).unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-
-        let err = resolve_colab_group(Some("   ".to_string()), false).unwrap_err();
-        assert!(err.contains("cannot be empty"), "got: {}", err);
-    }
-
-    #[test]
-    fn explicit_colab_group_passes_through_trimmed() {
-        assert_eq!(
-            resolve_colab_group(Some("  feature-x  ".to_string()), false).unwrap(),
-            Some("feature-x".to_string())
-        );
-    }
-
-    #[test]
-    fn no_flag_and_no_from_file_returns_none() {
-        // User types `twapp work --name foo` with no from-file: they get an
-        // ungrouped session, not some accidental inheritance from whatever
-        // shell they happen to be in.
-        assert_eq!(resolve_colab_group(None, false).unwrap(), None);
-    }
-
-    // ---- from_file_inherits_colab_group_from_parent_session ----------------
-
-    #[test]
-    fn from_file_inherits_colab_group_from_parent_session() {
-        let parent = unique_tmp("parent");
-        write_session_json(
-            &parent,
-            &serde_json::json!({
-                "session_id": "p-abc",
-                "name": "parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": parent.to_string_lossy(),
-                "created": "2026-04-20T00:00:00Z",
-                "last_resumed": null,
-                "colab_group": "feature-x",
-            }),
-        );
-
-        let child = parent.join("nested").join("worker");
-        fs::create_dir_all(&child).unwrap();
-
-        let found = find_spawning_session_colab_group(&child);
-        assert_eq!(
-            found.as_deref(),
-            Some("feature-x"),
-            "nested child should discover parent's colab_group"
-        );
-
-        let _ = fs::remove_dir_all(&parent);
-    }
-
-    // ---- from_file_without_parent_colab_group_leaves_field_unset -----------
-
-    #[test]
-    fn from_file_without_parent_colab_group_leaves_field_unset() {
-        // Case 1: no session file anywhere on the walk up.
-        let orphan = unique_tmp("orphan").join("nested");
-        fs::create_dir_all(&orphan).unwrap();
-        assert_eq!(find_spawning_session_colab_group(&orphan), None);
-
-        // Case 2: parent exists but has no colab_group.
-        let parent = unique_tmp("parent-no-colab");
-        write_session_json(
-            &parent,
-            &serde_json::json!({
-                "session_id": "p-abc",
-                "name": "parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": parent.to_string_lossy(),
-                "created": "2026-04-20T00:00:00Z",
-                "last_resumed": null,
-            }),
-        );
-        assert_eq!(find_spawning_session_colab_group(&parent), None);
-
-        // Case 3: parent has an empty colab_group string — treat as unset so
-        // a stale/empty value can't accidentally leak to the child.
-        let parent_empty = unique_tmp("parent-empty-colab");
-        write_session_json(
-            &parent_empty,
-            &serde_json::json!({
-                "session_id": "p-abc",
-                "name": "parent",
-                "color": "",
-                "ticket_key": null,
-                "claude_cwd": parent_empty.to_string_lossy(),
-                "created": "2026-04-20T00:00:00Z",
-                "last_resumed": null,
-                "colab_group": "   ",
-            }),
-        );
-        assert_eq!(find_spawning_session_colab_group(&parent_empty), None);
-
-        let _ = fs::remove_dir_all(&orphan);
-        let _ = fs::remove_dir_all(&parent);
-        let _ = fs::remove_dir_all(&parent_empty);
-    }
-
-    // ---- work_colab_group_flag_sets_field ----------------------------------
-    //
-    // End-to-end contract: an explicit `--colab-group <name>` on `twapp work`
-    // reaches the serialized `.twapp-session.json` with the exact string
-    // passed in. We exercise `create_session_core` because the CLI layer is
-    // a thin argument-unpacking shell over it, and assert via read-back.
-
-    #[test]
-    fn work_colab_group_flag_sets_field() {
-        use crate::cli::session;
-
-        // End-to-end at the SessionData layer the same way
-        // `launch_writes_role_coordinator` does: construct the SessionData
-        // the way `create_session_core` would when handed a --colab-group
-        // argument, round-trip via write_session / read_session, and
-        // assert the field survives. Stays hermetic (doesn't touch global
-        // config / HOME) while still exercising the contract that matters:
-        // `.twapp-session.json` carries `colab_group` verbatim.
-
-        let tmp = unique_tmp("work-flag");
-        fs::create_dir_all(&tmp).unwrap();
-
-        let data = session::SessionData {
-            session_id: "wk-1".to_string(),
-            name: "worker".to_string(),
-            color: String::new(),
-            ticket_key: None,
-            claude_cwd: tmp.to_string_lossy().to_string(),
-            created: "2026-04-20T00:00:00Z".to_string(),
-            last_resumed: None,
-            provider: Some(session::AgentProvider::Claude),
-            codex_session_id: None,
-            codex_cwd: None,
-            antigravity_session_id: None,
-            antigravity_cwd: None,
-            migration_source_provider: None,
-            forked_from: None,
-            imported: None,
-            imported_from: None,
-            use_chrome: None,
-            override_terminal_theme: None,
-            role: Some("implementer".to_string()),
-            provenance: Some("spawned".to_string()),
-            colab_group: Some("feature-x".to_string()),
-        };
-        session::write_session(&tmp, &data).expect("write_session");
-
-        let readback = session::read_session(&tmp).expect("read_session");
-        assert_eq!(readback.colab_group.as_deref(), Some("feature-x"));
-
-        // Also verify the literal JSON shape — external tools `grep`ing the
-        // file rely on `colab_group` being a first-class top-level key.
-        let raw: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(tmp.join(".twapp-session.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            raw.get("colab_group").and_then(|v| v.as_str()),
-            Some("feature-x")
-        );
-
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    // ---- sessions-output format check --------------------------------------
-
-    #[test]
-    fn colab_cell_formats_group_inline() {
-        assert_eq!(format_colab_cell(Some("feature-x")), "colab=feature-x");
-    }
-
-    #[test]
-    fn colab_cell_none_shown_as_dash() {
-        assert_eq!(format_colab_cell(None), "-");
-        assert_eq!(format_colab_cell(Some("")), "-");
-        assert_eq!(format_colab_cell(Some("   ")), "-");
-    }
-
-    #[test]
-    fn colab_cell_long_group_truncated() {
-        // Column budget is intentionally small; truncate long group names
-        // rather than letting them blow out the row width.
-        let cell = format_colab_cell(Some("a-very-long-coordinator-name"));
-        assert!(cell.starts_with("colab="));
-        assert!(
-            cell.len() <= "colab=".len() + 13,
-            "unexpected length: {}",
-            cell
-        );
-    }
-
-    // Silence "unused import" when create_session_core isn't called in this
-    // module — we keep it imported so future refactors land here.
-    #[allow(dead_code)]
-    fn _touch_create_session_core() {
-        let _ = create_session_core;
-    }
-}
-
-#[cfg(test)]
 mod provider_selection_tests {
     use super::*;
 
     const CLAUDE: AgentProvider = AgentProvider::Claude;
     const CODEX: AgentProvider = AgentProvider::Codex;
-    const AGY: AgentProvider = AgentProvider::Antigravity;
 
     #[test]
     fn explicit_provider_must_be_configured() {
-        assert!(resolve_new_session_provider(&[CLAUDE], Some(CODEX), false, true).is_err());
+        assert!(resolve_new_session_provider(&[CLAUDE], Some(CODEX), true).is_err());
         assert_eq!(
-            resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), false, true),
+            resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), true),
             Ok(ProviderChoice::Chosen(CODEX))
         );
-    }
-
-    #[test]
-    fn from_file_supports_codex_and_preserves_claude_as_the_default() {
-        assert_eq!(
-            resolve_new_session_provider(&[CLAUDE, CODEX], Some(CODEX), true, true),
-            Ok(ProviderChoice::Chosen(CODEX))
-        );
-        assert_eq!(
-            resolve_new_session_provider(&[CLAUDE, CODEX], None, true, true),
-            Ok(ProviderChoice::Chosen(CLAUDE))
-        );
-        assert_eq!(
-            resolve_new_session_provider(&[CODEX, AGY], None, true, true),
-            Ok(ProviderChoice::Chosen(CODEX))
-        );
-        assert!(resolve_new_session_provider(&[AGY], Some(AGY), true, true).is_err());
     }
 
     #[test]
     fn a_single_configured_harness_is_chosen_without_prompting() {
         assert_eq!(
-            resolve_new_session_provider(&[CODEX], None, false, true),
+            resolve_new_session_provider(&[CODEX], None, true),
             Ok(ProviderChoice::Chosen(CODEX))
         );
         assert_eq!(
-            resolve_new_session_provider(&[CODEX], None, false, false),
+            resolve_new_session_provider(&[CODEX], None, false),
             Ok(ProviderChoice::Chosen(CODEX))
         );
     }
@@ -3103,10 +2055,10 @@ mod provider_selection_tests {
     #[test]
     fn several_configured_harnesses_prompt_only_when_interactive() {
         assert_eq!(
-            resolve_new_session_provider(&[CLAUDE, CODEX], None, false, true),
+            resolve_new_session_provider(&[CLAUDE, CODEX], None, true),
             Ok(ProviderChoice::NeedsPrompt)
         );
-        let error = resolve_new_session_provider(&[CLAUDE, CODEX], None, false, false).unwrap_err();
+        let error = resolve_new_session_provider(&[CLAUDE, CODEX], None, false).unwrap_err();
         assert!(error.contains("--provider"), "{}", error);
         assert!(error.contains("claude, codex"), "{}", error);
     }

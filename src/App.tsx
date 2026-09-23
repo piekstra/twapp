@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { SearchAddon } from "@xterm/addon-search";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
@@ -16,22 +14,17 @@ import yaml from "js-yaml";
 import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 import { applyThemeColor, getDarkModeAccentColor } from "./color";
-import type { AgentProvider, AppConfig, GlobalConfig, TicketInfo, Note, QuickPrompt, MonitorStatusInfo, MonitorLogEntry, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
+import type { AgentProvider, AppConfig, GlobalConfig, TicketInfo, Note, QuickPrompt, PromptSection, PromptStore, TabInfo, ThemeMode, SessionHistoryEvent } from "./types";
 import { lightTheme, darkTheme, getLightTheme, getDarkTheme } from "./types";
 import { formatTicketBadge, formatTime } from "./utils/format";
 import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, isAbsolutePath } from "./utils/file";
 import { remarkAutolinkFilePaths } from "./utils/markdown";
 import { buildSessionFieldsArgs } from "./utils/session";
 import { isNewerVersion } from "./utils/version";
-import { canSendMessage } from "./utils/colab";
 import { renderJsonNode, renderYamlNode } from "./components/FilePreview/renderers";
 import PromptSections from "./components/PromptSections";
 import type { EditingPromptState } from "./components/PromptSections";
 import SessionLauncher from "./components/SessionLauncher";
-import MessageComposer from "./components/MessageComposer";
-import UrgentInbox from "./components/UrgentInbox";
-import FleetPane from "./components/FleetPane";
-import TimelinePane from "./components/TimelinePane";
 
 
 const SESSION_COLORS = [
@@ -103,17 +96,13 @@ function App() {
   const [ticketExpanded, setTicketExpanded] = useState(false);
   const [ticketSectionExpanded, setTicketSectionExpanded] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  // Role + colab_group are not in AppConfig — they live in the session file and
-  // the fleet pane gates on them. Loaded alongside get_app_config at boot and
-  // refreshed after session-field edits that touch these values.
-  const [sessionRole, setSessionRole] = useState<string | null>(null);
-  const [sessionColabGroup, setSessionColabGroup] = useState<string | null>(null);
 
   // Ticket linking state
   const [linkTicketKey, setLinkTicketKey] = useState("");
   const [linkingTicket, setLinkingTicket] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [refreshingTicket, setRefreshingTicket] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // Fork dialog state
   const [showForkDialog, setShowForkDialog] = useState(false);
@@ -177,50 +166,10 @@ function App() {
   // Actions dropdown
   const [actionsOpen, setActionsOpen] = useState(false);
 
-  // Message composer modal
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composerToast, setComposerToast] = useState<string | null>(null);
-  const composerToastTimer = useRef<number | null>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
   // Session settings popover
   const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
-
-  // Monitor state
-  const [monitorStatus, setMonitorStatus] = useState<MonitorStatusInfo | null>(null);
-  const [monitorExpanded, setMonitorExpanded] = useState(false);
-  const monitorTermRef = useRef<HTMLDivElement>(null);
-  const monitorTerm = useRef<Terminal | null>(null);
-  const monitorFit = useRef<FitAddon | null>(null);
-  const [monitorDuration, setMonitorDuration] = useState("");
-  const [monitorInput, setMonitorInput] = useState("");
-  const monitorInputRef = useRef<HTMLInputElement>(null);
-
-  // Monitor docking
-  type MonitorPosition = "bottom" | "top" | "left" | "right";
-  const [monitorPosition, setMonitorPosition] = useState<MonitorPosition>("bottom");
-  const [monitorSize, setMonitorSize] = useState(300);
-  const monitorContainerRef = useRef<HTMLDivElement>(null);
-  const monitorOutputBuffer = useRef<string>("");
-
-  // Monitor enabled
-  const [monitorEnabled, setMonitorEnabled] = useState(false);
-
-  // Monitor float mode
-  const [monitorFloat, setMonitorFloat] = useState(false);
-  const monitorBarRef = useRef<HTMLDivElement>(null);
-
-  // Monitor search
-  const monitorSearch = useRef<SearchAddon | null>(null);
-  const [monitorSearchVisible, setMonitorSearchVisible] = useState(false);
-  const [monitorSearchQuery, setMonitorSearchQuery] = useState("");
-  const monitorSearchInputRef = useRef<HTMLInputElement>(null);
-
-  // Monitor log history
-  const [monitorLogsOpen, setMonitorLogsOpen] = useState(false);
-  const [monitorLogs, setMonitorLogs] = useState<MonitorLogEntry[]>([]);
-  const monitorLogsRef = useRef<HTMLButtonElement>(null);
-  const [monitorLogsPos, setMonitorLogsPos] = useState<{ top: number; left: number } | null>(null);
 
   // Terminal tabs
   const [tabs, setTabs] = useState<{ id: string; name: string }[]>([{ id: "main", name: "Main" }]);
@@ -724,34 +673,6 @@ function App() {
     };
   }, []);
 
-  // Poll session-info so live edits to `.twapp-session.json` (notably
-  // `twapp coordinator claim` flipping `role` from null → "coordinator")
-  // propagate to the running window without a reload. The file is tiny
-  // (~200 bytes) and `role` changes are rare, so a 2s poll is cheap.
-  // Silent on failure — a missing/unparseable session file just means
-  // "no fleet pane here" and the next tick will retry.
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const data = await invoke<Record<string, unknown> | null>("get_session_info");
-        if (cancelled) return;
-        const nextRole = data && typeof data.role === "string" ? data.role : null;
-        const nextGroup = data && typeof data.colab_group === "string" ? data.colab_group : null;
-        setSessionRole((prev) => (prev !== nextRole ? nextRole : prev));
-        setSessionColabGroup((prev) => (prev !== nextGroup ? nextGroup : prev));
-      } catch {
-        /* ignore; next tick will retry */
-      }
-    };
-    poll();
-    const id = setInterval(poll, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
-
   // Load theme preference from backend + listen for menu events
   useEffect(() => {
     invoke<string>("get_theme_preference")
@@ -765,128 +686,14 @@ function App() {
     return () => { unlisten.then((u) => u()); };
   }, []);
 
-  // Load monitor position/size/float preferences
-  useEffect(() => {
-    invoke<string>("get_monitor_position")
-      .then((pos) => setMonitorPosition(pos as MonitorPosition))
-      .catch(() => {});
-    invoke<number>("get_monitor_size")
-      .then((size) => setMonitorSize(size))
-      .catch(() => {});
-    invoke<boolean>("get_monitor_float")
-      .then((f) => setMonitorFloat(f))
-      .catch(() => {});
-    invoke<boolean>("get_monitor_enabled")
-      .then((enabled) => setMonitorEnabled(enabled))
-      .catch(() => {});
-  }, []);
-
-  // Monitor event listeners
-  useEffect(() => {
-    // Fetch initial monitor status (in case a monitor was already running)
-    invoke<MonitorStatusInfo>("get_monitor_status")
-      .then((info) => {
-        if (info.status !== "idle") setMonitorStatus(info);
-      })
-      .catch(() => {});
-
-    const unlistenOutput = listen<string>("monitor-output", (event) => {
-      monitorOutputBuffer.current += event.payload;
-      if (monitorTerm.current) {
-        monitorTerm.current.write(event.payload);
-      }
-    });
-
-    const unlistenStatus = listen<MonitorStatusInfo>("monitor-status", (event) => {
-      setMonitorStatus(event.payload);
-    });
-
-    return () => {
-      unlistenOutput.then((u) => u());
-      unlistenStatus.then((u) => u());
-    };
-  }, []);
-
-  // Monitor duration timer
-  useEffect(() => {
-    if (monitorStatus?.status !== "running" || !monitorStatus?.started_at) {
-      return;
-    }
-    const updateDuration = () => {
-      const start = new Date(monitorStatus.started_at!).getTime();
-      const elapsed = Math.floor((Date.now() - start) / 1000);
-      const m = Math.floor(elapsed / 60);
-      const s = elapsed % 60;
-      setMonitorDuration(m > 0 ? `${m}m ${s}s` : `${s}s`);
-    };
-    updateDuration();
-    const interval = setInterval(updateDuration, 1000);
-    return () => clearInterval(interval);
-  }, [monitorStatus?.status, monitorStatus?.started_at]);
-
-  // For left/right docking, force expanded
-  const isHorizontalDock = monitorPosition === "bottom" || monitorPosition === "top";
-  const monitorShowOutput = monitorFloat
-    ? monitorExpanded
-    : (isHorizontalDock ? monitorExpanded : true);
-
-  // Initialize/dispose monitor terminal when output area is visible
-  useEffect(() => {
-    if (monitorShowOutput && monitorTermRef.current && !monitorTerm.current) {
-      const isDark = document.documentElement.classList.contains("dark");
-      const term = new Terminal({
-        fontSize: 12,
-        fontFamily: terminalInstance.current?.options.fontFamily || "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
-        theme: isDark ? darkTheme : lightTheme,
-        scrollback: 5000,
-        disableStdin: true,
-        convertEol: true,
-        cursorStyle: "bar",
-        cursorBlink: false,
-      });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      const search = new SearchAddon();
-      term.loadAddon(search);
-      term.open(monitorTermRef.current);
-      // Replay buffered output from before this terminal existed
-      if (monitorOutputBuffer.current) {
-        term.write(monitorOutputBuffer.current);
-      }
-      requestAnimationFrame(() => fit.fit());
-      monitorTerm.current = term;
-      monitorFit.current = fit;
-      monitorSearch.current = search;
-    } else if (!monitorShowOutput && monitorTerm.current) {
-      monitorTerm.current.dispose();
-      monitorTerm.current = null;
-      monitorFit.current = null;
-      monitorSearch.current = null;
-    }
-  }, [monitorShowOutput, monitorPosition, monitorStatus?.status]);
-
-  // Refit both terminals when monitor size, position, sidebar, or expansion changes
+  // Refit all terminals when the sidebar or tab set changes
   useEffect(() => {
     const timeout = setTimeout(() => {
       fitAddon.current?.fit();
-      monitorFit.current?.fit();
-      // Refit all tab terminals too
       tabInstances.current.forEach((tab) => tab.fit?.fit());
-    }, monitorFloat ? 300 : 50); // longer delay in float mode for CSS transition
+    }, 50);
     return () => clearTimeout(timeout);
-  }, [sidebarWidth, monitorExpanded, monitorPosition, monitorSize, monitorFloat, activeTabId, tabs]);
-
-  // Float mode: collapse on click outside the monitor bar
-  useEffect(() => {
-    if (!monitorFloat || !monitorExpanded) return;
-    const handler = (e: MouseEvent) => {
-      if (monitorBarRef.current && !monitorBarRef.current.contains(e.target as Node)) {
-        setMonitorExpanded(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [monitorFloat, monitorExpanded]);
+  }, [sidebarWidth, activeTabId, tabs]);
 
   // Apply theme whenever themeMode or accent color changes
   useEffect(() => {
@@ -905,9 +712,6 @@ function App() {
 
       if (terminalInstance.current) {
         terminalInstance.current.options.theme = theme;
-      }
-      if (monitorTerm.current) {
-        monitorTerm.current.options.theme = theme;
       }
       // Apply theme to all tab terminals
       tabInstances.current.forEach((tab) => {
@@ -979,22 +783,6 @@ function App() {
     if (sessionSettingsOpen) loadSessionFields();
   }, [sessionSettingsOpen]);
 
-  // Close monitor logs dropdown on outside click
-  useEffect(() => {
-    if (!monitorLogsOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      // Don't close if clicking the toggle button itself
-      if (monitorLogsRef.current && monitorLogsRef.current.contains(target)) return;
-      // Don't close if clicking inside the dropdown (portaled)
-      const dropdown = document.querySelector(".monitor-logs-dropdown");
-      if (dropdown && dropdown.contains(target)) return;
-      setMonitorLogsOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [monitorLogsOpen]);
-
   // File preview keyboard shortcuts (Escape, Cmd+F)
   useEffect(() => {
     if (!previewFile) return;
@@ -1047,11 +835,6 @@ function App() {
       if (e.key === "N" || (e.shiftKey && e.key === "n")) {
         e.preventDefault();
         invoke("fork_session", { ticketKey: null }).catch(console.error);
-      }
-      // Cmd+Shift+M — open message composer
-      if (e.key === "M" || (e.shiftKey && e.key === "m")) {
-        e.preventDefault();
-        setComposerOpen(true);
       }
       // Cmd+Shift+] — next tab
       if (e.key === "}" || (e.shiftKey && e.key === "]")) {
@@ -1398,6 +1181,7 @@ function App() {
 
   const handleRefreshTicket = async () => {
     setRefreshingTicket(true);
+    setRefreshError(null);
     try {
       if (!ticket) {
         // No ticket in UI — try reading from disk (CLI may have linked one)
@@ -1408,14 +1192,16 @@ function App() {
           try {
             const updated = await invoke<TicketInfo>("refresh_ticket");
             setTicket(updated);
-          } catch (_) { /* disk version is fine */ }
+          } catch (e) {
+            setRefreshError(e instanceof Error ? e.message : String(e));
+          }
         }
       } else {
         const info = await invoke<TicketInfo>("refresh_ticket");
         setTicket(info);
       }
     } catch (e) {
-      console.error("Failed to refresh ticket:", e);
+      setRefreshError(e instanceof Error ? e.message : String(e));
     } finally {
       setRefreshingTicket(false);
     }
@@ -1694,76 +1480,6 @@ function App() {
     invoke("write_to_pty", { data: text, tabId: activeTabId }).catch(console.error);
   };
 
-  // Monitor float mode toggle
-  const renderMonitorFloatToggle = () => {
-    const color = monitorFloat ? "var(--accent)" : "var(--text-muted)";
-    return (
-      <button
-        className={`monitor-float-toggle${monitorFloat ? " active" : ""}`}
-        title={monitorFloat ? "Switch to static mode" : "Switch to float mode"}
-        onClick={(e) => {
-          e.stopPropagation();
-          const next = !monitorFloat;
-          setMonitorFloat(next);
-          invoke("set_monitor_float", { float: next }).catch(() => {});
-        }}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14">
-          {monitorFloat ? (
-            <>
-              <rect x="1" y="4" width="7" height="7" rx="1" fill="none" stroke={color} strokeWidth="1" />
-              <rect x="5" y="1" width="7" height="7" rx="1" fill="var(--bg-secondary)" stroke={color} strokeWidth="1" />
-            </>
-          ) : (
-            <>
-              <rect x="0.5" y="0.5" width="13" height="13" rx="1.5" fill="none" stroke={color} strokeWidth="1" />
-              <line x1="7" y1="0.5" x2="7" y2="13.5" stroke={color} strokeWidth="1" />
-            </>
-          )}
-        </svg>
-      </button>
-    );
-  };
-
-  // Monitor position switcher — four edge-indicator icons
-  const renderMonitorPositionSwitcher = () => {
-    const positions: MonitorPosition[] = ["bottom", "top"];
-    return (
-      <div className="monitor-position-switcher" onClick={(e) => e.stopPropagation()}>
-        {positions.map((pos) => {
-          const isActive = monitorPosition === pos;
-          const color = isActive ? "var(--accent)" : "var(--text-muted)";
-          return (
-            <button
-              key={pos}
-              className={`monitor-pos-btn${isActive ? " active" : ""}`}
-              title={`Dock ${pos}`}
-              onClick={() => {
-                if (pos === monitorPosition) return;
-                // Dispose monitor terminal before switching — container shape changes drastically
-                if (monitorTerm.current) {
-                  monitorTerm.current.dispose();
-                  monitorTerm.current = null;
-                  monitorFit.current = null;
-                }
-                setMonitorPosition(pos);
-                invoke("set_monitor_position", { position: pos }).catch(() => {});
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <rect x="0.5" y="0.5" width="13" height="13" rx="1.5" fill="none" stroke={color} strokeWidth="1" />
-                {pos === "bottom" && <rect x="1" y="11" width="12" height="2.5" rx="0.5" fill={color} />}
-                {pos === "top" && <rect x="1" y="0.5" width="12" height="2.5" rx="0.5" fill={color} />}
-                {pos === "left" && <rect x="0.5" y="1" width="2.5" height="12" rx="0.5" fill={color} />}
-                {pos === "right" && <rect x="11" y="1" width="2.5" height="12" rx="0.5" fill={color} />}
-              </svg>
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
   // Launcher mode: show session list instead of terminal
   const isLauncherMode = appConfig && !appConfig.command && !appConfig.session_id;
   if (isLauncherMode) {
@@ -1784,7 +1500,7 @@ function App() {
   return (
     <div className="app">
       {/* Terminal */}
-      <div className="terminal-container" ref={monitorContainerRef}>
+      <div className="terminal-container">
         {reloading && (
           <div className="reload-banner">{rebuildStatus || "Rebuilding..."}</div>
         )}
@@ -1916,13 +1632,10 @@ function App() {
           ref={terminalRef}
           className="terminal"
           style={{
-            top: !monitorEnabled
-              ? (tabs.length > 1 ? 36 : 8)
-              : monitorPosition === "top" ? (monitorFloat ? (tabs.length > 1 ? 56 : 28) : (monitorShowOutput ? monitorSize + (tabs.length > 1 ? 28 : 0) : (tabs.length > 1 ? 56 : 28))) : (tabs.length > 1 ? 36 : 8),
+            top: tabs.length > 1 ? 36 : 8,
             left: 8,
             right: 0,
-            bottom: !monitorEnabled ? 0
-              : monitorPosition === "bottom" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 0,
+            bottom: 0,
             display: activeTabId === "main" ? undefined : "none",
           }}
         />
@@ -1933,324 +1646,14 @@ function App() {
             id={`tab-terminal-${tab.id}`}
             className="terminal"
             style={{
-              top: !monitorEnabled
-                ? (tabs.length > 1 ? 36 : 8)
-                : monitorPosition === "top" ? (monitorFloat ? (tabs.length > 1 ? 56 : 28) : (monitorShowOutput ? monitorSize + (tabs.length > 1 ? 28 : 0) : (tabs.length > 1 ? 56 : 28))) : (tabs.length > 1 ? 36 : 8),
+              top: tabs.length > 1 ? 36 : 8,
               left: 8,
               right: 0,
-              bottom: !monitorEnabled ? 0
-                : monitorPosition === "bottom" ? (monitorFloat ? 28 : (monitorShowOutput ? monitorSize : 28)) : 0,
+              bottom: 0,
               display: activeTabId === tab.id ? undefined : "none",
             }}
           />
         ))}
-        {monitorEnabled && <div
-          className={`monitor-bar dock-${monitorPosition}${monitorFloat ? " float-mode" : ""}`}
-          style={{
-            ...(isHorizontalDock
-              ? {
-                  [monitorPosition]: 0, left: 0, right: 0,
-                  height: monitorShowOutput ? monitorSize : 28,
-                }
-              : {
-                  [monitorPosition]: 0, top: 0, bottom: 0,
-                  width: monitorShowOutput ? monitorSize : 28,
-                }),
-            zIndex: monitorFloat ? 10 : 5,
-          }}
-          ref={monitorBarRef}
-        >
-          {/* Resize handle */}
-          {monitorShowOutput && (
-            <div
-              className={`monitor-resize-handle monitor-resize-${monitorPosition}`}
-              style={{
-                ...(monitorPosition === "bottom" ? { top: 0, left: 0, right: 0, height: 4, cursor: "row-resize" } :
-                  monitorPosition === "top" ? { bottom: 0, left: 0, right: 0, height: 4, cursor: "row-resize" } :
-                  monitorPosition === "left" ? { right: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize" } :
-                  { left: 0, top: 0, bottom: 0, width: 4, cursor: "col-resize" }),
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                const startPos = isHorizontalDock ? e.clientY : e.clientX;
-                const startSize = monitorSize;
-                const container = monitorContainerRef.current;
-                const maxSize = container
-                  ? (isHorizontalDock ? container.clientHeight * 0.6 : container.clientWidth * 0.5)
-                  : 600;
-                const minSize = isHorizontalDock ? 100 : 200;
-
-                let lastSize = startSize;
-                const onMouseMove = (ev: MouseEvent) => {
-                  const currentPos = isHorizontalDock ? ev.clientY : ev.clientX;
-                  const delta = (monitorPosition === "bottom" || monitorPosition === "right")
-                    ? startPos - currentPos
-                    : currentPos - startPos;
-                  lastSize = Math.max(minSize, Math.min(maxSize, startSize + delta));
-                  setMonitorSize(lastSize);
-                };
-
-                const onMouseUp = () => {
-                  document.removeEventListener("mousemove", onMouseMove);
-                  document.removeEventListener("mouseup", onMouseUp);
-                  invoke("set_monitor_size", { size: Math.round(lastSize) }).catch(() => {});
-                };
-
-                document.addEventListener("mousemove", onMouseMove);
-                document.addEventListener("mouseup", onMouseUp);
-              }}
-            />
-          )}
-          {/* Idle state — command input */}
-          {(!monitorStatus || monitorStatus.status === "idle") && (
-            <div className="monitor-bar-header">
-              <div className="monitor-bar-left monitor-input-row">
-                <span className="monitor-prompt-label">$</span>
-                <input
-                  ref={monitorInputRef}
-                  className="monitor-input"
-                  type="text"
-                  placeholder="Run a command..."
-                  value={monitorInput}
-                  onChange={(e) => setMonitorInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && monitorInput.trim()) {
-                      monitorOutputBuffer.current = "";
-                      invoke("start_monitor", { command: monitorInput.trim() }).catch(console.error);
-                      setMonitorInput("");
-                      setMonitorExpanded(true);
-                    }
-                  }}
-                />
-              </div>
-              <div className="monitor-bar-right">
-                {renderMonitorFloatToggle()}
-                {renderMonitorPositionSwitcher()}
-              </div>
-            </div>
-          )}
-          {/* Running/stopped/crashed state */}
-          {monitorStatus && monitorStatus.status !== "idle" && (
-            <>
-              <div
-                className="monitor-bar-header"
-                onClick={() => {
-                  if (isHorizontalDock || monitorFloat) setMonitorExpanded(!monitorExpanded);
-                }}
-              >
-                <div className="monitor-bar-left">
-                  <span className={`monitor-indicator ${monitorStatus.status}`} />
-                  <span className="monitor-command">{monitorStatus.command}</span>
-                  {monitorStatus.status === "running" && (
-                    <span className="monitor-duration">({monitorDuration})</span>
-                  )}
-                  {monitorStatus.status === "stopped" && (
-                    <span className="monitor-status-label">stopped</span>
-                  )}
-                  {monitorStatus.status === "crashed" && (
-                    <span className="monitor-status-label crashed">crashed</span>
-                  )}
-                </div>
-                <div className="monitor-bar-right">
-                  {monitorStatus.status === "running" && (
-                    <button
-                      className="monitor-stop-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        invoke("stop_monitor").catch(console.error);
-                      }}
-                    >
-                      Stop
-                    </button>
-                  )}
-                  {monitorStatus.status !== "running" && (
-                    <button
-                      className="monitor-dismiss-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        monitorOutputBuffer.current = "";
-                        setMonitorStatus(null);
-                        setMonitorExpanded(false);
-                      }}
-                      title="Dismiss"
-                    >
-                      ×
-                    </button>
-                  )}
-                  <button
-                    ref={monitorLogsRef}
-                    className="monitor-logs-toggle"
-                    title={monitorStatus.log_path ? `Log: ${monitorStatus.log_path}` : "Log files"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!monitorLogsOpen) {
-                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                        setMonitorLogsPos({
-                          top: monitorPosition === "bottom" ? rect.top - 4 : rect.bottom + 4,
-                          left: Math.max(8, rect.right - 280),
-                        });
-                        invoke<MonitorLogEntry[]>("list_monitor_logs")
-                          .then((logs) => setMonitorLogs(logs))
-                          .catch(() => {});
-                      }
-                      setMonitorLogsOpen(!monitorLogsOpen);
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <rect x="2" y="1" width="10" height="12" rx="1" stroke="var(--text-muted)" strokeWidth="1.2" />
-                      <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
-                      <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
-                      <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="var(--text-muted)" strokeWidth="1" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <button
-                    className="monitor-search-toggle"
-                    title="Search logs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const next = !monitorSearchVisible;
-                      setMonitorSearchVisible(next);
-                      if (next) setTimeout(() => monitorSearchInputRef.current?.focus(), 0);
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <circle cx="6" cy="6" r="4.5" stroke="var(--text-muted)" strokeWidth="1.2" />
-                      <line x1="9.5" y1="9.5" x2="13" y2="13" stroke="var(--text-muted)" strokeWidth="1.2" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  {renderMonitorFloatToggle()}
-                  {renderMonitorPositionSwitcher()}
-                  {(isHorizontalDock || monitorFloat) && (
-                    <span className={`monitor-chevron${monitorExpanded ? " expanded" : ""}`}>
-                      {monitorExpanded ? "▼" : "▶"}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {monitorSearchVisible && monitorShowOutput && (
-                <div className="monitor-search-bar">
-                  <input
-                    ref={monitorSearchInputRef}
-                    type="text"
-                    className="monitor-search-input"
-                    placeholder="Search logs..."
-                    value={monitorSearchQuery}
-                    onChange={(e) => {
-                      setMonitorSearchQuery(e.target.value);
-                      if (e.target.value && monitorSearch.current) {
-                        monitorSearch.current.findNext(e.target.value);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && monitorSearch.current && monitorSearchQuery) {
-                        if (e.shiftKey) {
-                          monitorSearch.current.findPrevious(monitorSearchQuery);
-                        } else {
-                          monitorSearch.current.findNext(monitorSearchQuery);
-                        }
-                      }
-                      if (e.key === "Escape") {
-                        setMonitorSearchVisible(false);
-                        setMonitorSearchQuery("");
-                        if (monitorSearch.current) monitorSearch.current.clearDecorations();
-                      }
-                    }}
-                  />
-                  <button
-                    className="monitor-search-nav-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (monitorSearch.current && monitorSearchQuery) monitorSearch.current.findPrevious(monitorSearchQuery);
-                    }}
-                    title="Previous (Shift+Enter)"
-                  >&#x25B2;</button>
-                  <button
-                    className="monitor-search-nav-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (monitorSearch.current && monitorSearchQuery) monitorSearch.current.findNext(monitorSearchQuery);
-                    }}
-                    title="Next (Enter)"
-                  >&#x25BC;</button>
-                  <button
-                    className="monitor-search-close"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMonitorSearchVisible(false);
-                      setMonitorSearchQuery("");
-                      if (monitorSearch.current) monitorSearch.current.clearDecorations();
-                    }}
-                    title="Close (Esc)"
-                  >&#xd7;</button>
-                </div>
-              )}
-              {monitorShowOutput && (
-                <div className="monitor-output" ref={monitorTermRef} />
-              )}
-            </>
-          )}
-        </div>}
-        {monitorLogsOpen && monitorLogsPos && createPortal(
-          <div
-            className="monitor-logs-dropdown"
-            style={{
-              position: "fixed",
-              ...(monitorPosition === "bottom"
-                ? { bottom: window.innerHeight - monitorLogsPos.top, left: monitorLogsPos.left }
-                : { top: monitorLogsPos.top, left: monitorLogsPos.left }),
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="monitor-logs-header">Log Files</div>
-            {monitorLogs.length === 0 && (
-              <div className="monitor-logs-empty">No log files found</div>
-            )}
-            {monitorLogs.map((log) => {
-              const isActive = monitorStatus?.log_path && log.filename === monitorStatus.log_path;
-              const date = new Date(log.modified);
-              const sizeKb = (log.size / 1024).toFixed(1);
-              return (
-                <div
-                  key={log.filename}
-                  className={`monitor-logs-item${isActive ? " active" : ""}`}
-                  onClick={() => {
-                    handleFilePreview(log.path);
-                    setMonitorLogsOpen(false);
-                  }}
-                  title={log.path}
-                >
-                  <div className="monitor-logs-item-row">
-                    <div className="monitor-logs-item-info">
-                      <div className="monitor-logs-item-name">
-                        {isActive && <span className="monitor-logs-active-dot" />}
-                        {log.filename.replace(".twapp-monitor-", "").replace(".log", "")}
-                      </div>
-                      <div className="monitor-logs-item-meta">
-                        {date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        {" \u00B7 "}
-                        {sizeKb}KB
-                      </div>
-                    </div>
-                    <button
-                      className="monitor-logs-reveal-btn"
-                      title="Reveal in Finder"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        invoke("reveal_in_finder", { path: log.path }).catch(console.error);
-                      }}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M2 1h5l3 3v6.5a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 012 10.5v-8A1.5 1.5 0 013.5 1z" stroke="currentColor" strokeWidth="1" fill="none" />
-                        <path d="M7 1v3h3" stroke="currentColor" strokeWidth="1" fill="none" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>,
-          document.body
-        )}
       </div>
 
       {/* Resize handle */}
@@ -2393,11 +1796,6 @@ function App() {
                     <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setShowForkDialog(true); }}>
                       Fork Session...
                     </button>
-                    {canSendMessage(sessionRole) && (
-                      <button className="actions-menu-item" onClick={() => { setActionsOpen(false); setComposerOpen(true); }}>
-                        Send Message... <span className="actions-menu-shortcut">⌘⇧M</span>
-                      </button>
-                    )}
                     <div className="actions-menu-separator" />
                     <button
                       className="actions-menu-item"
@@ -2511,21 +1909,6 @@ function App() {
             </div>
           </div>
         )}
-
-        {/* Coordinator fleet pane — renders only when role === "coordinator". */}
-        <FleetPane
-          isCoordinator={sessionRole === "coordinator"}
-          colabGroup={sessionColabGroup}
-        />
-
-        {/* Coordinator spawn/teardown timeline — renders only when role === "coordinator". */}
-        <TimelinePane
-          isCoordinator={sessionRole === "coordinator"}
-          colabGroup={sessionColabGroup}
-        />
-
-        {/* Urgent messages panel — renders only when session has a handle. */}
-        <UrgentInbox selfHandle={appConfig?.name && appConfig.name !== "twapp" ? appConfig.name : null} />
 
         {/* Notes Section */}
         <div className="notes-section-header">
@@ -2722,7 +2105,7 @@ function App() {
               {ticket && (
                 <button
                   className="ticket-change-button"
-                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); }}
+                  onClick={(e) => { e.stopPropagation(); setTicket(null); setLinkTicketKey(""); setLinkError(null); setRefreshError(null); }}
                   title="Change ticket"
                 >
                   Change
@@ -2730,6 +2113,9 @@ function App() {
               )}
             </div>
           </div>
+          {ticketSectionExpanded && refreshError && (
+            <div className="ticket-link-error">{refreshError}</div>
+          )}
           {ticketSectionExpanded && (ticket ? (
             <div className="ticket-content">
               <div className="ticket-badges">
@@ -3127,26 +2513,6 @@ function App() {
         </div>
       )}
 
-      <MessageComposer
-        open={composerOpen}
-        onClose={() => setComposerOpen(false)}
-        onSent={(id) => {
-          if (composerToastTimer.current !== null) {
-            window.clearTimeout(composerToastTimer.current);
-          }
-          setComposerToast(id);
-          composerToastTimer.current = window.setTimeout(() => {
-            setComposerToast(null);
-            composerToastTimer.current = null;
-          }, 4000);
-        }}
-      />
-
-      {composerToast && (
-        <div className="composer-toast" onClick={() => setComposerToast(null)}>
-          Message sent (id: {composerToast.slice(0, 6)})
-        </div>
-      )}
     </div>
   );
 }

@@ -1,0 +1,14 @@
+Key: ABC-123
+Summary: Add retry: backoff to the export job
+Status: In Progress
+Type: Story
+Priority: High
+Assignee: Pat Example
+Parent: ABC-100 — Parent epic
+Sprint: ABC Sprint 12
+Points: 3
+Description: The export job gives up after one failure.
+Note: this line starts with a label-like word.
+
+- Retry three times.
+- Status: should not be read as a field.

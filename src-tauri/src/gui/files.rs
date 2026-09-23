@@ -209,13 +209,3 @@ pub async fn install_update(download_url: String) -> Result<String, String> {
 
     Ok("Update installed successfully".to_string())
 }
-
-#[tauri::command]
-pub fn reveal_in_finder(path: String) -> Result<(), String> {
-    Command::new("open")
-        .arg("-R")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| format!("Failed to reveal: {}", e))?;
-    Ok(())
-}
