@@ -1,5 +1,4 @@
 use clap::Args;
-use std::io::Write;
 
 use crate::cli::session::AgentProvider;
 
@@ -53,53 +52,6 @@ pub struct GuiArgs {
     /// Override terminal theme with session color
     #[arg(long)]
     pub override_terminal_theme: bool,
-}
-
-// Per-tab PTY state
-pub struct TabPty {
-    pub writer: Option<Box<dyn Write + Send>>,
-    pub master: Option<Box<dyn portable_pty::MasterPty + Send>>,
-    pub child: Option<Box<dyn portable_pty::Child + Send>>,
-    pub reader_running: bool,
-    pub last_output_time: std::time::Instant,
-    pub total_bytes_read: usize,
-}
-
-impl Default for TabPty {
-    fn default() -> Self {
-        Self {
-            writer: None,
-            master: None,
-            child: None,
-            reader_running: false,
-            last_output_time: std::time::Instant::now(),
-            total_bytes_read: 0,
-        }
-    }
-}
-
-// Manages multiple terminal tabs within a session
-pub struct TabManager {
-    pub tabs: std::collections::HashMap<String, TabPty>,
-    pub tab_order: Vec<String>,
-}
-
-impl Default for TabManager {
-    fn default() -> Self {
-        Self {
-            tabs: std::collections::HashMap::new(),
-            tab_order: Vec::new(),
-        }
-    }
-}
-
-// Backwards-compatible alias — single-pty commands still use this
-pub type PtyState = TabManager;
-
-#[derive(Clone, serde::Serialize)]
-pub struct TabOutputEvent {
-    pub tab_id: String,
-    pub data: String,
 }
 
 #[derive(Clone, serde::Serialize)]

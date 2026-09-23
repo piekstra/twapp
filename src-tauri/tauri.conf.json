@@ -13,10 +13,12 @@
     "windows": [
       {
         "title": "twapp",
-        "width": 800,
-        "height": 600,
+        "width": 1400,
+        "height": 900,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "minWidth": 900,
+        "minHeight": 560
       }
     ],
     "security": {
@@ -25,7 +27,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,9 +39,6 @@
     ],
     "macOS": {
       "entitlements": "Entitlements.plist"
-    },
-    "resources": [
-      "icons/variants/*.icns"
-    ]
+    }
   }
 }

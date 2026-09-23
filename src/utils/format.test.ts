@@ -3,7 +3,7 @@ import { formatTicketBadge, formatRelativeTime, formatTime, formatBytes, shorten
 
 describe("formatTicketBadge", () => {
   it("passes Jira keys through as-is", () => {
-    expect(formatTicketBadge("MON-1234")).toBe("MON-1234");
+    expect(formatTicketBadge("ABC-1234")).toBe("ABC-1234");
   });
 
   it("strips org prefix from GitHub keys", () => {

@@ -528,7 +528,7 @@ mod tests {
         let dir = work_dir();
         std::fs::write(
             dir.join(".twapp-ticket.json"),
-            r#"{"key":"MON-1","title":"Wire the thing","status":"In Progress"}"#,
+            r#"{"key":"ABC-1","title":"Wire the thing","status":"In Progress"}"#,
         )
         .unwrap();
         std::fs::write(
@@ -545,7 +545,7 @@ mod tests {
             &roots_in(&dir),
         );
 
-        assert!(prompt.contains("Ticket: MON-1 Wire the thing [In Progress]"), "{}", prompt);
+        assert!(prompt.contains("Ticket: ABC-1 Wire the thing [In Progress]"), "{}", prompt);
         assert!(prompt.contains("second note"), "{}", prompt);
 
         let _ = std::fs::remove_dir_all(&dir);

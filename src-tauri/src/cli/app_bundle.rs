@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 const CODESIGN_IDENTITY: &str = "twapp-codesign";
-const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 fn home_dir() -> PathBuf {
     dirs::home_dir().expect("No home directory")
@@ -26,145 +25,6 @@ pub fn check_gui_installed() -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-/// Map a session hex color to the icon variant base name (without mode suffix).
-/// Returns None for unknown/custom colors (falls back to default icon).
-fn icon_variant_name_for_color(hex_color: &str) -> Option<&'static str> {
-    match hex_color {
-        "#ffe0e0" => Some("rose"),
-        "#e0e8ff" => Some("cornflower"),
-        "#e0ffe0" => Some("mint"),
-        "#fff0e0" => Some("peach"),
-        "#f0e0ff" => Some("lavender"),
-        "#e0ffff" => Some("seafoam"),
-        "#fef3c7" => Some("lemon"),
-        "#e8d8cc" => Some("cappuccino"),
-        "#e8f0e0" => Some("sage"),
-        _ => None,
-    }
-}
-
-/// Resolve the icon variant filename for a color + theme combination.
-/// Theme should be "light" or "dark". Falls back to "dark" for "system" or unknown.
-fn icon_variant_filename(hex_color: &str, theme: &str) -> Option<String> {
-    let name = icon_variant_name_for_color(hex_color)?;
-    let mode = if theme == "light" { "light" } else { "dark" };
-    Some(format!("icon-{}-{}.icns", name, mode))
-}
-
-/// Resolve "system" theme to "light" or "dark" based on macOS appearance.
-fn resolve_theme(theme: &str) -> &str {
-    match theme {
-        "light" => "light",
-        "dark" => "dark",
-        _ => {
-            // "system" or unknown — check macOS dark mode via defaults
-            let output = std::process::Command::new("defaults")
-                .args(["read", "-g", "AppleInterfaceStyle"])
-                .output();
-            match output {
-                Ok(o) if o.status.success() => "dark",  // "Dark" is set
-                _ => "light",                             // key absent = light mode
-            }
-        }
-    }
-}
-
-/// Create a per-instance .app bundle clone with a custom CFBundleName
-/// and a color-matched icon variant.
-/// Uses APFS clonefile (cp -Rc) so the copy is nearly instant and shares
-/// storage with the master bundle (copy-on-write).
-pub fn prepare_instance_app(name: &str, color: &str) -> Result<PathBuf, String> {
-    let instances = instances_dir();
-    std::fs::create_dir_all(&instances).map_err(|e| e.to_string())?;
-
-    // Sanitize name for filesystem: keep word chars, spaces, hyphens
-    let safe: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
-        .collect();
-    let safe = safe.trim().replace(' ', "-");
-    let safe = if safe.is_empty() {
-        "twapp".to_string()
-    } else {
-        safe[..safe.len().min(64)].to_string()
-    };
-
-    let instance_app = instances.join(format!("{}.app", safe));
-
-    // Remove stale instance
-    if instance_app.exists() {
-        std::fs::remove_dir_all(&instance_app).map_err(|e| e.to_string())?;
-    }
-
-    // APFS clone (fast, CoW)
-    let output = std::process::Command::new("cp")
-        .args([
-            "-Rc",
-            &gui_app_path().to_string_lossy(),
-            &instance_app.to_string_lossy(),
-        ])
-        .output()
-        .map_err(|e| format!("cp failed: {}", e))?;
-    if !output.status.success() {
-        return Err(format!(
-            "cp -Rc failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    // Remove anything in the bundle root that isn't Contents/ —
-    // stray files (e.g. symlinks) cause "unsealed contents" codesign failures.
-    clean_bundle_root(&instance_app)?;
-
-    // Patch CFBundleName/CFBundleDisplayName but keep the shared
-    // CFBundleIdentifier so TCC remembers permission grants across instances.
-    let plist_path = instance_app.join("Contents/Info.plist");
-    let mut plist_data: plist::Dictionary = plist::from_file(&plist_path)
-        .map_err(|e| format!("Failed to read plist: {}", e))?;
-
-    plist_data.insert(
-        "CFBundleName".to_string(),
-        plist::Value::String(name.to_string()),
-    );
-    plist_data.insert(
-        "CFBundleDisplayName".to_string(),
-        plist::Value::String(name.to_string()),
-    );
-
-    // Swap the icon to a color-matched variant if available
-    let theme = crate::cli::config::get_theme_preference();
-    let resolved_theme = resolve_theme(&theme);
-    if let Some(variant_file) = icon_variant_filename(color, resolved_theme) {
-        let resources = instance_app.join("Contents/Resources");
-        let variant_src = resources.join("icons/variants").join(&variant_file);
-        if variant_src.exists() {
-            let icon_dst = resources.join("icon.icns");
-            std::fs::copy(&variant_src, &icon_dst).map_err(|e| {
-                format!("Failed to copy icon variant: {}", e)
-            })?;
-            // Update plist to point to our icon (should already be "icon" but be explicit)
-            plist_data.insert(
-                "CFBundleIconFile".to_string(),
-                plist::Value::String("icon".to_string()),
-            );
-        }
-    }
-
-    let mut file = std::fs::File::create(&plist_path).map_err(|e| e.to_string())?;
-    plist::to_writer_binary(&mut file, &plist_data)
-        .map_err(|e| format!("Failed to write plist: {}", e))?;
-
-    // Re-sign so macOS accepts the modified bundle
-    resign_app_bundle(&instance_app)?;
-
-    // Force Launch Services to re-read this bundle's metadata
-    let _ = std::process::Command::new(LSREGISTER)
-        .args(["-f", &instance_app.to_string_lossy()])
-        .output();
-
-    Ok(instance_app)
 }
 
 /// Remove any entries in the .app bundle root that aren't `Contents/`.
@@ -239,171 +99,37 @@ pub fn resign_app_bundle(app_path: &Path) -> Result<(), String> {
     }
 }
 
-/// Sidecar file (next to an instance `.app`) recording the exact `--args`
-/// the bundle was last launched with. macOS relaunches session-window bundles
-/// after a restart with no argv, dropping the `--cwd`/`--command`/`--session-id`
-/// that distinguish a session window from the launcher; this file lets the GUI
-/// recover them. Kept outside the bundle so it never breaks the codesign seal.
-fn instance_args_path(instance_app: &Path) -> Option<PathBuf> {
-    let stem = instance_app.file_stem()?;
-    let dir = instance_app.parent()?;
-    Some(dir.join(format!("{}.args.json", stem.to_string_lossy())))
-}
-
-/// Persist an instance's launch args. Best-effort: a failure only costs
-/// session restoration after a restart, never the launch itself.
-pub fn save_instance_args(instance_app: &Path, args: &[String]) {
-    if let Some(path) = instance_args_path(instance_app) {
-        if let Ok(json) = serde_json::to_string(args) {
-            let _ = std::fs::write(path, json);
+/// Remove the per-session app bundles older versions cloned for every session
+/// window. A bundle whose process is still running is left alone.
+pub fn remove_legacy_instances() -> usize {
+    let dir = instances_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_bundle = path.extension().and_then(|e| e.to_str()) == Some("app");
+        if is_bundle {
+            let needle = format!("{}/Contents/MacOS/", path.to_string_lossy());
+            let running = std::process::Command::new("pgrep")
+                .args(["-f", &needle])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(true);
+            if running {
+                continue;
+            }
+            if std::fs::remove_dir_all(&path).is_ok() {
+                removed += 1;
+            }
+        } else if path.to_string_lossy().ends_with(".args.json") {
+            let bundle = path.to_string_lossy().trim_end_matches(".args.json").to_string() + ".app";
+            if !std::path::Path::new(&bundle).exists() {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
-}
-
-/// Remove an instance's saved launch args (on session delete or rename).
-pub fn remove_instance_args(instance_app: &Path) {
-    if let Some(path) = instance_args_path(instance_app) {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-/// Resolve the instance `.app` a given executable lives inside, but only for
-/// our per-instance bundles under `instances/`. Returns `None` for the master
-/// bundle (launcher), dev binaries, or anything else — pure path logic so it
-/// can be unit-tested without touching the real filesystem.
-fn instance_bundle_for_exe(exe: &Path) -> Option<PathBuf> {
-    // exe = <...>/instances/<name>.app/Contents/MacOS/<bin>
-    let bundle = exe.ancestors().nth(3)?;
-    if bundle.extension().and_then(|e| e.to_str()) != Some("app") {
-        return None;
-    }
-    if bundle.parent()?.file_name().and_then(|n| n.to_str()) != Some("instances") {
-        return None;
-    }
-    Some(bundle.to_path_buf())
-}
-
-/// If the current process is a per-instance session-window bundle, return the
-/// launch args saved for it. Used to recover session context after a macOS
-/// restart relaunches the bundle with no argv. `None` for the launcher or when
-/// no sidecar exists.
-pub fn current_instance_args() -> Option<Vec<String>> {
-    let exe = std::env::current_exe().ok()?;
-    let bundle = instance_bundle_for_exe(&exe)?;
-    let path = instance_args_path(&bundle)?;
-    let json = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&json).ok()
-}
-
-/// Launch a GUI instance via `open -n -a`
-pub fn launch_gui(instance_app: &Path, args: &[String]) -> Result<(), String> {
-    // Record the args first so a later macOS-restart relaunch (which arrives
-    // with no argv) can recover this window's session instead of falling back
-    // to the launcher.
-    save_instance_args(instance_app, args);
-
-    let mut open_args = vec![
-        "-n".to_string(),
-        "-a".to_string(),
-        instance_app.to_string_lossy().to_string(),
-        "--args".to_string(),
-    ];
-    open_args.extend_from_slice(args);
-
-    std::process::Command::new("open")
-        .args(&open_args)
-        .spawn()
-        .map_err(|e| format!("Failed to launch: {}", e))?;
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unique_tmp(prefix: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::new_v4()))
-    }
-
-    #[test]
-    fn instance_args_path_sits_beside_bundle() {
-        let bundle = PathBuf::from("/x/.config/twapp/instances/My-Session.app");
-        let path = instance_args_path(&bundle).expect("sidecar path");
-        assert_eq!(
-            path,
-            PathBuf::from("/x/.config/twapp/instances/My-Session.args.json")
-        );
-    }
-
-    #[test]
-    fn instance_bundle_for_exe_accepts_instance_rejects_others() {
-        // A real per-instance session window.
-        let exe = PathBuf::from("/u/.config/twapp/instances/Foo.app/Contents/MacOS/twapp");
-        assert_eq!(
-            instance_bundle_for_exe(&exe),
-            Some(PathBuf::from("/u/.config/twapp/instances/Foo.app"))
-        );
-
-        // The master bundle (launcher) must NOT be treated as an instance,
-        // otherwise opening the launcher from Spotlight would hijack stale args.
-        let master = PathBuf::from("/u/.config/twapp/twapp.app/Contents/MacOS/twapp");
-        assert_eq!(instance_bundle_for_exe(&master), None);
-
-        // A bare dev binary.
-        let dev = PathBuf::from("/u/Dev/twapp/src-tauri/target/release/twapp");
-        assert_eq!(instance_bundle_for_exe(&dev), None);
-    }
-
-    #[test]
-    fn save_then_current_round_trips_args() {
-        let instances = unique_tmp("twapp-instances");
-        std::fs::create_dir_all(&instances).unwrap();
-        let bundle = instances.join("Round-Trip.app");
-
-        let args = vec![
-            "--name".to_string(),
-            "Round Trip".to_string(),
-            "--cwd".to_string(),
-            "/work/dir".to_string(),
-            "--command".to_string(),
-            "claude --resume abc123".to_string(),
-            "--session-id".to_string(),
-            "abc123".to_string(),
-        ];
-        save_instance_args(&bundle, &args);
-
-        let json = std::fs::read_to_string(instance_args_path(&bundle).unwrap()).unwrap();
-        let restored: Vec<String> = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, args);
-
-        remove_instance_args(&bundle);
-        assert!(!instance_args_path(&bundle).unwrap().exists());
-        let _ = std::fs::remove_dir_all(&instances);
-    }
-
-    #[test]
-    fn saved_args_reparse_into_matching_gui_args() {
-        // Restoration re-parses saved args through the same clap parser a fresh
-        // launch uses, so this locks that round trip in sync with GuiArgs.
-        use clap::Parser as _;
-        let args = vec![
-            "--name".to_string(),
-            "Foo".to_string(),
-            "--cwd".to_string(),
-            "/work/dir".to_string(),
-            "--command".to_string(),
-            "claude --resume abc123".to_string(),
-            "--session-id".to_string(),
-            "abc123".to_string(),
-        ];
-        let mut argv = vec!["twapp".to_string()];
-        argv.extend(args);
-        let cli = crate::Cli::try_parse_from(&argv).expect("re-parse saved args");
-        assert!(cli.command.is_none());
-        assert_eq!(cli.gui.name, "Foo");
-        assert_eq!(cli.gui.cwd.as_deref(), Some("/work/dir"));
-        assert_eq!(cli.gui.command.as_deref(), Some("claude --resume abc123"));
-        assert_eq!(cli.gui.session_id.as_deref(), Some("abc123"));
-    }
+    let _ = std::fs::remove_dir(&dir);
+    removed
 }

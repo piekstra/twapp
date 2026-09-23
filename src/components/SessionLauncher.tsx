@@ -28,6 +28,8 @@ function providerLabel(provider: AgentProvider): string {
 }
 
 function SessionLauncher({
+  initialView = "sessions",
+  onOpened,
   appVersion,
   updateInfo,
   updateError,
@@ -37,6 +39,8 @@ function SessionLauncher({
   checkForUpdate,
   handleInstallUpdate,
 }: {
+  initialView?: LauncherView;
+  onOpened: (key: string) => void;
   appVersion: string | null;
   updateInfo: { latestVersion: string; releaseNotes: string; releaseUrl: string; downloadUrl: string } | null;
   updateError: string | null;
@@ -54,7 +58,7 @@ function SessionLauncher({
   const [themeMode, setThemeMode] = useState<"light" | "dark" | "system">("system");
   const [scanning, setScanning] = useState(true);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
-  const [launcherView, setLauncherView] = useState<LauncherView>("sessions");
+  const [launcherView, setLauncherView] = useState<LauncherView>(initialView);
   const [settingsTab, setSettingsTab] = useState<"general" | "prompts" | "permissions">("general");
   const [showUpdatePanel, setShowUpdatePanel] = useState(false);
 
@@ -348,11 +352,8 @@ function SessionLauncher({
   const handleLaunch = async (session: LauncherSession) => {
     setLaunching(session.session_id);
     try {
-      await invoke("launch_session", {
-        sessionId: session.session_id,
-        directory: session.directory,
-      });
-      setTimeout(loadSessions, 1000);
+      const key = await invoke<string>("hub_open", { directory: session.directory });
+      onOpened(key);
     } catch (e) {
       console.error("Failed to launch:", e);
     } finally {
@@ -521,7 +522,7 @@ function SessionLauncher({
     setCreating(true);
     setCreateError(null);
     try {
-      await invoke("create_and_launch_session", {
+      const key = await invoke<string>("create_and_launch_session", {
         ticket: ticket || null,
         name: name || null,
         provider: newSessionProvider,
@@ -533,7 +534,7 @@ function SessionLauncher({
       setNewSessionName("");
       setNewSessionGithub(false);
       setNewSessionChrome(false);
-      setTimeout(loadSessions, 1000);
+      onOpened(key);
     } catch (e) {
       setCreateError(String(e));
     } finally {
@@ -640,6 +641,10 @@ function SessionLauncher({
       setImportScanning(false);
     }
   };
+  useEffect(() => {
+    if (initialView === "import") handleStartImport();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   const toggleImportSelect = (sessionId: string) => {
     setImportSelected((prev) => {
@@ -1503,7 +1508,7 @@ function SessionLauncher({
               value={newSessionTicket}
               onChange={(e) => setNewSessionTicket(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreateSession()}
-              placeholder="MON-1234 or owner/repo#42"
+              placeholder="ABC-1234 or owner/repo#42"
               autoFocus
             />
           </div>

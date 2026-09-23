@@ -1,5 +1,3 @@
-use super::types::*;
-use crate::cli::session::AgentProvider;
 
 pub fn read_ticket_file(path: &std::path::Path) -> Result<Option<serde_json::Value>, String> {
     if !path.exists() {
@@ -10,71 +8,13 @@ pub fn read_ticket_file(path: &std::path::Path) -> Result<Option<serde_json::Val
     Ok(Some(value))
 }
 
-pub fn resolve_ticket_path(config: &GuiArgs) -> Option<std::path::PathBuf> {
-    // Explicit --ticket flag takes priority
-    if let Some(path) = &config.ticket {
-        let p = std::path::PathBuf::from(path);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    // Fallback: <cwd>/.twapp-ticket.json
-    if let Some(cwd) = &config.cwd {
-        let fallback = std::path::Path::new(cwd).join(".twapp-ticket.json");
-        if fallback.exists() {
-            return Some(fallback);
-        }
-    }
-    None
-}
-
-fn resolve_session_path(config: &GuiArgs) -> std::path::PathBuf {
-    let cwd = config.cwd.as_deref().unwrap_or(".");
-    std::path::Path::new(cwd).join(".twapp-session.json")
-}
-
-pub fn read_session_id(config: &GuiArgs) -> Option<String> {
-    if let Some(session_id) = &config.session_id {
-        if !session_id.is_empty() {
-            return Some(session_id.clone());
-        }
-    }
-    let path = resolve_session_path(config);
-    if path.exists() {
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-            .and_then(|v| {
-                let claude_id = v
-                    .get("session_id")
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty());
-                let codex_id = v
-                    .get("codex_session_id")
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty());
-                let antigravity_id = v
-                    .get("antigravity_session_id")
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.is_empty());
-
-                match config.provider {
-                    AgentProvider::Codex => codex_id.or(claude_id).or(antigravity_id),
-                    AgentProvider::Claude => claude_id.or(codex_id).or(antigravity_id),
-                    AgentProvider::Antigravity => antigravity_id.or(claude_id).or(codex_id),
-                }
-                .map(String::from)
-            })
-    } else {
-        None
-    }
+fn ticket_path(directory: &str) -> std::path::PathBuf {
+    std::path::Path::new(directory).join(".twapp-ticket.json")
 }
 
 #[tauri::command]
-pub fn get_session_info(
-    config: tauri::State<'_, GuiArgs>,
-) -> Result<Option<serde_json::Value>, String> {
-    let path = resolve_session_path(config.inner());
+pub fn get_session_info(directory: String) -> Result<Option<serde_json::Value>, String> {
+    let path = std::path::Path::new(&directory).join(".twapp-session.json");
     if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
@@ -85,12 +25,16 @@ pub fn get_session_info(
 }
 
 #[tauri::command]
-pub fn get_ticket_info(
-    config: tauri::State<'_, GuiArgs>,
-) -> Result<Option<serde_json::Value>, String> {
-    match resolve_ticket_path(config.inner()) {
-        Some(path) => read_ticket_file(&path),
-        None => Ok(None),
+pub fn get_ticket_info(directory: String) -> Result<Option<serde_json::Value>, String> {
+    read_ticket_file(&ticket_path(&directory))
+}
+
+/// Record the ticket key on the session so the rail and search show it.
+fn set_session_ticket_key(directory: &str, key: Option<String>) {
+    let dir = std::path::Path::new(directory);
+    if let Ok(mut data) = crate::cli::session::read_session(dir) {
+        data.ticket_key = key;
+        let _ = crate::cli::session::write_session(dir, &data);
     }
 }
 
@@ -111,49 +55,6 @@ pub fn truncate_str(text: &str, max: usize) -> String {
     format!("{}...", truncated)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn read_session_id_prefers_codex_session_for_codex_windows() {
-        let dir = std::env::temp_dir().join(format!("twapp-ticket-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join(".twapp-session.json"),
-            serde_json::to_string_pretty(&serde_json::json!({
-                "session_id": "",
-                "name": "demo",
-                "claude_cwd": dir.to_string_lossy(),
-                "created": "2026-01-01T00:00:00Z",
-                "provider": "codex",
-                "codex_session_id": "codex-123",
-                "codex_cwd": dir.to_string_lossy(),
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let config = GuiArgs {
-            name: "demo".to_string(),
-            color: None,
-            cwd: Some(dir.to_string_lossy().to_string()),
-            command: None,
-            prefill: None,
-            ticket: None,
-            session_id: None,
-            provider: AgentProvider::Codex,
-            capture_started_at: None,
-            capture_previous_session_id: None,
-            chrome: false,
-            override_terminal_theme: false,
-        };
-
-        assert_eq!(read_session_id(&config).as_deref(), Some("codex-123"));
-
-        let _ = std::fs::remove_dir_all(dir);
-    }
-}
 
 /// Run a blocking ticket fetch off the async runtime.
 pub async fn fetch_blocking<F>(fetch: F) -> Result<crate::cli::ticket::TicketInfo, String>
@@ -176,21 +77,26 @@ fn write_ticket_file(
 }
 
 #[tauri::command]
-pub async fn link_ticket(
-    key: String,
-    config: tauri::State<'_, GuiArgs>,
-) -> Result<serde_json::Value, String> {
-    let cwd = config.cwd.as_deref().unwrap_or(".").to_string();
+pub async fn link_ticket(directory: String, key: String) -> Result<serde_json::Value, String> {
     let ticket = fetch_blocking(move || crate::cli::ticket::fetch_ticket(&key, false)).await?;
-    write_ticket_file(&std::path::Path::new(&cwd).join(".twapp-ticket.json"), &ticket)
+    let value = write_ticket_file(&ticket_path(&directory), &ticket)?;
+    set_session_ticket_key(&directory, Some(ticket.key.clone()));
+    Ok(value)
 }
 
 #[tauri::command]
-pub async fn refresh_ticket(
-    config: tauri::State<'_, GuiArgs>,
-) -> Result<serde_json::Value, String> {
-    let cwd = config.cwd.as_deref().unwrap_or(".");
-    let ticket_path = std::path::Path::new(cwd).join(".twapp-ticket.json");
+pub fn unlink_ticket(directory: String) -> Result<(), String> {
+    let path = ticket_path(&directory);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    set_session_ticket_key(&directory, None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn refresh_ticket(directory: String) -> Result<serde_json::Value, String> {
+    let ticket_path = ticket_path(&directory);
 
     if !ticket_path.exists() {
         return Err("No ticket file found".to_string());

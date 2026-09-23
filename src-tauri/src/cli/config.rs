@@ -126,6 +126,30 @@ pub fn get_session_color_preference() -> String {
     "random".to_string()
 }
 
+/// The `summaries:` block of `config.yaml`: `(provider, model)`, each unset
+/// when absent or blank.
+pub fn get_summaries_settings() -> (Option<String>, Option<String>) {
+    let Ok(content) = std::fs::read_to_string(config_file()) else {
+        return (None, None);
+    };
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return (None, None);
+    };
+    parse_summaries_settings(&yaml)
+}
+
+fn parse_summaries_settings(yaml: &serde_yaml::Value) -> (Option<String>, Option<String>) {
+    let field = |name: &str| {
+        yaml.get("summaries")
+            .and_then(|block| block.get(name))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    (field("provider"), field("model"))
+}
+
 pub fn get_agent_provider_preference() -> AgentProvider {
     let path = config_file();
     if !path.exists() {
@@ -397,30 +421,6 @@ mod agent_provider_tests {
             vec![AgentProvider::Codex]
         );
     }
-}
-
-/// The `summaries:` block of `config.yaml`: `(provider, model)`, each unset
-/// when absent or blank.
-pub fn get_summaries_settings() -> (Option<String>, Option<String>) {
-    let Ok(content) = std::fs::read_to_string(config_file()) else {
-        return (None, None);
-    };
-    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
-        return (None, None);
-    };
-    parse_summaries_settings(&yaml)
-}
-
-fn parse_summaries_settings(yaml: &serde_yaml::Value) -> (Option<String>, Option<String>) {
-    let field = |name: &str| {
-        yaml.get("summaries")
-            .and_then(|block| block.get(name))
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    };
-    (field("provider"), field("model"))
 }
 
 #[cfg(test)]

@@ -1,4 +1,3 @@
-use super::tickets::read_session_id;
 use super::types::*;
 use rand::Rng;
 use tauri::Emitter;
@@ -11,28 +10,10 @@ use crate::cli::session::{
 };
 use crate::cli::session_attribution;
 
-pub fn sanitize_instance_name(name: &str) -> String {
-    let safe: String = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
-        .collect();
-    let safe = safe.trim().replace(' ', "-");
-    if safe.is_empty() {
-        "twapp".to_string()
-    } else {
-        safe[..safe.len().min(64)].to_string()
-    }
-}
-
-pub fn check_instance_running(name: &str) -> bool {
-    let safe = sanitize_instance_name(name);
-    // Bracket trick: [i]nstances/... prevents pgrep from matching its own process,
-    // because pgrep's command line contains the literal "[i]" which doesn't match the regex [i]
-    let needle = format!("[i]nstances/{}.app", safe);
-    std::process::Command::new("pgrep")
-        .args(["-f", &needle])
-        .output()
-        .map(|o| o.status.success())
+/// Whether the window is hosting a live terminal for the session in `directory`.
+pub fn session_running(directory: &std::path::Path) -> bool {
+    super::hub::hub()
+        .map(|hub| hub.is_hosted_running(&directory.to_string_lossy()))
         .unwrap_or(false)
 }
 
@@ -88,7 +69,7 @@ fn launcher_session_from_data(
     directory: &std::path::Path,
 ) -> LauncherSession {
     let preferred = session_data.last_provider();
-    let is_running = check_instance_running(&session_data.name);
+    let is_running = session_running(directory);
     let message_count = count_messages_for_provider(session_data, preferred, directory);
     let last_active = session_data
         .last_resumed
@@ -174,14 +155,21 @@ fn sync_antigravity_session_id_for_directory(
     Ok(Some(session_id))
 }
 
-fn emit_provider_session_update(app: &tauri::AppHandle, provider: &str, session_id: &str) {
+fn emit_provider_session_update(
+    app: &tauri::AppHandle,
+    directory: &str,
+    provider: &str,
+    session_id: &str,
+) {
     let _ = app.emit(
         "session-provider-updated",
         serde_json::json!({
+            "key": super::hub::session_key(directory),
             "provider": provider,
             "session_id": session_id,
         }),
     );
+    let _ = app.emit("hub:changed", ());
 }
 
 pub fn scan_and_emit(app: &tauri::AppHandle, dir: &std::path::Path, depth: usize) {
@@ -258,27 +246,13 @@ pub async fn list_all_sessions() -> Result<LauncherResponse, String> {
     })
 }
 
-#[tauri::command]
-pub async fn launch_session(_session_id: String, directory: String) -> Result<(), String> {
-    let work_dir = std::path::PathBuf::from(&directory);
+/// Launch arguments that resume the session in `directory`: attribution, the
+/// `last_resumed` bump, and the harness command a launcher resume uses.
+pub fn resume_launch_args(directory: &str) -> Result<Vec<String>, String> {
+    let work_dir = std::path::PathBuf::from(directory);
     let mut session_data = crate::cli::session::read_session(&work_dir)?;
     let preferred = session_data.last_provider();
 
-    // If already running, focus the existing window
-    if check_instance_running(&session_data.name) {
-        let instances = dirs::home_dir()
-            .ok_or("No home directory")?
-            .join(".config/twapp/instances");
-        let safe_name = sanitize_instance_name(&session_data.name);
-        let instance_app = instances.join(format!("{}.app", safe_name));
-        std::process::Command::new("open")
-            .args(["-a", &instance_app.to_string_lossy()])
-            .spawn()
-            .map_err(|e| format!("Failed to focus: {}", e))?;
-        return Ok(());
-    }
-
-    // Run health checks
     crate::cli::session::run_health_checks(&work_dir, Some(&session_data));
 
     // Attribution: adopt a compacted session id when chain-of-descent is
@@ -313,20 +287,19 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         session_data.color.clone()
     };
 
-    // Build app args (mirrors cli/mod.rs build_and_launch)
     let mut app_args = vec![
         "--name".to_string(),
         session_data.name.clone(),
         "--color".to_string(),
-        color.clone(),
+        color,
         "--cwd".to_string(),
-        directory.clone(),
+        directory.to_string(),
         "--command".to_string(),
         launch.command,
         "--provider".to_string(),
         preferred.to_string(),
     ];
-    if let Some(provider_session_id) = provider_session_id.clone() {
+    if let Some(provider_session_id) = provider_session_id {
         app_args.push("--session-id".to_string());
         app_args.push(provider_session_id);
     }
@@ -334,7 +307,7 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         if preferred == AgentProvider::Antigravity {
             // Antigravity's cache already holds an entry for this directory if
             // it ran here before; capture has to ignore that one.
-            if let Some(previous_id) = find_antigravity_session_for_cwd(&directory) {
+            if let Some(previous_id) = find_antigravity_session_for_cwd(directory) {
                 app_args.push("--capture-previous-session-id".to_string());
                 app_args.push(previous_id);
             }
@@ -346,22 +319,73 @@ pub async fn launch_session(_session_id: String, directory: String) -> Result<()
         app_args.push("--prefill".to_string());
         app_args.push(prefill);
     }
-    let ticket_file = work_dir.join(".twapp-ticket.json");
-    if ticket_file.exists() {
-        app_args.push("--ticket".to_string());
-        app_args.push(ticket_file.to_string_lossy().to_string());
-    }
     if session_data.use_chrome.unwrap_or(false) {
         app_args.push("--chrome".to_string());
     }
     if session_data.override_terminal_theme.unwrap_or(false) {
         app_args.push("--override-terminal-theme".to_string());
     }
+    Ok(app_args)
+}
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&session_data.name, &color)?;
-    crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
+/// Poll for the conversation id a harness assigns itself after launch and
+/// record it in the session file.
+pub fn spawn_provider_capture(
+    app: tauri::AppHandle,
+    directory: String,
+    provider: AgentProvider,
+    started_at: String,
+    previous_session_id: Option<String>,
+) {
+    std::thread::spawn(move || {
+        for attempt in 0..120 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            let result = match provider {
+                AgentProvider::Codex => {
+                    sync_codex_session_id_for_directory(&directory, Some(&started_at))
+                }
+                AgentProvider::Antigravity => sync_antigravity_session_id_for_directory(
+                    &directory,
+                    previous_session_id.as_deref(),
+                ),
+                AgentProvider::Claude => return,
+            };
+            match result {
+                Ok(Some(session_id)) => {
+                    emit_provider_session_update(&app, &directory, &provider.to_string(), &session_id);
+                    return;
+                }
+                Ok(None) => continue,
+                Err(_) => return,
+            }
+        }
+    });
+}
 
-    Ok(())
+#[cfg(test)]
+struct ResumeCommand {
+    command: String,
+    session_id: Option<String>,
+}
+
+#[cfg(test)]
+fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
+    let work_dir = std::path::PathBuf::from(directory);
+    let mut session_data = crate::cli::session::read_session(&work_dir)?;
+    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
+    crate::cli::session::write_session(&work_dir, &session_data)?;
+    Ok(ResumeCommand {
+        session_id: launch.conversation.known_id().map(str::to_string),
+        command: launch.command,
+    })
+}
+
+fn open_in_hub(args: &[String]) -> Result<String, String> {
+    super::hub::hub()
+        .ok_or_else(|| "hub is not running".to_string())?
+        .open_argv(args, true)
 }
 
 #[tauri::command]
@@ -371,7 +395,7 @@ pub async fn create_and_launch_session(
     provider: String,
     github: bool,
     chrome: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let provider = AgentProvider::parse(&provider)
         .ok_or_else(|| format!("Unknown agent harness: {}", provider))?;
     let configured = crate::cli::config::get_configured_agent_providers();
@@ -402,109 +426,12 @@ pub async fn create_and_launch_session(
         chrome,
     )?;
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&result.name, &result.color)?;
-    crate::cli::app_bundle::launch_gui(&instance_app, &result.app_args)?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn start_codex_session_capture(
-    app: tauri::AppHandle,
-    directory: String,
-    started_at: String,
-) -> Result<(), String> {
-    std::thread::spawn(move || {
-        for attempt in 0..120 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-
-            match sync_codex_session_id_for_directory(&directory, Some(&started_at)) {
-                Ok(Some(session_id)) => {
-                    emit_provider_session_update(&app, "codex", &session_id);
-                    return;
-                }
-                Ok(None) => continue,
-                Err(_) => return,
-            }
-        }
-    });
-
-    Ok(())
-}
-
-/// The command that restarts a session's harness, and what goes with it.
-#[derive(serde::Serialize)]
-pub struct ResumeCommand {
-    pub command: String,
-    pub session_id: Option<String>,
-    pub prefill: Option<String>,
-}
-
-/// Build the command that resumes the session in `directory`.
-///
-/// The frontend asks rather than assembling the command itself, so a resume
-/// started from the terminal window carries the same flags as one started by
-/// the launcher: the `--chrome` a Chrome session needs, and the `cd` into the
-/// directory a Claude conversation was started in.
-#[tauri::command]
-pub async fn resume_command_for_session(directory: String) -> Result<ResumeCommand, String> {
-    resume_command_for_directory(&directory)
-}
-
-fn resume_command_for_directory(directory: &str) -> Result<ResumeCommand, String> {
-    let work_dir = std::path::PathBuf::from(directory);
-    let mut session_data = crate::cli::session::read_session(&work_dir)?;
-
-    // A harness switch stages a migration, and recording a conversation clears
-    // it, so a restart is where a staged briefing gets delivered rather than
-    // silently consumed. prepare_launch handles that for both entry points.
-    let launch = prepare_launch(&mut session_data, &work_dir, &TranscriptRoots::from_home());
-
-    // last_resumed is deliberately left alone. It is the floor attribution uses
-    // to find the conversation a /compact left behind, and this path runs no
-    // attribution, so moving it forward would discard those candidates. The
-    // launcher maintains the field, right after it attributes.
-    crate::cli::session::write_session(&work_dir, &session_data)?;
-
-    Ok(ResumeCommand {
-        session_id: launch.conversation.known_id().map(str::to_string),
-        command: launch.command,
-        prefill: launch.prefill,
-    })
+    open_in_hub(&result.app_args)
 }
 
 #[tauri::command]
 pub async fn sync_codex_session_id(directory: String) -> Result<Option<String>, String> {
     sync_codex_session_id_for_directory(&directory, None)
-}
-
-#[tauri::command]
-pub async fn start_antigravity_session_capture(
-    app: tauri::AppHandle,
-    directory: String,
-    previous_session_id: Option<String>,
-) -> Result<(), String> {
-    std::thread::spawn(move || {
-        for attempt in 0..120 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-            match sync_antigravity_session_id_for_directory(
-                &directory,
-                previous_session_id.as_deref(),
-            ) {
-                Ok(Some(session_id)) => {
-                    emit_provider_session_update(&app, "antigravity", &session_id);
-                    return;
-                }
-                Ok(None) => continue,
-                Err(_) => return,
-            }
-        }
-    });
-    Ok(())
 }
 
 #[tauri::command]
@@ -519,7 +446,7 @@ pub async fn preflight_delete_session(directory: String) -> Result<DeletePreflig
     let work_dir = std::path::PathBuf::from(&directory);
     let session_data = crate::cli::session::read_session(&work_dir)?;
 
-    let is_running = check_instance_running(&session_data.name);
+    let is_running = session_running(&work_dir);
 
     // Git: uncommitted changes
     let has_uncommitted_changes = std::process::Command::new("git")
@@ -611,13 +538,13 @@ pub async fn preflight_delete_session(directory: String) -> Result<DeletePreflig
 }
 
 #[tauri::command]
-pub async fn rename_session(directory: String, new_name: String) -> Result<(), String> {
+pub async fn rename_session(
+    app: tauri::AppHandle,
+    directory: String,
+    new_name: String,
+) -> Result<(), String> {
     let work_dir = std::path::PathBuf::from(&directory);
     let mut data = crate::cli::session::read_session(&work_dir)?;
-
-    if check_instance_running(&data.name) {
-        return Err("Session is currently running. Close it before renaming.".to_string());
-    }
 
     let old_safe = crate::cli::session::safe_name(&data.name);
     let new_safe = crate::cli::session::safe_name(&new_name);
@@ -639,24 +566,15 @@ pub async fn rename_session(directory: String, new_name: String) -> Result<(), S
         if old_prompts.exists() && !new_prompts.exists() {
             let _ = std::fs::rename(&old_prompts, &new_prompts);
         }
-
-        // Remove old instance bundle (recreated on next launch) and its
-        // restore-args sidecar so a restart can't revive the old-named window.
-        let home = dirs::home_dir().unwrap_or_default();
-        let old_app = home
-            .join(".config/twapp/instances")
-            .join(format!("{}.app", old_safe));
-        crate::cli::app_bundle::remove_instance_args(&old_app);
-        if old_app.exists() {
-            let _ = std::fs::remove_dir_all(&old_app);
-        }
     }
 
+    let _ = app.emit("hub:changed", ());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn update_session_color(
+    app: tauri::AppHandle,
     directory: String,
     color: String,
     override_terminal_theme: Option<bool>,
@@ -675,11 +593,13 @@ pub async fn update_session_color(
     data.override_terminal_theme = override_terminal_theme;
     crate::cli::session::write_session(&work_dir, &data)?;
 
+    let _ = app.emit("hub:changed", ());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn update_session_fields(
+    app: tauri::AppHandle,
     directory: String,
     name: Option<String>,
     session_id: Option<String>,
@@ -776,6 +696,7 @@ pub async fn update_session_fields(
         );
     }
 
+    let _ = app.emit("hub:changed", ());
     Ok(())
 }
 
@@ -793,7 +714,7 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
     let session_data = crate::cli::session::read_session(&work_dir)?;
 
     // Server-side safety gate: refuse to delete running sessions
-    if check_instance_running(&session_data.name) {
+    if session_running(&work_dir) {
         return Err("Session is currently running. Close it before deleting.".to_string());
     }
 
@@ -822,16 +743,6 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
             std::fs::write(&claude_json, serde_json::to_string_pretty(&data)?)?;
             Ok(())
         })();
-    }
-
-    // 3. Clean up instance .app bundle and its restore-args sidecar
-    let safe_name = sanitize_instance_name(&session_data.name);
-    let instance_app = home
-        .join(".config/twapp/instances")
-        .join(format!("{}.app", safe_name));
-    crate::cli::app_bundle::remove_instance_args(&instance_app);
-    if instance_app.exists() {
-        let _ = std::fs::remove_dir_all(&instance_app);
     }
 
     // 4. Delete files based on tier
@@ -1195,17 +1106,18 @@ pub async fn import_sessions(requests: Vec<ImportRequest>) -> Result<ImportResul
 
 #[tauri::command]
 pub async fn fork_session(
+    directory: String,
     ticket_key: Option<String>,
     name: Option<String>,
-    config: tauri::State<'_, GuiArgs>,
 ) -> Result<String, String> {
-    let provider = config.provider;
+    let parent_session = crate::cli::session::read_session(std::path::Path::new(&directory))?;
+    let provider = parent_session.last_provider();
     if provider == AgentProvider::Antigravity {
         return Err(
             "Antigravity forks must be created inside the harness with /fork".to_string(),
         );
     }
-    let original_cwd = config.cwd.clone().unwrap_or_else(|| ".".to_string());
+    let original_cwd = directory.clone();
     let mut work_dir = original_cwd.clone();
     let mut window_name = std::path::Path::new(&work_dir)
         .file_name()
@@ -1240,7 +1152,14 @@ pub async fn fork_session(
             .parent()
             .unwrap_or(std::path::Path::new(&work_dir));
         let dir_name = ticket_key_str.replace(['/', '#'], "-");
-        let new_dir = parent.join(&dir_name);
+        // Never write over a session that already lives in the ticket's
+        // directory (the parent itself, or an earlier fork for this ticket).
+        let mut new_dir = parent.join(&dir_name);
+        let mut n = 2;
+        while new_dir.join(".twapp-session.json").exists() {
+            new_dir = parent.join(format!("{}-fork-{}", dir_name, n));
+            n += 1;
+        }
         std::fs::create_dir_all(&new_dir)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
 
@@ -1252,12 +1171,31 @@ pub async fn fork_session(
         ticket_file = Some(tf.to_string_lossy().to_string());
     }
 
+    // The window hosts one session per directory, so a fork without a ticket
+    // gets a sibling directory of its own.
+    if ticket_key.is_none() {
+        let original = std::path::Path::new(&original_cwd);
+        let parent = original.parent().unwrap_or(original);
+        let base = sanitize_dir_name(&window_name);
+        let mut candidate = parent.join(format!("{}-fork", base));
+        let mut n = 2;
+        while candidate.exists() {
+            candidate = parent.join(format!("{}-fork-{}", base, n));
+            n += 1;
+        }
+        std::fs::create_dir_all(&candidate)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        work_dir = candidate.to_string_lossy().to_string();
+        if name.is_none() {
+            window_name = format!("{} fork", parent_session.name);
+        }
+    }
+
     // Pick random color
     let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
 
-    // Read current session ID from session file
-    let old_session_id = read_session_id(config.inner());
-    let chrome = config.chrome;
+    let old_session_id = parent_session.display_session_id(provider);
+    let chrome = parent_session.use_chrome.unwrap_or(false);
     let chrome_flag = if chrome { " --chrome" } else { "" };
 
     let capture_started_at = if provider == AgentProvider::Codex {
@@ -1380,10 +1318,21 @@ pub async fn fork_session(
         app_args.push("--chrome".to_string());
     }
 
-    let instance_app = crate::cli::app_bundle::prepare_instance_app(&window_name, color)?;
-    crate::cli::app_bundle::launch_gui(&instance_app, &app_args)?;
-
+    open_in_hub(&app_args)?;
     Ok(window_name)
+}
+
+fn sanitize_dir_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let safe = safe.trim_matches('-').to_string();
+    if safe.is_empty() {
+        "session".to_string()
+    } else {
+        safe
+    }
 }
 
 #[cfg(test)]

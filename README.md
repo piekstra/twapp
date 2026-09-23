@@ -4,186 +4,45 @@
 
 <h1 align="center">twapp</h1>
 
-<p align="center">A structured terminal companion for Claude and Codex coding sessions — with notes, tickets, session forking, provider switching, and in-session workflow tools.</p>
+<p align="center">One window for all of your Claude, Codex and Antigravity sessions: what each one is doing, which ones need you, and a fast way to switch between them.</p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/piekstra/twapp)](https://github.com/piekstra/twapp/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/piekstra/twapp/release.yml?branch=main)](https://github.com/piekstra/twapp/actions)
 [![macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon%20%7C%20Intel)-lightgrey)](#install)
 
-> Tired of losing productive flow to tab chaos? Afraid of losing a great idea because you're mid-task? **twapp your work.**
+![A session in twapp: the rail of sessions on the left, the terminal, and the session panel with its summary, ticket and notes](docs/images/twapp.png)
 
-![twapp in action — building twapp with twapp](docs/images/twapp.png)
+## What it does
 
-## What It Does
+You run several agent sessions at once. Each one is somewhere between working, waiting for an answer, and blocked on a permission prompt, and finding the one that needs you means cycling through windows. twapp puts every session in one window and keeps track of that for you.
 
-- **Named sessions** — every window gets a name that shows up in Mission Control and OS dialogs. Not "Terminal". *Your* terminal.
-- **Sidebar notes** — capture ideas without leaving your session. Markdown, timestamped, per-session. One click sends a note to the terminal as a prompt.
-- **Session forking** — split off when things get broad. Forks preserve provider-native context when possible.
-- **Ticket context** — link a Jira ticket or GitHub issue. Title, status, description stay visible in the sidebar.
-- **Quick prompts** — reusable prompts organized into sections. Global or project-scoped.
-- **Provider switching** — choose Claude or Codex as the default session engine. Existing twapp sessions resume natively when that provider already has a saved handle, or migrate with a one-time preload when they do not.
-- **Two-way agent integration** — your CLI agent can read the session state and manage twapp right back. "Add that to our notes." "Fork this session." "Change the ticket." It just works.
-- **Session launcher** — open twapp from Spotlight to see all sessions at a glance. Search, sort, and jump into any session with one click. Create new sessions, manage settings, and configure permissions — all from the launcher.
-- **Terminal tabs** — open extra shell tabs within a session for quick commands without leaving your workspace. Tabs are ephemeral and scoped to the session.
-- **In-app updates** — checks automatically, shows release notes, one-click update.
-- **Default permissions** — set Claude permissions once, auto-apply to every Claude-backed session.
+- **Every session in one rail.** Each row shows the session's name, ticket, state, how long it has been in that state, and a one-line summary. Sessions that need you are pinned at the top.
+- **Live state, no setup.** twapp reads the signals the harnesses already produce (Claude's session status files and transcripts, Codex's session logs, terminal titles and notifications) to tell working, needs approval, your turn, errored, and exited apart.
+- **Summaries.** When a session finishes a turn or stops on a prompt, twapp asks your preferred harness, headless and with no tools, to summarize what the session did and what it needs from you. Sessions carry their own titles until a summary arrives.
+- **Triage.** The overview has a Triage action that reads every running session and suggests which ones to look at first and why. It is advice for you; twapp never tells an agent what to do.
+- **Fast switching.** `⌘1` to `⌘9`, `⌘J` for the next session that needs you, and `⌘K` for a palette that switches to, opens or starts anything.
+- **Sessions survive the window.** Terminals live in a small background host, so quitting, updating or crashing the window leaves every agent running. The window reattaches when it opens.
+- **Per-session context.** Notes, a linked Jira ticket or GitHub issue (changeable at any time), session color, harness, and extra shell tabs. Quick prompts are global and the same in every session.
+- **Light on the machine.** One window, one web view and one GPU context, however many sessions are open. Only the terminal on screen renders.
 
----
-
-## The Idea
-
-You're deep in an agent session. Things are going well. Then you have an idea — a good one, but not something you should act on right now. You could:
-
-1. Try to remember it (you won't)
-2. Open a new tab, lose your place, forget what you were doing
-3. Cram it into the current session and watch the context spiral
-
-Or you could **write it down, right there, without leaving your session.** Then get back to work.
-
-twapp is a terminal wrapper built around persistent work sessions. It gives you structure without friction — named sessions, captured notes, linked tickets, quick prompts, provider-aware resumes, and the ability to fork off when a session gets too broad. All visible. All persistent. All in context.
-
-It's also bidirectional. twapp sends prompts and notes to your agent — and the agent manages twapp right back. Ask it to jot something down, change your ticket, fork into a new session. You don't manage twapp separately from the work. You manage both together.
-
-## Features
-
-### Named Sessions, Not Anonymous Tabs
-
-Every twapp session has a name. That name shows up in the window title, in macOS Mission Control, and in OS permission dialogs. When your system asks for biometric approval, it says **"my-feature-work"**, not "Terminal".
-
-```bash
-twapp work PROJ-1234           # named after your ticket
-twapp work --name "research"  # or whatever you want
-```
-
-### Notes — Get It Out of Your Head
-
-Notes live in the sidebar, right next to the terminal. They support markdown, carry timestamps, and they're stored per session — not in some separate app you'll forget to check.
-
-It works both ways. Write notes yourself, or tell your agent: "add that to our notes" or "we got sidetracked — write that down before we forget." The note appears in the sidebar, and you're back on track.
-
-### Fork When It Gets Broad
-
-Sessions grow. You hit a bug. You spot an opportunity. You could keep cramming it all into one session — or you could fork.
-
-Forking creates a new session that **carries the full context of the original when the active provider supports native forking**. The new session goes its own direction. The original stays clean.
-
-Ask your agent to do it. Say "fork this session into a new one called 'fix auth bug'" and twapp launches a new instance — new window, same task context.
-
-```bash
-# Or from the CLI directly:
-twapp resume --fork
-```
-
-### Ticket Context
-
-Link a Jira ticket or GitHub issue and it stays visible in the sidebar — title, status, priority, description. Your agent sees it too.
-
-```bash
-twapp work PROJ-1234                    # auto-links on creation
-twapp ticket link owner/repo#42        # link a GitHub issue
-twapp ticket create "Fix the thing"    # create a new Jira ticket
-```
-
-The CLI and the sidebar's Link box accept the same input: `owner/repo#42` (or `#42` with `github_repo` set) is a GitHub issue, a bare number gets the `jira_project` prefix, and anything else is used as a Jira key. The "Open in Jira" link uses `jira_base_url` when set, otherwise the site jtk is configured for (`jtk config show`).
-
-### Terminal Tabs
-
-Need to run a quick `git log`, check a port, or tail a log without leaving your session? Open a tab.
-
-- **Cmd+T** — open a new shell tab within the current session
-- **Cmd+W** — close the active tab (closes the window if it's the only tab)
-- **Cmd+Shift+]** / **Cmd+Shift+[** — switch between tabs
-- **Double-click** a tab label to rename it
-
-Tabs are **session-scoped** — they share the session's notes, tickets, and prompts. They don't appear in the Session Launcher or get their own metadata. When the session closes, its tabs close with it. Think tmux panes, not browser tabs.
-
-Sidebar actions (quick prompts, note injection) always target the active tab.
-
-### Session Hotkeys
-
-Quick keyboard access to session management:
-
-- **Cmd+N** — create and launch a new fresh session
-- **Cmd+Shift+N** — fork the current session
-
-### Quick Prompts
-
-Reusable prompts organized into sections. Global ones follow you everywhere; project ones stay with the session. One click sends them to the terminal.
-
-### Session Launcher
-
-Open **twapp** from Spotlight (or just run the app with no arguments) to see every session across your machine:
-
-- **Search** — filter by name, ticket, or directory
-- **Sort** — toggle between **Recent** (grouped by Today/Yesterday/This Week/Last Week/Older) and **A-Z** (grouped by first letter)
-- **Running status** — green badge on sessions that are currently open
-- **Details** — directory path, last active time, conversation message count
-- **One-click launch** — click to open a session, or focus it if already running
-- **Rescan** — Cmd+R or the refresh button to re-scan for new sessions
-- **New session** — create and launch sessions from the UI (ticket key or name, same as `twapp work`)
-- **Delete session** — hover any session to reveal a trash icon. Confirmation modal runs safety checks (uncommitted git changes, unpushed commits, incomplete tickets, unsaved notes) and offers two tiers: remove session metadata or delete everything including the working directory
-- **Provider badges** — see whether a session is currently configured to open with Claude or Codex
-- **Migration status** — sessions that need a one-time provider handoff show **Migrate on Open**
-
-The launcher streams results progressively as directories are scanned, refreshes automatically when visible, and pauses when the window is hidden to save resources.
-
-### Switching Between Claude and Codex
-
-twapp stores provider-specific resume handles inside each session directory.
-
-- If the configured provider already has a native handle for that session, twapp resumes it normally.
-- If the session only has the other provider's handle, twapp opens the configured provider with a one-time migration preload built from the existing session context.
-- After the first successful Codex launch, twapp captures the new Codex thread ID automatically and future resumes are native.
-- The launcher marks these handoffs with a **Migrate on Open** badge so the behavior is visible before you click.
-
-To switch providers:
-
-1. Open the launcher.
-2. Go to **Settings**.
-3. Under **Configuration**, set **Agent Provider** to `Claude` or `Codex`.
-4. Launch any session normally.
-
-For an existing Claude-backed session opened with Codex configured, the first Codex launch starts a new Codex thread with a preload that includes the linked ticket, recent notes, and available transcript summary. After that, the same session resumes directly in Codex.
-
-The reverse path also works for twapp-managed sessions: if a session has Codex state but no Claude state, opening it with Claude configured creates a Claude-side session seeded from the twapp session context.
-
-### Launcher Settings
-
-The launcher doubles as the central settings hub. Click the gear icon to access:
-
-- **General** — theme (light/dark/system), session color preference (random or a specific color from the palette), work directory, Jira project, and GitHub repo
-  Also includes the default `Agent Provider` selector for new launches and resumes.
-- **Prompts** — manage global quick prompts (sections and prompts) directly from the launcher
-- **Permissions** — view, add, and remove default Claude permission patterns
-
-Session colors show split-circle previews with both light and dark mode variants so you know what you're picking.
-
-### Permissions Management
-
-Default Claude permissions that auto-apply to Claude-backed sessions. Set them once, forget about them:
-
-```bash
-twapp permissions add 'Bash(gh:*)'
-twapp permissions add 'Bash(npm test:*)'
-```
-
----
+![The overview: counts of sessions that need you, cards with each session's summary, and the Triage action](docs/images/overview.png)
 
 ## Install
 
-> **Platform:** macOS (Apple Silicon and Intel). Linux and Windows are not currently supported.
+> **Platform:** macOS (Apple Silicon and Intel).
 
 ### Prerequisites
 
-- One supported agent CLI:
-  - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli)
-  - [Codex CLI](https://github.com/openai/codex)
-- For the smoothest switching experience, install both.
+At least one supported agent CLI:
 
-### Step 1: Install the binary
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- [Codex CLI](https://github.com/openai/codex)
+- Antigravity (`agy`)
 
-**Homebrew (Recommended):**
+### Step 1: Install the app
+
+**Homebrew (recommended):**
 
 ```bash
 brew install piekstra/tap/twapp
@@ -192,331 +51,230 @@ brew install piekstra/tap/twapp
 **Manual:**
 
 ```bash
-# Determine architecture
 ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-  ASSET="twapp-macos-x86_64.tar.gz"
-else
-  ASSET="twapp-macos-aarch64.tar.gz"
-fi
-
-# Download latest release
-curl -fSL -o /tmp/$ASSET \
-  https://github.com/piekstra/twapp/releases/latest/download/$ASSET
-
-# Extract
+ASSET="twapp-macos-$([ "$ARCH" = "x86_64" ] && echo x86_64 || echo aarch64).tar.gz"
+curl -fSL -o /tmp/$ASSET https://github.com/piekstra/twapp/releases/latest/download/$ASSET
 cd /tmp && tar -xzf $ASSET
-
-# Install
 mkdir -p ~/.config/twapp/bin
 cp -R /tmp/twapp.app ~/.config/twapp/twapp.app
 ln -sf ~/.config/twapp/twapp.app/Contents/MacOS/twapp ~/.config/twapp/bin/twapp
 ```
 
-Add to your PATH (`~/.zshrc`):
+Add `~/.config/twapp/bin` to your `PATH` in `~/.zshrc`:
 
 ```bash
 export PATH="$HOME/.config/twapp/bin:$PATH"
 ```
 
-Then `source ~/.zshrc`.
+### Step 2: Sign the app
 
-### Step 2: Set up code signing
-
-This creates a local certificate so macOS recognizes all twapp sessions as the same app. Without it, each session window gets a different identity — breaking session naming in Mission Control and causing repeated permission prompts.
+A local signing certificate keeps macOS from asking for the same permissions again after every update.
 
 ```bash
 twapp setup-cert
+twapp install-gui ~/.config/twapp/twapp.app
 ```
 
-Then register the app bundle:
-
-**Homebrew install:**
+For a Homebrew install, pass the cellar bundle instead:
 
 ```bash
 twapp install-gui "$(brew --prefix)/Cellar/twapp/$(brew list --versions twapp | awk '{print $2}')/twapp.app"
 ```
 
-**Manual install:**
-
-```bash
-twapp install-gui ~/.config/twapp/twapp.app
-```
-
 ### Step 3: Grant Full Disk Access
 
-Agent CLIs run shell commands (`find`, `ls`, `grep`) as subprocesses of twapp. macOS attributes their filesystem access to the host app, so without Full Disk Access every protected directory triggers a separate permission prompt.
+Agent CLIs run shell commands as subprocesses of twapp, and macOS attributes their file access to twapp. Without Full Disk Access every protected directory raises its own prompt.
 
 1. **System Settings > Privacy & Security > Full Disk Access**
-2. Click **+**, then press **Cmd+Shift+G** to open the path dialog
-3. Type `~/.config/twapp/` and press Enter
-4. Select **twapp.app** and click Open
+2. Click **+**, press **⌘⇧G**, type `~/.config/twapp/` and press Enter
+3. Select **twapp.app** and click Open
 
-All twapp instances share the same bundle identifier and certificate, so FDA covers every session. You should only need to do this once.
-
-### Step 4: Verify
+### Step 4: Open it
 
 ```bash
-twapp work --name "test-session"
+twapp work --name "first session"
 ```
 
-The window title and Mission Control label should show "test-session". If it works, you're all set.
-
-### Step 5: Choose Your Default Provider
-
-Open the launcher, click the gear icon, and set **Agent Provider** to `Claude` or `Codex`.
-
-- `Claude` remains the best-supported path for importing unmanaged historical sessions.
-- `Codex` enables native Codex resumes for any twapp session that has already been opened in Codex once.
-
-### Optional: Spotlight visibility
-
-Neither the Homebrew cellar nor `~/.config/twapp/` is indexed by Spotlight, and Spotlight ignores symlinked `.app` bundles. To launch twapp from Spotlight, create a lightweight wrapper app:
+The window opens with the session selected. To launch twapp from Spotlight, create a small wrapper app, because Spotlight skips `~/.config` and symlinked bundles:
 
 ```bash
 osacompile -o ~/Applications/twapp.app -e 'do shell script "open ~/.config/twapp/twapp.app"'
 ```
 
-This creates a real `.app` in `~/Applications` that Spotlight indexes. It just opens the actual twapp bundle, so updates are always picked up.
+### Optional tools
 
-### Optional dependencies
+| Tool | Used for |
+|------|----------|
+| [jtk](https://github.com/open-cli-collective/atlassian-cli) 1.3 or later | Jira ticket linking and creation |
+| [gh](https://cli.github.com/) | GitHub issue linking |
 
-Ticket integration requires external CLIs:
+## Using it
 
-| Tool | Used for | Tested with |
-|------|----------|-------------|
-| [gh](https://cli.github.com/) | GitHub issue linking | v2.86+ |
-| [jtk](https://github.com/open-cli-collective/atlassian-cli) | Jira ticket linking/creation | v1.3+ (text output) |
-
-Everything else twapp uses (`curl`, `tar`, `codesign`, etc.) ships with macOS.
-
-## Quick Start
+### Starting and opening sessions
 
 ```bash
-# Start a new session with a Jira ticket
-twapp work PROJ-1234
-
-# Start a named session (no ticket)
-twapp work --name "research"
-
-# Resume where you left off
-twapp resume
-
-# Fork when things get broad
-twapp resume --fork
-
-# See all your sessions
-twapp sessions
-
-# Open the session launcher (or just open twapp from Spotlight)
-open ~/.config/twapp/twapp.app
+twapp work ABC-1234               # new session for a Jira ticket, named after it
+twapp work owner/repo#42          # new session for a GitHub issue
+twapp work --name "research"      # new session without a ticket
+twapp work ABC-1234 --background  # start it without switching to it
+twapp resume                      # open the session in the current directory
+twapp status                      # what every open session is doing
 ```
 
-Then set your default provider in the launcher:
+A session is a directory holding a `.twapp-session.json` file. `twapp work` creates the directory under your configured work directory and hands the session to the window, starting the window if it is not running. In the window, `⌘N` starts a new session and `⌘K` opens any session twapp knows about.
 
-1. Open **twapp**
-2. Click the gear icon
-3. Set **Agent Provider** to `Claude` or `Codex`
-4. Launch a session
+### States
 
-If you switch providers later, open the same session again. If a migration is needed, twapp will show **Migrate on Open** in the launcher and do the preload automatically.
+| State | Meaning |
+|-------|---------|
+| Working | The harness is running a turn. |
+| Needs approval | A permission prompt or other dialog is waiting for your answer. |
+| Your turn | The turn finished and the harness is waiting for your next message. A filled dot means you have not looked at it since. |
+| Error | The last turn ended with an API or harness error. |
+| Shell | The harness exited and the tab is back at a shell prompt. |
+| Not running | The session is in the rail but not started. It starts when you select it. |
 
-## Importing Existing Claude Sessions
+The dock icon shows how many sessions need you and bounces once when a session starts waiting while twapp is in the background.
 
-Already using Claude CLI? You can bring existing unmanaged Claude sessions into twapp.
+### Keyboard
 
-### From the session launcher (GUI)
+| Shortcut | Action |
+|----------|--------|
+| `⌘1` to `⌘9` | Select the session at that position |
+| `⌘J` | Next session that needs you |
+| `⌘K` | Switch to, open or start anything |
+| `⌥⌘↑` / `⌥⌘↓` | Previous or next session |
+| `⌘0` | Overview |
+| `⌘N` / `⌘⇧N` | New session / fork the current one |
+| `⌘T` / `⌘W` | New shell tab / close the shell tab |
+| `⌘⇧[` / `⌘⇧]` | Previous or next tab |
+| `⌘B` | Show or hide the session panel |
+| `⌘,` | Settings |
+| `⌘=` / `⌘-` / `⌘⇧0` | Zoom in, out, reset |
 
-Open the session launcher and click the import icon (download arrow) in the header. twapp scans `~/.claude/projects/` for unmanaged sessions, groups them by directory, and lets you pick which ones to import. Imported sessions get their own working directories and show an "Imported" badge.
+Drag rows in the rail to reorder them; the order is kept between launches.
 
-### From the CLI
+### Notes, tickets and prompts
 
-Fork an existing Claude session into a new twapp session:
+The session panel on the right holds the session's summary, its linked ticket, its notes, and your quick prompts.
 
-```bash
-# Find your Claude session IDs
-claude sessions list
+- **Notes** are Markdown and belong to the session. `↵` on a note types it into the terminal and removes it from the list.
+- **Tickets** accept a Jira key (`ABC-1234`), a bare number (prefixed with your configured Jira project), or a GitHub issue (`owner/repo#42` or `#42`). Change or unlink them from the panel, or with `twapp ticket link <ref>`.
+- **Quick prompts** are shared by every session. Clicking one types it into the terminal without submitting it.
 
-# Import a session by forking it
-twapp work --name "my-session" -s <session-id>
+Agents in a session can use the same data from the CLI: `twapp note add`, `twapp ticket link`, `twapp prompt add`.
+
+### Forking
+
+Fork a session (`⌘⇧N`, or Fork in the panel) to start a new session that carries the current conversation's context. With a ticket, the fork gets the ticket's directory; without one, it gets a sibling directory next to the original. `twapp work <ticket> -s <session-id> --claude-cwd <dir>` forks from the CLI.
+
+### Harnesses
+
+Each session remembers its harness and keeps a separate conversation id for Claude, Codex and Antigravity. Change the harness in the session's settings and restart it: if the new harness already has a conversation for this session, twapp resumes it; otherwise it starts one with a briefing built from the previous harness's conversation, the ticket and the notes.
+
+### Summaries and triage
+
+Summaries run with the harness you choose, headless, with tools disabled and without saving a conversation. Configure them in `~/.config/twapp/config.yaml`:
+
+```yaml
+summaries:
+  provider: auto    # auto | claude | codex | off
+  model: haiku      # optional; defaults to a small, fast model for the provider
 ```
 
-> **Note:** `--cwd` is a top-level flag, not a subcommand flag:
-> ```bash
-> twapp --cwd ~/projects/my-repo work --name "my-session" -s <session-id>
-> ```
+`auto` uses your default harness if it is installed. `off` keeps the harness's own titles and last messages. Summaries are cached in `~/.local/state/twapp/summaries/` and are only regenerated when a transcript grows or a session's state changes.
 
-The forked session gets a new twapp-managed session and carries Claude context from the original.
+### Importing Claude sessions
 
-> Current limitation: unmanaged external import is Claude-only. Codex support currently targets twapp-managed sessions and provider switching inside twapp.
+Open **All sessions** in the overview and use the import button to adopt Claude conversations started outside twapp. Each imported conversation gets its own session directory under your work directory.
 
-## Model Selection
+## Configuration
 
-`twapp work --model <name>` passes a model through to the provider CLI.
-When unset, twapp does **not** pass `--model` and the provider's own
-default applies (e.g. the Claude CLI's global `ANTHROPIC_MODEL` or user
-config).
+`~/.config/twapp/config.yaml`:
 
-```bash
-# Pin a session to a specific Claude model.
-twapp work --name research --model claude-haiku-4-5-20251001
-
-# Use the tier alias for the latest model of that tier.
-twapp work --name design-review --model opus
+```yaml
+theme: system            # light | dark | system
+session_color: random    # random | a hex color such as "#ffe0e0"
+defaults:
+  work_directory: ~/projects
+  jira_project: ABC
+  jira_base_url: https://example.atlassian.net   # optional; defaults to jtk's site
+  github_repo: owner/repo
+  agent_providers:       # harnesses offered for new sessions
+    - claude
+    - codex
+summaries:
+  provider: auto
 ```
 
-twapp does **not** validate the model name; the provider CLI rejects
-unknown names at launch. For claude, the value is forwarded as
-`--model <name>`; for codex, as `-c model='<name>'` (a TOML config
-override). The `twapp resume` command intentionally does not accept
-`--model`: a resumed session keeps whatever model it started with.
+Settings (`⌘,`) edits the same file, and also manages global quick prompts and default Claude permissions.
 
-### Discovering available models
+### Files
 
-```bash
-# Three-column table: NAME / TIER / DESCRIPTION.
-twapp models list
+| File | Location | Purpose |
+|------|----------|---------|
+| `.twapp-session.json` | Session directory | Session metadata, harness conversation ids, fork ancestry |
+| `.twapp-notes-{name}.json` | Session directory | Session notes |
+| `.twapp-ticket.json` | Session directory | Linked ticket |
+| `config.yaml` | `~/.config/twapp/` | Global configuration |
+| `quick-prompts.json` | `~/.config/twapp/` | Quick prompts |
+| `default-permissions.json` | `~/.config/twapp/` | Default Claude permissions |
+| `hub.json` | `~/.config/twapp/` | Rail order, selection, last-viewed times |
+| `run/hub.sock`, `run/ptyd.sock` | `~/.config/twapp/` | Sockets for the window and the terminal host |
+| `summaries/` | `~/.local/state/twapp/` | Cached summaries |
 
-# Different provider (defaults to claude).
-twapp models list --provider claude
-
-# Machine-readable output for scripts.
-twapp models list --format json
-
-# Refresh the cache from the provider's models endpoint.
-# For claude, requires ANTHROPIC_API_KEY in the environment.
-ANTHROPIC_API_KEY=sk-ant-... twapp models refresh
-```
-
-`twapp models list` reads a cache at
-`~/.config/twapp/models.<provider>.json` if present, or falls back to a
-bundled default list shipped with the binary.
-
-> **Caveat:** the bundled default is a snapshot of the Claude model
-> family at build time. `twapp models refresh` is the authoritative
-> source; run it whenever you want a current view of available models.
-> The cache always takes precedence over the bundled default.
-
-`twapp models refresh` currently supports `--provider claude` (calls
-`https://api.anthropic.com/v1/models` with `x-api-key` and
-`anthropic-version: 2023-06-01`). For codex, edit the cache file by
-hand.
-
-## CLI Reference
+## CLI reference
 
 | Command | Description |
 |---------|-------------|
-| `twapp work <ticket\|--name>` | Start a new work session using the configured provider |
-| `twapp work --model <name>` | Pass-through model selection; forwarded to the provider CLI (claude: `--model`, codex: `-c model='…'`) |
-| `twapp models list [--provider <p>] [--format json]` | Show known models for the provider (cache if present, else bundled default) |
-| `twapp models refresh [--provider <p>]` | Re-populate the provider cache from the models endpoint (claude: `ANTHROPIC_API_KEY` required) |
-| `twapp resume [--fork]` | Resume or fork the current session using the configured provider |
-| `twapp sessions` | List all sessions with activity timestamps |
-| `twapp set-session <id>` | Update session metadata |
-| `twapp note add <text>` | Add a note to the current session |
-| `twapp note list` | List session notes |
-| `twapp note remove <id>` | Remove a note |
-| `twapp prompt add <title> <text>` | Add a quick prompt |
-| `twapp prompt list` | List quick prompts |
-| `twapp prompt remove <id>` | Remove a quick prompt |
-| `twapp ticket link <key>` | Link a Jira/GitHub ticket |
-| `twapp ticket create <summary>` | Create and link a new Jira ticket |
-| `twapp ticket refresh` | Re-fetch ticket details |
-| `twapp permissions list\|add\|remove\|sync` | Manage default Claude permissions |
-| `twapp install-gui <binary>` | Install or update the app bundle |
-| `twapp setup-cert` | Create code signing certificate |
-| `twapp dev-reload --pid <pid>` | Rebuild and relaunch (dev workflow) |
-| `twapp completions <shell>` | Generate shell completions (zsh, bash, fish) |
+| `twapp` | Open the window |
+| `twapp work <ticket\|--name>` | Start a new session (`--provider`, `--model`, `--background`, `-s` to fork) |
+| `twapp resume [--fork]` | Open or fork the session in the current directory |
+| `twapp status [--json]` | Show the open sessions and their state |
+| `twapp sessions` | List every session on disk |
+| `twapp rename <name>` | Rename the session in the current directory |
+| `twapp set-session <id>` | Change the session's conversation id |
+| `twapp note add\|list\|remove` | Session notes |
+| `twapp prompt add\|list\|remove` | Quick prompts |
+| `twapp ticket link\|create\|refresh` | Link or create a ticket |
+| `twapp permissions list\|add\|remove\|sync` | Default Claude permissions |
+| `twapp models list\|refresh` | Models known for a harness |
+| `twapp install-gui <path>` | Install or update the app bundle |
+| `twapp setup-cert` | Create the local signing certificate |
+| `twapp dev-reload` | Rebuild twapp from source and restart the window |
+| `twapp completions <shell>` | Shell completions for zsh, bash or fish |
 
-### Shell Completions
+### Model selection
 
-Tab completion for subcommands, flags, and arguments:
+`--model` is passed to the harness unchanged: `--model` for Claude and Antigravity, `-c model='…'` for Codex.
 
 ```bash
-# zsh (default macOS shell)
-mkdir -p ~/.zfunc
-twapp completions zsh > ~/.zfunc/_twapp
-# Add to ~/.zshrc: fpath+=~/.zfunc; autoload -Uz compinit && compinit
-
-# bash
-twapp completions bash > "$(brew --prefix)/etc/bash_completion.d/twapp"
-
-# fish
-twapp completions fish > ~/.config/fish/completions/twapp.fish
+twapp work ABC-1234 --model sonnet
+twapp models list                      # NAME / TIER / DESCRIPTION
+twapp models list --provider codex --format json
+twapp models refresh                   # Claude only; needs ANTHROPIC_API_KEY
 ```
 
 ## Updating
 
-twapp checks for updates on startup and shows an indicator in the sidebar when a new version is available. Click the version badge to see release notes and update with one click.
+twapp checks for a new release and shows a dot on the version in the session panel. Click it for the release notes and **Update & Restart**. Sessions keep running across the restart.
 
-Manual update:
+## How it works
 
-```bash
-ARCH=$(uname -m)
-ASSET="twapp-macos-$([ "$ARCH" = "x86_64" ] && echo x86_64 || echo aarch64).tar.gz"
-curl -fSL -o /tmp/$ASSET \
-  https://github.com/piekstra/twapp/releases/latest/download/$ASSET
-cd /tmp && tar -xzf $ASSET
-twapp install-gui /tmp/twapp.app
-```
-
-## Configuration
-
-### Global Config (`~/.config/twapp/config.yaml`)
-
-```yaml
-theme: system          # light | dark | system
-session_color: random  # random | hex (e.g. "#ffe0e0")
-defaults:
-  work_directory: ~/projects
-  jira_project: PROJ
-  jira_base_url: https://example.atlassian.net  # optional; defaults to jtk's site
-  github_repo: owner/repo
-  agent_providers:     # harnesses offered for each new session
-    - claude
-    - codex
-    - antigravity
-```
-
-The launcher Settings page can search for supported harness CLIs on `PATH` and configure the installed ones. New GUI sessions show a harness picker. With multiple configured harnesses, `twapp work` prompts in an interactive terminal or accepts `--provider claude|codex|antigravity`.
-
-Each session remembers its active harness and keeps separate native conversation IDs for Claude, Codex, and Antigravity. Change the harness in Session Config, save, then close and reopen the window. If the target already has a conversation, twapp resumes it. Otherwise twapp starts it with migration context while retaining the source conversation, so switching back remains possible.
-
-### File Storage
-
-| File | Location | Purpose |
-|------|----------|---------|
-| `.twapp-session.json` | Working dir | Session metadata, provider handles, fork ancestry |
-| `.twapp-notes-{name}.json` | Working dir | Session notes |
-| `.twapp-prompts-{name}.json` | Working dir | Project-scoped quick prompts |
-| `.twapp-ticket.json` | Working dir | Linked ticket metadata |
-| `quick-prompts.json` | `~/.config/twapp/` | Global quick prompts |
-| `default-permissions.json` | `~/.config/twapp/` | Default Claude permissions |
-| `config.yaml` | `~/.config/twapp/` | Global configuration |
-
-## Architecture
-
-Single Rust/[Tauri](https://tauri.app/) binary that serves as both CLI tool and GUI app.
-
-- **Frontend**: React/TypeScript — sidebar panels, [xterm.js](https://xtermjs.org/) terminal emulator
-- **Backend**: Rust — PTY management, file I/O, Tauri commands, CLI routing via [Clap](https://docs.rs/clap)
-- **Storage**: JSON files in the working directory (per-session) and `~/.config/twapp/` (global). No database, no cloud dependency.
+The window is one Tauri process. Terminals belong to `twapp ptyd`, a headless host with no web view that the window starts on demand and that exits once it has no terminals and no window. The CLI hands sessions to the window over a local socket. [docs/architecture.md](docs/architecture.md) describes the processes, the state signals, summaries and the socket protocols.
 
 ## Development
 
 ```bash
-npm ci                                          # install dependencies
-npm run dev                                     # dev server (hot reload)
-npm run tauri build                             # build release binary
-twapp install-gui src-tauri/target/release/twapp  # install locally
-npx tsc --noEmit                                # type check
+npm ci
+npm run tauri dev           # run the app with hot reload
+npm test                    # frontend tests
+cd src-tauri && cargo test  # backend tests
+npx tsc --noEmit            # type check
+npm run tauri build         # release build
 ```
 
-**Versioning:** CI derives the version from `version.txt` (major.minor) + run number (patch). To bump minor/major, update `version.txt`.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+CI derives the version from `version.txt` (major.minor) plus the run number. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

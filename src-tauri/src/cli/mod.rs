@@ -1,6 +1,7 @@
 pub mod app_bundle;
 pub mod config;
 pub mod harness;
+pub mod hub_link;
 pub mod models;
 pub mod notes;
 pub mod permissions;
@@ -20,9 +21,9 @@ use session::{
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
-    #[command(after_help = "Examples:\n  twapp work ABC-1234                                    Start fresh session\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name research --model sonnet              Pin the session to a specific model\n  twapp work ABC-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket")]
+    #[command(after_help = "Examples:\n  twapp work ABC-1234                                    Start fresh session\n  twapp work ABC-1234 --background                       Start it without switching to it\n  twapp work --name \"research\"                           Start session without a ticket\n  twapp work --name research --model sonnet              Pin the session to a specific model\n  twapp work ABC-5678 -s abc123 --claude-cwd /old/dir    Fork existing session to new ticket")]
     Work {
-        /// Ticket ID (e.g. MON-1234, 1234, owner/repo#123)
+        /// Ticket ID (e.g. ABC-1234, 1234, owner/repo#123)
         ticket: Option<String>,
         /// Custom session name (required if no ticket)
         #[arg(long, short = 'n')]
@@ -51,6 +52,10 @@ pub enum Commands {
         /// Use Chrome instead of Claude desktop
         #[arg(long)]
         chrome: bool,
+        /// Start the session without switching the window to it or bringing
+        /// the window forward
+        #[arg(long)]
+        background: bool,
     },
     /// Resume session in current directory
     #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
@@ -59,6 +64,13 @@ pub enum Commands {
         #[arg(long)]
         fork: bool,
     },
+    /// Show the sessions open in the twapp window and what each is doing
+    Status {
+        /// Print the window's session list as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// List all sessions
     Sessions {
         /// Directory to scan (default: configured work_directory)
@@ -106,7 +118,7 @@ pub enum Commands {
     #[command(name = "setup-cert")]
     SetupCert,
     /// Rename the current session
-    #[command(after_help = "Examples:\n  twapp rename \"MON-5678 Better Name\"    Rename session in current directory")]
+    #[command(after_help = "Examples:\n  twapp rename \"ABC-5678 Better Name\"    Rename session in current directory")]
     Rename {
         /// New session name
         name: String,
@@ -158,7 +170,7 @@ pub enum Commands {
 pub enum TicketCommands {
     /// Link existing ticket to current session
     Link {
-        /// Ticket key (e.g. MON-1234)
+        /// Ticket key (e.g. ABC-1234)
         ticket_key: String,
         /// Target directory
         #[arg(long)]
@@ -214,16 +226,15 @@ pub enum NoteCommands {
 
 #[derive(Subcommand, Debug)]
 pub enum PromptCommands {
-    /// List prompts
+    /// List quick prompts
     List {
-        /// Show global prompts instead of project prompts
-        #[arg(long)]
+        /// Accepted for compatibility; quick prompts are always global
+        #[arg(long, hide = true)]
         global: bool,
-        /// Target directory
-        #[arg(long)]
+        #[arg(long, hide = true)]
         dir: Option<String>,
     },
-    /// Add a prompt
+    /// Add a quick prompt (shared by every session)
     Add {
         /// Prompt title
         title: String,
@@ -232,22 +243,20 @@ pub enum PromptCommands {
         /// Target section (created if missing, default: "General")
         #[arg(long)]
         section: Option<String>,
-        /// Add to global prompts instead of project prompts
-        #[arg(long)]
+        /// Accepted for compatibility; quick prompts are always global
+        #[arg(long, hide = true)]
         global: bool,
-        /// Target directory
-        #[arg(long)]
+        #[arg(long, hide = true)]
         dir: Option<String>,
     },
-    /// Remove a prompt by ID prefix
+    /// Remove a quick prompt by ID prefix
     Remove {
         /// Prompt ID (or unique prefix)
         id: String,
-        /// Remove from global prompts instead of project prompts
-        #[arg(long)]
+        /// Accepted for compatibility; quick prompts are always global
+        #[arg(long, hide = true)]
         global: bool,
-        /// Target directory
-        #[arg(long)]
+        #[arg(long, hide = true)]
         dir: Option<String>,
     },
 }
@@ -305,6 +314,7 @@ pub fn run(cmd: Commands) -> i32 {
             session_id: fork_session_id,
             claude_cwd,
             chrome,
+            background,
         } => cmd_work(
             ticket,
             name,
@@ -315,8 +325,10 @@ pub fn run(cmd: Commands) -> i32 {
             fork_session_id,
             claude_cwd,
             chrome,
+            background,
         ),
         Commands::Resume { fork } => cmd_resume(fork),
+        Commands::Status { json } => cmd_status(json),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
             TicketCommands::Link {
@@ -339,19 +351,14 @@ pub fn run(cmd: Commands) -> i32 {
             }
         },
         Commands::Prompt { command } => match command {
-            PromptCommands::List { global, dir } => {
-                prompts::cmd_prompt_list(global, dir.as_deref())
-            }
+            PromptCommands::List { .. } => prompts::cmd_prompt_list(true, None),
             PromptCommands::Add {
                 title,
                 text,
                 section,
-                global,
-                dir,
-            } => prompts::cmd_prompt_add(&title, &text, section.as_deref(), global, dir.as_deref()),
-            PromptCommands::Remove { id, global, dir } => {
-                prompts::cmd_prompt_remove(&id, global, dir.as_deref())
-            }
+                ..
+            } => prompts::cmd_prompt_add(&title, &text, section.as_deref(), true, None),
+            PromptCommands::Remove { id, .. } => prompts::cmd_prompt_remove(&id, true, None),
         },
         Commands::Permissions { command } => match command {
             PermissionCommands::List => permissions::cmd_list(),
@@ -402,7 +409,7 @@ pub struct SessionCreationResult {
 }
 
 /// Combine ticket key + shortened title for the session name.
-/// e.g. "MON-1234 Implement Great Feature" instead of just "MON-1234".
+/// e.g. "ABC-1234 Implement Great Feature" instead of just "ABC-1234".
 /// Truncates at word boundaries to stay under 50 chars total.
 pub fn format_session_name(key: &str, title: &str) -> String {
     let max_total = 50;
@@ -639,10 +646,11 @@ fn cmd_work(
     fork_session_id: Option<String>,
     claude_cwd_arg: Option<String>,
     chrome: bool,
+    background: bool,
 ) -> i32 {
     if ticket_id.is_none() && session_name.is_none() {
         eprintln!("Error: Provide a ticket or --name for the session.");
-        eprintln!("  twapp work MON-1234");
+        eprintln!("  twapp work ABC-1234");
         eprintln!("  twapp work --name \"My Task\"");
         return 1;
     }
@@ -719,17 +727,14 @@ fn cmd_work(
         }
     };
 
-    let instance_app = match app_bundle::prepare_instance_app(&result.name, &result.color) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error preparing app instance: {}", e);
-            return 1;
-        }
+    println!("Opening {} in twapp...", result.name);
+
+    let opened = if background {
+        hub_link::open_in_hub_background(&result.app_args)
+    } else {
+        hub_link::open_in_hub(&result.app_args)
     };
-
-    println!("Launching twapp-gui...");
-
-    if let Err(e) = app_bundle::launch_gui(&instance_app, &result.app_args) {
+    if let Err(e) = opened {
         eprintln!("Error: {}", e);
         return 1;
     }
@@ -752,6 +757,33 @@ fn cmd_resume(fork: bool) -> i32 {
             return 1;
         }
     };
+
+    // The window hosts one session per directory. Forking in place while that
+    // directory's session is running would leave the running terminal on the
+    // old conversation under the new session id.
+    let key = crate::gui::hub::session_key(&work_dir.to_string_lossy());
+    let running = hub_link::running_sessions().unwrap_or_default();
+    if running.contains(&key) {
+        if fork {
+            eprintln!(
+                "This session is running in twapp. Fork it from the window (⌘⇧N), which gives the fork its own directory."
+            );
+            return 1;
+        }
+        return match hub_link::open_in_hub(&[
+            "--cwd".to_string(),
+            work_dir.to_string_lossy().to_string(),
+        ]) {
+            Ok(()) => {
+                println!("{} is already running; switched to it.", session_data.name);
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                1
+            }
+        };
+    }
 
     let window_name = session_data.name.clone();
     let provider = session_data.last_provider();
@@ -1218,26 +1250,76 @@ fn build_and_launch(
         app_args.push("--chrome".to_string());
     }
 
-    let instance_app = match app_bundle::prepare_instance_app(window_name, color) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error preparing app instance: {}", e);
-            return 1;
-        }
-    };
-
     println!(
         "Resuming session {}... in {}",
         session_id.unwrap_or("pending"),
         work_dir.display()
     );
 
-    if let Err(e) = app_bundle::launch_gui(&instance_app, &app_args) {
+    if let Err(e) = hub_link::open_in_hub(&app_args) {
         eprintln!("Error: {}", e);
         return 1;
     }
 
     0
+}
+
+fn cmd_status(json: bool) -> i32 {
+    let Some(snapshot) = hub_link::snapshot() else {
+        eprintln!("twapp is not running.");
+        return 1;
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+        return 0;
+    }
+    let sessions = snapshot
+        .get("sessions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if sessions.is_empty() {
+        println!("No sessions are open in twapp.");
+        return 0;
+    }
+    for s in sessions {
+        let get = |path: &[&str]| -> String {
+            let mut v = &s;
+            for p in path {
+                v = match v.get(p) {
+                    Some(next) => next,
+                    None => return String::new(),
+                };
+            }
+            v.as_str().map(str::to_string).unwrap_or_default()
+        };
+        let attention = s.get("attention").and_then(|v| v.as_bool()).unwrap_or(false);
+        let state = get(&["status", "state"]).replace('_', " ");
+        let headline = {
+            let h = get(&["summary", "headline"]);
+            if h.is_empty() { get(&["status", "title"]) } else { h }
+        };
+        println!(
+            "{} {:<40} {:<15} {}",
+            if attention { "!" } else { " " },
+            truncate_display(&get(&["name"]), 40),
+            state,
+            headline
+        );
+        let needs = get(&["summary", "needs_user"]);
+        if !needs.is_empty() {
+            println!("  {:<40} needs you: {}", "", needs);
+        }
+    }
+    0
+}
+
+fn truncate_display(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        text.chars().take(max - 1).collect::<String>() + "…"
+    }
 }
 
 fn cmd_sessions(path: Option<String>) -> i32 {
@@ -1916,23 +1998,19 @@ fn cmd_dev_reload(pid: Option<u32>, cwd: &str, gui_src: Option<&str>) -> i32 {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    // Step 4: Relaunch via twapp resume
-    println!("Resuming session in {}...", work_dir.display());
-    let result = std::process::Command::new("twapp")
-        .args(["resume"])
-        .current_dir(&work_dir)
+    // Step 4: Start the new window. Sessions kept running in ptyd, so the
+    // window reattaches to every one of them.
+    println!("Starting twapp...");
+    let result = std::process::Command::new("open")
+        .args(["-a", &app_bundle::gui_app_path().to_string_lossy()])
         .status();
+    let _ = &work_dir;
 
     match result {
-        Ok(s) => {
-            if s.success() {
-                0
-            } else {
-                s.code().unwrap_or(1)
-            }
-        }
+        Ok(s) if s.success() => 0,
+        Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
-            eprintln!("Error resuming: {}", e);
+            eprintln!("Error starting twapp: {}", e);
             1
         }
     }
