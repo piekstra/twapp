@@ -2029,6 +2029,31 @@ pub async fn hub_blocker_check(
     .map_err(|e| e.to_string())?
 }
 
+/// Paste a message about a blocker's update into its session's harness input,
+/// without sending it, and mark the update seen. The user reads it in the
+/// terminal and presses Enter, or edits it first.
+#[tauri::command]
+pub fn hub_blocker_send(key: String, id: String) -> Result<(), String> {
+    let hub = require_hub()?;
+    if !hub.is_hosted_running(&key) {
+        return Err("the session is not running; open it first".to_string());
+    }
+    let dir = Path::new(&key);
+    let blocker = crate::cli::blockers::load(dir)
+        .into_iter()
+        .find(|b| b.id == id)
+        .ok_or_else(|| format!("no blocker {}", id))?;
+    // Bracketed paste keeps the harness from submitting at each newline.
+    let paste = format!("\x1b[200~{}\x1b[201~", blocker.update_message());
+    hub.write(&key, MAIN_TAB, paste.into_bytes());
+    crate::cli::blockers::update(dir, &id, |b| {
+        b.mark_seen();
+        b.log("sent", "", Some("user"));
+    })?;
+    hub.refresh_blockers();
+    Ok(())
+}
+
 /// Add the user's note to a blocker.
 #[tauri::command]
 pub fn hub_blocker_note(key: String, id: String, text: String) -> Result<(), String> {

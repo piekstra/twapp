@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
 import CheckButton from "./CheckButton";
-import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
+import { hubApi, sendToSession, sinceLabel, type Blocker, type SessionView } from "./api";
 
 const EVENT: Record<string, string> = {
   recorded: "Recorded",
   note: "Note",
   check_changed: "Check output changed",
   seen: "Marked seen",
+  sent: "Sent to the session",
   resolved: "Resolved",
 };
 
@@ -129,6 +130,16 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
             <CheckButton blocker={blocker} sessionKey={session.key} className="fork-cancel" onError={setError} onResult={(t) => setCheckResult(t || null)} />
             {blocker.status === "updated" && (
               <button className="fork-cancel" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>Mark seen</button>
+            )}
+            {blocker.status === "updated" && (
+              <button
+                className="fork-submit"
+                disabled={busy}
+                title="Paste a message about this update into the session's input, for you to review and send"
+                onClick={() => run(async () => { await sendToSession(session.key, blocker.id, onSelect); onClose(); })}
+              >
+                Send to session
+              </button>
             )}
             <span className="spacer" />
             <button className="fork-submit" disabled={busy} onClick={() => run(async () => { await hubApi.blockerSet(session.key, blocker.id, "resolve"); onClose(); })}>
