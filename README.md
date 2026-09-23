@@ -210,6 +210,8 @@ The overview groups sessions **By lane** or **By effort**. A session's effort is
 
 A session often stops on someone else: a vendor's support case, an email, another team's review. The session's agent records each one with `twapp blocker add`, naming who it waits on and, optionally, a command that prints the blocker's current state (a CLI that reads the ticket, say). The overview's **Waiting on** list shows every open blocker across sessions with the session it belongs to, and the session panel shows its own.
 
+Each blocker keeps notes and a history: the agent adds notes with `twapp blocker note` (what it sent, what the other side asked, what to do once it moves), and the window records when a check's output changed, when it was seen and when it was resolved. Clicking a blocker opens its details, with its reference, check, last output, the notes and history, and a box for your own notes.
+
 For a blocker with a check command, the window runs the command hourly, one at a time, and marks the blocker **Updated** when its output changes. An updated blocker brings its session to your attention even in the Blocked lane, and **Mark seen** makes the new output the baseline. The window runs a command only after you press **Approve and check** for that exact command, since any agent or repository can write a blocker file; approved commands are kept in `~/.config/twapp/approved-checks.json` and every run is logged. Checking costs no model calls.
 
 `twapp install-skill` installs a skill that teaches Claude (and Codex, when installed) when to record blockers and how to write a check command whose output changes only when the blocker does.
@@ -269,7 +271,7 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp rename <name>`, `twapp rename --suggested` | Rename the session in the current directory, or take the window's suggestion |
 | `twapp lane [priority\|background\|blocked]` | Show or set the session's lane |
 | `twapp close` | Stop the session and remove it from the window; its files stay |
-| `twapp blocker add\|list\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
+| `twapp blocker add\|list\|show\|note\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |
 | `twapp yaks [--json]`, `twapp yaks --all [--days N]` | The session's main effort and tangents, or tangents across all sessions |
 | `twapp effort [name\|--clear]` | Show or set the larger effort the session belongs to |

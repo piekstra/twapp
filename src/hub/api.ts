@@ -106,6 +106,7 @@ export interface Blocker {
   excerpt?: string | null;
   check_error?: string | null;
   check_approved: boolean;
+  history?: { at: string; kind: string; text?: string; by?: string | null }[];
 }
 
 export type Lane = "priority" | "background" | "blocked";
@@ -180,6 +181,7 @@ export const hubApi = {
   yakReport: (days: number) => invoke<YakReport>("hub_yak_report", { days }),
   blockerCheck: (key: string, id: string, approve: boolean) => invoke("hub_blocker_check", { key, id, approve }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
+  blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
   start: (key: string, tab: string, rows: number, cols: number, channel: Channel<ArrayBuffer>) =>
     invoke("hub_start", { key, tab, rows, cols, channel }),

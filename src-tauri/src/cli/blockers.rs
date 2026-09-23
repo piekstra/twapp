@@ -30,6 +30,20 @@ pub enum BlockerStatus {
     Resolved,
 }
 
+/// Something that happened to a blocker: a note from the agent or the user,
+/// or a change the window or CLI made.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct BlockerEvent {
+    pub at: String,
+    /// `note`, `recorded`, `updated`, `seen`, `resolved` or `check_changed`.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    /// Who wrote a note: `agent` (the CLI) or `user` (the window).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Blocker {
     pub id: String,
@@ -67,16 +81,37 @@ pub struct Blocker {
     pub excerpt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_error: Option<String>,
+    /// What happened to the blocker, oldest first: notes, updates, when it
+    /// was seen and resolved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<BlockerEvent>,
 }
 
 impl Blocker {
     pub fn new(title: &str) -> Self {
+        let now = chrono::Utc::now().to_rfc3339();
         Self {
             id: short_id(),
             title: title.to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: now.clone(),
+            history: vec![BlockerEvent { at: now, kind: "recorded".into(), ..Default::default() }],
             ..Default::default()
         }
+    }
+
+    pub fn log(&mut self, kind: &str, text: &str, by: Option<&str>) {
+        self.history.push(BlockerEvent {
+            at: chrono::Utc::now().to_rfc3339(),
+            kind: kind.to_string(),
+            text: text.to_string(),
+            by: by.map(str::to_string),
+        });
+    }
+
+    pub fn resolve(&mut self, by: Option<&str>) {
+        self.status = BlockerStatus::Resolved;
+        self.resolved_at = Some(chrono::Utc::now().to_rfc3339());
+        self.log("resolved", "", by);
     }
 
     pub fn is_open(&self) -> bool {
@@ -100,6 +135,8 @@ impl Blocker {
                     Some(seen) if *seen != hash => {
                         if self.status == BlockerStatus::Waiting {
                             self.changed_at = Some(now);
+                            let summary = excerpt(&output).chars().take(300).collect::<String>();
+                            self.log("check_changed", &summary, None);
                         }
                         self.status = BlockerStatus::Updated;
                     }
@@ -113,6 +150,7 @@ impl Blocker {
     pub fn mark_seen(&mut self) {
         if self.status == BlockerStatus::Updated {
             self.status = BlockerStatus::Waiting;
+            self.log("seen", "", Some("user"));
         }
         if self.latest_hash.is_some() {
             self.seen_hash = self.latest_hash.clone();
@@ -346,9 +384,12 @@ fn finish(result: Result<(), String>) -> i32 {
 pub fn run_command(command: super::BlockerCommands) -> i32 {
     use super::BlockerCommands as C;
     match command {
-        C::Add { title, party, kind, reference, check, dir } => {
+        C::Add { title, party, kind, reference, check, note, dir } => {
             let dir = session_dir(dir.as_deref());
             let mut blocker = Blocker::new(&title);
+            if let Some(note) = note {
+                blocker.log("note", &note, Some("agent"));
+            }
             blocker.party = party;
             blocker.kind = kind;
             blocker.reference = reference;
@@ -425,13 +466,31 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             i32::from(failed)
         }
         C::Seen { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, Blocker::mark_seen).map(|_| ())),
-        C::Resolve { id, dir } => finish(
-            update(&session_dir(dir.as_deref()), &id, |b| {
-                b.status = BlockerStatus::Resolved;
-                b.resolved_at = Some(chrono::Utc::now().to_rfc3339());
-            })
-            .map(|_| ()),
-        ),
+        C::Resolve { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, |b| b.resolve(Some("agent"))).map(|_| ())),
+        C::Note { id, text, dir } => {
+            finish(update(&session_dir(dir.as_deref()), &id, |b| b.log("note", &text, Some("agent"))).map(|_| ()))
+        }
+        C::Show { id, json, dir } => {
+            let found = load(&session_dir(dir.as_deref())).into_iter().find(|b| b.id.starts_with(&id));
+            let Some(b) = found else {
+                eprintln!("Error: no blocker {}", id);
+                return 1;
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&b).unwrap_or_default());
+                return 0;
+            }
+            print_blocker(&b);
+            if let Some(excerpt) = &b.excerpt {
+                println!("          last output:\n{}", excerpt.lines().map(|l| format!("            {}", l)).collect::<Vec<_>>().join("\n"));
+            }
+            for event in &b.history {
+                let when = event.at.get(..16).unwrap_or(&event.at).replace('T', " ");
+                let by = event.by.as_deref().map(|b| format!(" ({})", b)).unwrap_or_default();
+                println!("          {} {}{}{}", when, event.kind, by, if event.text.is_empty() { String::new() } else { format!(": {}", event.text) });
+            }
+            0
+        }
         C::Remove { id, dir } => {
             let dir = session_dir(dir.as_deref());
             let mut all = load(&dir);

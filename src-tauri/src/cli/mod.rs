@@ -309,6 +309,24 @@ pub enum BlockerCommands {
         /// Shell command, run in the session directory, that prints the blocker's state
         #[arg(long)]
         check: Option<String>,
+        /// A first note: context the user will want when the answer comes
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Add a note to a blocker: what was sent, what was asked, what changed
+    Note {
+        id: String,
+        text: String,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Show one blocker with its notes and history
+    Show {
+        id: String,
+        #[arg(long)]
+        json: bool,
         #[arg(long)]
         dir: Option<String>,
     },

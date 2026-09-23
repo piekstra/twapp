@@ -1979,17 +1979,25 @@ pub async fn hub_blocker_check(key: String, id: String, approve: bool) -> Result
     .map_err(|e| e.to_string())?
 }
 
+/// Add the user's note to a blocker.
+#[tauri::command]
+pub fn hub_blocker_note(key: String, id: String, text: String) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+    crate::cli::blockers::update(Path::new(&key), &id, |b| b.log("note", text, Some("user")))?;
+    require_hub()?.refresh_blockers();
+    Ok(())
+}
+
 /// `seen`, `resolve` or `remove` a blocker.
 #[tauri::command]
 pub fn hub_blocker_set(key: String, id: String, action: String) -> Result<(), String> {
     let dir = Path::new(&key);
     match action.as_str() {
         "seen" => crate::cli::blockers::update(dir, &id, crate::cli::blockers::Blocker::mark_seen).map(|_| ())?,
-        "resolve" => crate::cli::blockers::update(dir, &id, |b| {
-            b.status = crate::cli::blockers::BlockerStatus::Resolved;
-            b.resolved_at = Some(chrono::Utc::now().to_rfc3339());
-        })
-        .map(|_| ())?,
+        "resolve" => crate::cli::blockers::update(dir, &id, |b| b.resolve(Some("user"))).map(|_| ())?,
         "remove" => {
             let mut all = crate::cli::blockers::load(dir);
             all.retain(|b| b.id != id);

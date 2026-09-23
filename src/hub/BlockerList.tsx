@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
+import BlockerDetail from "./BlockerDetail";
 import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
 
 interface Props {
@@ -14,7 +15,10 @@ interface Props {
 function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocker; session: SessionView; now: number; showSession?: boolean; onSelect?: (key: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(blocker.status === "updated");
+  // An update shows its output in the card; everything else is in the details.
+  const open = blocker.status === "updated";
+  const [detail, setDetail] = useState(false);
+  const notes = (blocker.history ?? []).filter((e) => e.kind === "note");
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -37,7 +41,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
     <div className={`blocker-row${updated ? " updated" : ""}`}>
       <div className="blocker-top">
         <span className={`blocker-dot${updated ? " updated" : ""}`} />
-        <span className="blocker-title" onClick={() => setOpen((v) => !v)}>
+        <span className="blocker-title" onClick={() => setDetail(true)} title="Open the blocker's details and notes">
           <Linkify text={blocker.title} />
           {updated && <span className="blocker-badge">Updated</span>}
         </span>
@@ -58,6 +62,12 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
           </button>
         )}
       </div>
+      {notes.length > 0 && (
+        <div className="blocker-last-note" onClick={() => setDetail(true)}>
+          <span className="blocker-event-kind">Note</span> <Linkify text={notes[notes.length - 1].text ?? ""} />
+          {notes.length > 1 && <span className="blocker-checked"> · {notes.length} notes</span>}
+        </div>
+      )}
       {open && (
         <div className="blocker-detail">
           {blocker.check ? (
@@ -99,7 +109,9 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
         <button className="button ghost small" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "resolve"))}>
           Resolved
         </button>
+        <button className="button ghost small" onClick={() => setDetail(true)}>Details</button>
       </div>
+      {detail && <BlockerDetail blocker={blocker} session={session} now={now} onClose={() => setDetail(false)} onSelect={onSelect} />}
     </div>
   );
 }

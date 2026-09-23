@@ -18,7 +18,8 @@ twapp blocker add "<what you are waiting for>" --party "<who>" --kind ticket --r
 
 The window lists open blockers across every session, so the user can see what each session waits on without asking it, and jump to the session when something changes. Keep them current:
 
-- `twapp blocker list` shows the open ones; `twapp blocker resolve <id>` when the answer arrived and the work can go on; `twapp blocker update <id> ...` when the reference or the check changes.
+- `twapp blocker list` shows the open ones; `twapp blocker show <id>` one with its notes and history; `twapp blocker resolve <id>` when the answer arrived and the work can go on; `twapp blocker update <id> ...` when the reference or the check changes.
+- Add a note whenever something happens that the user will want when the answer comes: what you sent or asked, a follow-up, what they said, what to do next once it moves. `twapp blocker note <id> "<text>"`, or `--note` on `add` for the first one. The user reads them in the blocker's details; keep each to a sentence or two.
 - Record one blocker per thing waited on, not per session. A title says what is needed, not what was done ("Vendor to confirm the token scope", not "Emailed the vendor").
 - `--party` names who is outside the session, so the user can see what one vendor or team owes across sessions.
 

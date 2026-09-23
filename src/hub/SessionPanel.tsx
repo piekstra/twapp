@@ -135,11 +135,13 @@ export default function SessionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [directory]);
 
+  const [composing, setComposing] = useState(false);
   const addNote = () => {
     if (!newNote.trim()) return;
     const note = { id: crypto.randomUUID(), text: newNote.trim(), timestamp: Date.now() };
     updateNotes((prev) => [note, ...prev]);
     setNewNote("");
+    setComposing(false);
   };
   const deleteNote = (id: string) => {
     deletedNotes.current.add(id);
@@ -685,24 +687,46 @@ export default function SessionPanel({
               <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
             </svg>
           </button>
+          <button
+            className="icon-button small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setNotesExpanded(true);
+              setComposing(true);
+            }}
+            title="Add a note"
+          >
+            +
+          </button>
         </div>
         {notesExpanded && (
           <div className="section-body">
-            <div className="note-composer">
-              <textarea
-                className="input"
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                placeholder="Add a note. ⌘↩ to save."
-                rows={2}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.metaKey) addNote();
-                }}
-              />
-              {newNote.trim() && (
-                <button className="button primary small" onClick={addNote}>Add note</button>
-              )}
-            </div>
+            {composing && (
+              <div className="note-composer">
+                <textarea
+                  className="input"
+                  value={newNote}
+                  autoFocus
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="Add a note. ⌘↩ to save, Esc to cancel."
+                  rows={2}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && e.metaKey) addNote();
+                    if (e.key === "Escape") {
+                      setNewNote("");
+                      setComposing(false);
+                    }
+                  }}
+                />
+                <div className="note-composer-actions">
+                  <button className="button ghost small" onClick={() => { setNewNote(""); setComposing(false); }}>Cancel</button>
+                  <button className="button primary small" disabled={!newNote.trim()} onClick={addNote}>Add note</button>
+                </div>
+              </div>
+            )}
+            {!composing && notes.length === 0 && (
+              <div className="section-empty blocker-empty">No notes yet. + adds one; the session's agent can add them with <code>twapp note add</code>.</div>
+            )}
             <div className="note-list">
               {notes.map((note) => (
                 <div key={note.id} className="note-card">
