@@ -129,46 +129,6 @@ pub fn set_agent_provider_preference(provider: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_monitor_position() -> String {
-    crate::cli::config::get_monitor_position()
-}
-
-#[tauri::command]
-pub fn set_monitor_position(position: String) -> Result<(), String> {
-    crate::cli::config::set_monitor_position(&position)
-}
-
-#[tauri::command]
-pub fn get_monitor_size() -> u32 {
-    crate::cli::config::get_monitor_size()
-}
-
-#[tauri::command]
-pub fn set_monitor_size(size: u32) -> Result<(), String> {
-    crate::cli::config::set_monitor_size(size)
-}
-
-#[tauri::command]
-pub fn get_monitor_enabled() -> bool {
-    crate::cli::config::get_monitor_enabled()
-}
-
-#[tauri::command]
-pub fn set_monitor_enabled(enabled: bool) -> Result<(), String> {
-    crate::cli::config::set_monitor_enabled(enabled)
-}
-
-#[tauri::command]
-pub fn get_monitor_float() -> bool {
-    crate::cli::config::get_monitor_float()
-}
-
-#[tauri::command]
-pub fn set_monitor_float(float: bool) -> Result<(), String> {
-    crate::cli::config::set_monitor_float(float)
-}
-
-#[tauri::command]
 pub fn get_default_permissions() -> Vec<String> {
     crate::cli::permissions::load_default_permissions()
 }
