@@ -327,9 +327,33 @@ function SessionLauncher({
     );
   }, [sessions, searchQuery, showImported]);
 
+  // Sessions whose conversation is gone sit in their own folded group, unless
+  // a search is looking for them.
+  const lostSessions = useMemo(
+    () => (searchQuery.trim() ? [] : filteredSessions.filter((s) => s.conversation_missing)),
+    [filteredSessions, searchQuery],
+  );
+  const [lostOpen, setLostOpen] = useState(false);
+  const [forgetConfirm, setForgetConfirm] = useState(false);
+  const [forgetting, setForgetting] = useState(false);
+  const forgetLost = async () => {
+    setForgetting(true);
+    try {
+      await invoke<number>("forget_sessions", { directories: lostSessions.map((s) => s.directory) });
+      const gone = new Set(lostSessions.map((s) => s.directory));
+      setSessions((prev) => prev.filter((s) => !gone.has(s.directory)));
+      setForgetConfirm(false);
+    } catch (e) {
+      setLaunchError({ directory: "", message: String(e) });
+    } finally {
+      setForgetting(false);
+    }
+  };
+
   const sessionBuckets = useMemo(() => {
+    const listed = searchQuery.trim() ? filteredSessions : filteredSessions.filter((s) => !s.conversation_missing);
     if (sortMode === "alpha") {
-      const sorted = [...filteredSessions].sort((a, b) =>
+      const sorted = [...listed].sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
       );
       const groups = new Map<string, LauncherSession[]>();
@@ -356,7 +380,7 @@ function SessionLauncher({
       { label: "Older", sessions: [] },
     ];
 
-    const recentFirst = [...filteredSessions].sort((a, b) => {
+    const recentFirst = [...listed].sort((a, b) => {
       const ta = a.last_active || "";
       const tb = b.last_active || "";
       if (ta === tb) return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -372,7 +396,7 @@ function SessionLauncher({
     }
 
     return buckets.filter((b) => b.sessions.length > 0);
-  }, [filteredSessions, sortMode]);
+  }, [filteredSessions, sortMode, searchQuery]);
 
   const handleLaunch = async (session: LauncherSession) => {
     if (launching) return;
@@ -1109,6 +1133,11 @@ function SessionLauncher({
                 {session.is_running && (
                   <span className="launcher-running-badge">Running</span>
                 )}
+                {session.conversation_missing && (
+                  <span className="launcher-lost-badge" title="Claude has no transcript for this conversation. Opening starts a new one.">
+                    No conversation
+                  </span>
+                )}
                 {launching === session.directory && (
                   <span className="launcher-opening">
                     <span className="starting-spinner" /> Opening
@@ -1608,9 +1637,49 @@ function SessionLauncher({
                 {bucket.sessions.map((s) => renderSession(s))}
               </div>
             ))}
+            {lostSessions.length > 0 && (
+              <div className="launcher-group launcher-lost">
+                <div className="launcher-lost-head">
+                  <button className="launcher-group-label launcher-lost-toggle" onClick={() => setLostOpen((v) => !v)}>
+                    {lostOpen ? "▾" : "▸"} No conversation ({lostSessions.length})
+                  </button>
+                  <button className="launcher-lost-forget" onClick={() => setForgetConfirm(true)}>
+                    Forget all...
+                  </button>
+                </div>
+                <div className="launcher-lost-hint">
+                  Claude has no transcript for these: it removes conversations after its cleanup period, and a session
+                  that never got a message has none. Opening one starts a new conversation in its directory.
+                </div>
+                {lostOpen && lostSessions.map((s) => renderSession(s))}
+              </div>
+            )}
           </>
         )}
       </div>
+      )}
+
+      {forgetConfirm && (
+        <div className="delete-overlay" onClick={() => setForgetConfirm(false)}>
+          <div className="delete-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="delete-header">
+              <span className="delete-session-name">Forget {lostSessions.length} sessions?</span>
+            </div>
+            <div className="delete-body">
+              <div className="delete-check warning">
+                <span className="delete-check-icon">&#x26A0;</span>
+                Removes twapp's files (session, notes, ticket) from each directory, and the directory itself only when
+                nothing else is in it. Code, other files and project settings stay.
+              </div>
+            </div>
+            <div className="delete-actions">
+              <button className="delete-cancel" onClick={() => setForgetConfirm(false)}>Cancel</button>
+              <button className="delete-everything" onClick={forgetLost} disabled={forgetting}>
+                {forgetting ? "Forgetting..." : `Forget ${lostSessions.length}`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {deleteTarget && (

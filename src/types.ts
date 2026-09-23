@@ -125,6 +125,8 @@ export interface LauncherSession {
   message_count: number | null;
   imported: boolean;
   forked_from: string | null;
+  /** No transcript for the Claude conversation: opening starts a new one. */
+  conversation_missing?: boolean;
 }
 
 export interface LauncherResponse {

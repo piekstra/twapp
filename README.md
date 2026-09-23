@@ -198,6 +198,10 @@ When a session's work has drifted from its name, the summary also suggests a new
 
 These calls use your harness account. The overview shows what they used over the last week: calls, tokens, the approximate API-rate cost, and their share of the tokens your own Claude sessions used in the same days (input, cache writes and output on both sides; cache reads are left out). `summaries.daily_limit` (default 150) caps the calls per day; past it, summaries fall back to the harness's titles until midnight. Every call is recorded in `~/.local/state/twapp/usage.jsonl`.
 
+### Sessions whose conversation is gone
+
+Claude removes conversations after its cleanup period (`cleanupPeriodDays`), and a session that never got a message has no conversation yet. All sessions lists those under **No conversation**, folded, and **Forget all...** removes twapp's files from their directories (and a directory that holds nothing else), leaving code and project settings. Opening one starts a new conversation in its directory. A session whose conversation ran in a different directory than the one it records resumes from where the transcript is.
+
 ### Importing sessions
 
 Open **All sessions** in the overview and use the import button to adopt conversations started outside twapp, from every harness you have configured: Claude conversations in `~/.claude/projects`, Codex threads in `~/.codex/sessions`, and the latest Antigravity conversation of each workspace. Each imported conversation gets its own session directory under your work directory, and opening it resumes the conversation in the directory it was started in.
