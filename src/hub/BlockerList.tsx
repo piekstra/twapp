@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
 import BlockerDetail from "./BlockerDetail";
+import CheckButton from "./CheckButton";
 import { hubApi, sinceLabel, type Blocker, type SessionView } from "./api";
 
 interface Props {
@@ -75,7 +76,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
               <code>{blocker.check}</code>
               <span className="blocker-checked">
                 {blocker.last_checked_at ? `checked ${sinceLabel(blocker.last_checked_at, now)} ago` : "not checked yet"}
-                {!blocker.check_approved && " · runs only after you approve it"}
+                {!blocker.check_approved && " · not run on its own until you allow it"}
               </span>
             </div>
           ) : (
@@ -91,16 +92,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
       )}
       {error && <div className="blocker-error">{error}</div>}
       <div className="blocker-actions">
-        {blocker.check && (
-          <button
-            className="button ghost small"
-            disabled={busy}
-            onClick={() => run(() => hubApi.blockerCheck(session.key, blocker.id, !blocker.check_approved))}
-            title={blocker.check_approved ? "Run the check now" : `Allow twapp to run this command, then run it:\n${blocker.check}`}
-          >
-            {busy ? "Checking" : blocker.check_approved ? "Check now" : "Approve and check"}
-          </button>
-        )}
+        <CheckButton blocker={blocker} sessionKey={session.key} onError={setError} />
         {updated && (
           <button className="button ghost small" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>
             Mark seen

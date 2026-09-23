@@ -33,21 +33,27 @@ export default function Overview({
 }: Props) {
   const [triage, setTriage] = useState<Triage | null>(null);
   const [showYaks, setShowYaks] = useState(false);
-  const [groupBy, setGroupByState] = useState<"lanes" | "efforts">(() => {
+  // Per-viewer folding: lanes folded in the overview (Blocked starts folded)
+  // and whether the full Waiting on list is open.
+  const [folded, setFoldedState] = useState<string[]>(() => {
     try {
-      return localStorage.getItem("twapp-overview-group") === "efforts" ? "efforts" : "lanes";
+      const saved = JSON.parse(localStorage.getItem("twapp-overview-folded") ?? "null");
+      return Array.isArray(saved) ? saved : ["blocked"];
     } catch {
-      return "lanes";
+      return ["blocked"];
     }
   });
-  const setGroupBy = (value: "lanes" | "efforts") => {
-    setGroupByState(value);
-    try {
-      localStorage.setItem("twapp-overview-group", value);
-    } catch {
-      // A per-viewer preference; nothing to do when storage is unavailable.
-    }
-  };
+  const toggleFold = (id: string) =>
+    setFoldedState((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem("twapp-overview-folded", JSON.stringify(next));
+      } catch {
+        // Folding still works for this visit.
+      }
+      return next;
+    });
+  const [waitingOpen, setWaitingOpen] = useState(false);
   const [finding, setFinding] = useState(false);
   const [findResult, setFindResult] = useState<string | null>(null);
   const findRelated = async () => {
@@ -56,7 +62,6 @@ export default function Overview({
     try {
       const found = await hubApi.findEfforts();
       setFindResult(found === 0 ? "No related sessions found." : `Found ${found} effort${found === 1 ? "" : "s"}.`);
-      setGroupBy("efforts");
     } catch (e) {
       setFindResult(String(e));
     } finally {
@@ -99,7 +104,7 @@ export default function Overview({
     }
   };
 
-  const card = (s: SessionView) => {
+  const card = (s: SessionView, showEffort = false) => {
     const accent = s.color ? (isDark ? getDarkModeAccentColor(s.color) : s.color) : undefined;
     return (
       <button
@@ -113,7 +118,7 @@ export default function Overview({
           <span className="overview-card-name">{s.name}</span>
           {s.ticket_key && <span className="chip chip-mono">{s.ticket_key}</span>}
         </div>
-        {groupBy === "lanes" && efforts.get(s.key) && <div className="overview-card-effort">{efforts.get(s.key)}</div>}
+        {showEffort && efforts.get(s.key) && <div className="overview-card-effort">{efforts.get(s.key)}</div>}
         <div className="overview-card-state">
           {STATE_LABELS[s.status.state]}
           {s.status.state !== "suspended" && ` for ${sinceLabel(s.status.since, now)}`}
@@ -133,22 +138,35 @@ export default function Overview({
   };
 
   const efforts = effortsOf(sessions);
-  const groups: { id: string; label: string; dot?: string; sessions: SessionView[] }[] =
-    groupBy === "efforts"
-      ? [
-          ...[...new Set(sessions.map((s) => efforts.get(s.key)).filter((e): e is string => !!e))].map((name) => ({
-            id: `effort-${name}`,
-            label: name,
-            sessions: sessions.filter((s) => efforts.get(s.key) === name),
-          })),
-          { id: "no-effort", label: "Not in an effort", sessions: sessions.filter((s) => !efforts.has(s.key)) },
-        ].filter((g) => g.sessions.length > 0)
-      : LANES.map(({ lane, label }) => ({
-          id: lane,
-          label,
-          dot: lane,
-          sessions: sessions.filter((s) => (s.lane ?? "background") === lane),
-        })).filter((g) => g.sessions.length > 0);
+  // Each lane lists its sessions grouped by effort, efforts first in the
+  // user's order, then the sessions that belong to none.
+  const lanes = LANES.map(({ lane, label }) => {
+    const inLane = sessions.filter((s) => (s.lane ?? "background") === lane);
+    const names = [...new Set(inLane.map((s) => efforts.get(s.key)).filter((e): e is string => !!e))];
+    return {
+      lane,
+      label,
+      sessions: inLane,
+      // An effort with two or more sessions in the lane gets its own
+      // heading; the others share one grid, with the effort on the card.
+      groups: [
+        ...names
+          .map((name) => ({ name: name as string | null, sessions: inLane.filter((s) => efforts.get(s.key) === name) }))
+          .filter((g) => g.sessions.length > 1),
+        {
+          name: null as string | null,
+          sessions: inLane.filter((s) => {
+            const e = efforts.get(s.key);
+            return !e || inLane.filter((o) => efforts.get(o.key) === e).length < 2;
+          }),
+        },
+      ].filter((g) => g.sessions.length > 0),
+    };
+  }).filter((l) => l.sessions.length > 0);
+
+  const waiting = blockersOf(sessions);
+  const updatedWaiting = waiting.filter((b) => b.blocker.status === "updated");
+  const parties = [...waiting.reduce((m, b) => m.set(b.blocker.party || "Unnamed", (m.get(b.blocker.party || "Unnamed") ?? 0) + 1), new Map<string, number>())];
 
   return (
     <div className="overview">
@@ -250,18 +268,22 @@ export default function Overview({
             </div>
           )}
 
-          {blockersOf(sessions).length > 0 && (
+          {waiting.length > 0 && (
             <section className="overview-waiting">
-              <div className="overview-lane-head">
+              <button className="overview-lane-head overview-fold" onClick={() => setWaitingOpen((v) => !v)}>
+                <svg className={`section-chevron${waitingOpen ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
                 Waiting on
-                <span className="count">{blockersOf(sessions).length}</span>
-                {blockersOf(sessions).some((b) => b.blocker.status === "updated") && (
-                  <span className="blocker-badge">
-                    {blockersOf(sessions).filter((b) => b.blocker.status === "updated").length} updated
+                <span className="count">{waiting.length}</span>
+                {updatedWaiting.length > 0 && <span className="blocker-badge">{updatedWaiting.length} updated</span>}
+                {!waitingOpen && (
+                  <span className="overview-waiting-parties">
+                    {parties.map(([party, n]) => `${party} ${n}`).join(" · ")}
                   </span>
                 )}
-              </div>
-              <BlockerList items={blockersOf(sessions)} now={now} showSession onSelect={onSelect} />
+              </button>
+              {(waitingOpen || updatedWaiting.length > 0) && (
+                <BlockerList items={waitingOpen ? waiting : updatedWaiting} now={now} showSession onSelect={onSelect} />
+              )}
             </section>
           )}
 
@@ -270,25 +292,28 @@ export default function Overview({
               No sessions are open. Open one from <button className="link-button" onClick={() => setShowLibrary(true)}>All sessions</button> or press ⌘N.
             </div>
           ) : (
-            <>
-            <div className="overview-group-toggle segmented" role="radiogroup" aria-label="Group sessions by">
-              {(["lanes", "efforts"] as const).map((g) => (
-                <button key={g} role="radio" aria-checked={groupBy === g} className={`segment${groupBy === g ? " active" : ""}`} onClick={() => setGroupBy(g)}>
-                  {g === "lanes" ? "By lane" : "By effort"}
-                </button>
-              ))}
-            </div>
-            {groups.map((group) => (
-              <section key={group.id} className={`overview-lane lane-${group.id}`}>
-                <div className="overview-lane-head">
-                  {group.dot && <span className={`lane-dot lane-dot-${group.dot}`} />}
-                  {group.label}
-                  <span className="count">{group.sessions.length}</span>
-                </div>
-                <div className="overview-grid">{group.sessions.map(card)}</div>
-              </section>
-            ))}
-            </>
+            lanes.map((l) => {
+              const isFolded = folded.includes(l.lane);
+              const needs = l.sessions.filter((s) => s.attention).length;
+              return (
+                <section key={l.lane} className={`overview-lane lane-${l.lane}`}>
+                  <button className="overview-lane-head overview-fold" onClick={() => toggleFold(l.lane)}>
+                    <svg className={`section-chevron${!isFolded ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
+                    <span className={`lane-dot lane-dot-${l.lane}`} />
+                    {l.label}
+                    <span className="count">{l.sessions.length}</span>
+                    {isFolded && needs > 0 && <span className="rail-attention-count">{needs}</span>}
+                  </button>
+                  {!isFolded &&
+                    l.groups.map((g) => (
+                      <div key={g.name ?? "none"} className="overview-effort">
+                        {g.name && <div className="overview-effort-head">{g.name}</div>}
+                        <div className="overview-grid">{g.sessions.map((s) => card(s, !g.name))}</div>
+                      </div>
+                    ))}
+                </section>
+              );
+            })
           )}
         </div>
       )}

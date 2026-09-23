@@ -1957,9 +1957,10 @@ pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
 }
 
 /// Run a blocker's check now. `approve` first adds its command to the
-/// commands the window may run on its own.
+/// commands the window may run on its own; `once` runs a command that is not
+/// approved this one time, at the user's request, without approving it.
 #[tauri::command]
-pub async fn hub_blocker_check(key: String, id: String, approve: bool) -> Result<(), String> {
+pub async fn hub_blocker_check(key: String, id: String, approve: bool, once: Option<bool>) -> Result<(), String> {
     let hub = require_hub()?;
     tauri::async_runtime::spawn_blocking(move || {
         let dir = Path::new(&key);
@@ -1971,7 +1972,11 @@ pub async fn hub_blocker_check(key: String, id: String, approve: bool) -> Result
                 .ok_or("the blocker has no check command")?;
             crate::cli::blockers::approve(&command)?;
         }
-        let result = super::blockers::check_one(dir, &id).map(|_| ());
+        let result = if once.unwrap_or(false) && !approve {
+            super::blockers::check_one_unapproved(dir, &id).map(|_| ())
+        } else {
+            super::blockers::check_one(dir, &id).map(|_| ())
+        };
         hub.refresh_blockers();
         result
     })
