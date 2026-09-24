@@ -285,6 +285,20 @@ started for it; the detail goes in `--context`.
 - **Journal.** A day's facts include the items raised or closed that day,
   with decisions' answers, and decisions still open when it ended.
 
+## History of deleted sessions
+
+A session's yak log, asks, blockers and notes are the record the Yaks report
+and the journal build from, and both read them from session directories.
+Deleting or forgetting a session would take that record with it, so
+`cli::retired::retire` first copies the directory's `.twapp-*.json` files to
+`~/.local/share/twapp/retired/<session id>/`, with `retired.json` naming the
+session key it had. A session with no yak log, asks or blockers is not kept.
+A delete whose copy fails deletes nothing; a forget skips that session. The
+Yaks report lists retired sessions marked deleted, and the journal reads them
+as sources under their old key, so a day not built yet still gets their
+tangents, asks and blockers. The conversation itself is deleted, so such a
+day has no prompts or replies from it.
+
 ## Archive
 
 Claude deletes transcripts after its cleanup period (`cleanupPeriodDays`,

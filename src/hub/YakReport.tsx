@@ -137,7 +137,7 @@ export default function YakReport({ onSelect }: { onSelect: (key: string) => voi
                   {report.sessions.map((s) => (
                     <tr key={s.key}>
                       <td>
-                        <button className="link-button" onClick={() => onSelect(s.key)}>{s.name}</button>
+                        {s.deleted ? <span>{s.name} <span className="yak-table-sub">(deleted)</span></span> : <button className="link-button" onClick={() => onSelect(s.key)}>{s.name}</button>}
                         {s.main_effort && <div className="yak-table-sub">{s.main_effort}</div>}
                       </td>
                       <td className="num">{pct(s.stat.tangent_bytes, s.stat.bytes)}%</td>
@@ -159,7 +159,7 @@ export default function YakReport({ onSelect }: { onSelect: (key: string) => voi
                       <td>
                         {y.title}
                         <div className="yak-table-sub">
-                          <button className="link-button" onClick={() => onSelect(y.key)}>{y.session}</button>
+                          {y.deleted ? `${y.session} (deleted)` : <button className="link-button" onClick={() => onSelect(y.key)}>{y.session}</button>}
                         </div>
                       </td>
                       <td><span className={`yak-chip yak-${y.status}`}>{STATUS[y.status]}</span></td>
