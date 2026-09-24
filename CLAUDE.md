@@ -15,6 +15,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
 - `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
+- `twapp archive [--note <why>]`, `twapp unarchive`: close a session and keep a copy of its conversation in `.twapp-archive/`, restored on the next launch when the harness no longer has it. An archived session cannot be deleted.
 - `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
 - `twapp journal [day|period]`: the work journal, one entry per work day across every session, and summaries of weeks, months and years (`--list`, `--path`, `--json`).
 
@@ -23,7 +24,7 @@ Run `twapp <command> --help` for flags.
 **Binary:** `~/.config/twapp/bin/twapp`, a symlink into `~/.config/twapp/twapp.app`.
 
 **Config and state:**
-- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-yaks.json` (tangents seen by summaries) in the session directory.
+- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-yaks.json` (tangents seen by summaries), `.twapp-archive/` (an archived session's kept transcripts and `archive.json`) in the session directory.
 - Approved check commands: `~/.config/twapp/approved-checks.json`; every check the window runs is logged to `~/.local/state/twapp/blocker-checks.log`.
 - Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, efforts, dismissed name suggestions, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).

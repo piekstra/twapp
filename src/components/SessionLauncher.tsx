@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } fr
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { hubApi } from "../hub/api";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
 import DeleteSessionDialog from "./DeleteSessionDialog";
@@ -116,6 +117,7 @@ function SessionLauncher({
   const [importNames, setImportNames] = useState<Map<string, string>>(new Map());
   const [importSearch, setImportSearch] = useState("");
   const [showImported, setShowImported] = useState(true);
+  const [archivedOnly, setArchivedOnly] = useState(false);
   const [importProvider, setImportProvider] = useState<AgentProvider | "all">("all");
   const [importHarnesses, setImportHarnesses] = useState<AgentProvider[]>([]);
 
@@ -317,15 +319,19 @@ function SessionLauncher({
     if (!showImported) {
       result = result.filter((s) => !s.imported);
     }
+    if (archivedOnly) {
+      result = result.filter((s) => s.archived);
+    }
     if (!searchQuery.trim()) return result;
     const q = searchQuery.toLowerCase();
     return result.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.ticket_key && s.ticket_key.toLowerCase().includes(q)) ||
+        (s.archive_note && s.archive_note.toLowerCase().includes(q)) ||
         s.directory.toLowerCase().includes(q)
     );
-  }, [sessions, searchQuery, showImported]);
+  }, [sessions, searchQuery, showImported, archivedOnly]);
 
   // Sessions whose conversation is gone sit in their own folded group, unless
   // a search is looking for them.
@@ -1133,6 +1139,11 @@ function SessionLauncher({
                 {session.is_running && (
                   <span className="launcher-running-badge">Running</span>
                 )}
+                {session.archived && (
+                  <span className="launcher-archived-badge" title="Its conversation is kept in the session folder and restored on open">
+                    Archived
+                  </span>
+                )}
                 {session.conversation_missing && (
                   <span className="launcher-lost-badge" title="Claude has no transcript for this conversation. Opening starts a new one.">
                     No conversation
@@ -1164,6 +1175,7 @@ function SessionLauncher({
             )}
             <span className="launcher-path">{shortenPath(session.directory, homeDir)}</span>
           </div>
+          {session.archive_note && <div className="launcher-archive-note">{session.archive_note}</div>}
           {launchError?.directory === session.directory && (
             <div className="launcher-launch-error">Could not open: {launchError.message}</div>
           )}
@@ -1199,7 +1211,25 @@ function SessionLauncher({
           </button>
           <button
             className="launcher-session-action"
-            title="Delete session"
+            title={session.archived ? "Unarchive: drop the kept copy of its conversation" : "Archive: keep its conversation, safe from Claude's cleanup"}
+            onClick={(e) => {
+              e.stopPropagation();
+              const directory = session.directory;
+              const next = !session.archived;
+              (next ? hubApi.archive(directory, null) : hubApi.unarchive(directory))
+                .then(() => setSessions((prev) => prev.map((s) => (s.directory === directory ? { ...s, archived: next, archive_note: next ? s.archive_note : null, conversation_missing: next ? false : s.conversation_missing } : s))))
+                .catch((err) => setLaunchError({ directory, message: String(err) }));
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="1.5" y="2" width="9" height="2.5" rx="0.5" />
+              <path d="M2.5 4.5V9.5a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4.5M5 6.5h2" />
+            </svg>
+          </button>
+          <button
+            className="launcher-session-action"
+            title={session.archived ? "Archived sessions can't be deleted. Unarchive it first." : "Delete session"}
+            disabled={session.archived}
             onClick={(e) => handleDeleteClick(e, session)}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1374,6 +1404,12 @@ function SessionLauncher({
                 )}
               </div>
               <div className="launcher-sort">
+                {sessions.some((s) => s.archived) && (
+                  <label className="launcher-filter-toggle" title="Show only archived sessions">
+                    <input type="checkbox" checked={archivedOnly} onChange={(e) => setArchivedOnly(e.target.checked)} />
+                    Archived only
+                  </label>
+                )}
                 {sessions.some((s) => s.imported) && (
                   <label className="launcher-filter-toggle" title="Show imported sessions">
                     <input

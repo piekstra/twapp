@@ -33,16 +33,21 @@ impl TranscriptRoots {
             .join(format!("{}.jsonl", session_id))
     }
 
+    /// The transcript of a Claude conversation under whichever project holds it.
+    pub fn find_claude_transcript(&self, session_id: &str) -> Option<PathBuf> {
+        let name = format!("{}.jsonl", session_id);
+        std::fs::read_dir(&self.claude_projects)
+            .ok()?
+            .flatten()
+            .map(|project| project.path().join(&name))
+            .find(|path| path.is_file())
+    }
+
     /// The directory a Claude conversation ran in, found by looking for its
     /// transcript under every project, for a session whose recorded directory
     /// is not where the conversation lives. `None` when no transcript exists.
     pub fn find_claude_cwd(&self, session_id: &str) -> Option<String> {
-        let name = format!("{}.jsonl", session_id);
-        let path = std::fs::read_dir(&self.claude_projects)
-            .ok()?
-            .flatten()
-            .map(|project| project.path().join(&name))
-            .find(|path| path.is_file())?;
+        let path = self.find_claude_transcript(session_id)?;
         use std::io::BufRead;
         let file = std::fs::File::open(path).ok()?;
         std::io::BufReader::new(file)

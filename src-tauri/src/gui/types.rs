@@ -75,6 +75,8 @@ pub struct LauncherSession {
     /// removed it after its cleanup period, or it never received a message.
     /// Opening the session starts a new conversation.
     pub conversation_missing: bool,
+    pub archived: bool,
+    pub archive_note: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]

@@ -77,6 +77,9 @@ pub fn prepare_launch(
     work_dir: &Path,
     roots: &TranscriptRoots,
 ) -> ProviderLaunch {
+    for path in super::archive::restore_missing(work_dir) {
+        log::info!("restored archived transcript {}", path.display());
+    }
     let provider = session_data.last_provider();
     session_data.provider = Some(provider);
     let fresh = provider == AgentProvider::Claude && !locate_claude_conversation(session_data, work_dir, roots);
