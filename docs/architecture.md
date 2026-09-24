@@ -268,7 +268,9 @@ itself (blockers), is kept in `.twapp-asks.json` (`cli/asks.rs`):
 Agents add them with `twapp decision|action|followup add`. Adding an open item
 of the same kind and title again updates it, so an agent that restates its
 list does not duplicate it. `hub::SESSION_CONTEXT` and the twapp skill tell
-agents when to use each.
+agents when to use each. A follow-up's title is refused past
+`FOLLOWUP_TITLE_CHARS` (the session-name limit), since it names the session
+started for it; the detail goes in `--context`.
 
 - **Window.** The panel's For you section lists a session's open items; the
   rail shows a one-line count (a single decision by its question); the
@@ -278,7 +280,8 @@ agents when to use each.
   into its input with a bracketed paste for the user to submit. An action is
   marked done, optionally with a note pasted the same way. A follow-up can
   start a new session named after it, with the follow-up as its prefilled
-  prompt, which marks it picked up.
+  prompt, or, when its own session runs, be pasted into that session as
+  "Go ahead with the follow-up you recorded: ..."; either marks it picked up.
 - **Journal.** A day's facts include the items raised or closed that day,
   with decisions' answers, and decisions still open when it ended.
 

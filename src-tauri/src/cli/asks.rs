@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 pub const FILE_NAME: &str = ".twapp-asks.json";
 const TITLE_CHARS: usize = 300;
+/// A follow-up's title names the session started for it.
+pub const FOLLOWUP_TITLE_CHARS: usize = crate::summary::SUGGESTED_NAME_MAX_CHARS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +111,18 @@ impl Ask {
             (AskKind::Followup, _) => format!("Done: {}", self.title),
         }
     }
+
+    /// The follow-up as a request to work on it in its own session.
+    pub fn pickup_message(&self) -> String {
+        let mut text = format!("Go ahead with the follow-up you recorded: {}", self.title);
+        if let Some(context) = &self.context {
+            text.push_str(&format!("\n\n{}", context));
+        }
+        if let Some(reference) = &self.reference {
+            text.push_str(&format!("\n\nReference: {}", reference));
+        }
+        text
+    }
 }
 
 pub fn path_in(dir: &Path) -> PathBuf {
@@ -161,6 +175,13 @@ pub fn add(dir: &Path, kind: AskKind, title: &str, fields: Fields) -> Result<(As
     let title = clean(title);
     if title.is_empty() {
         return Err(format!("a {} needs a title", kind.noun()));
+    }
+    if kind == AskKind::Followup && title.chars().count() > FOLLOWUP_TITLE_CHARS {
+        return Err(format!(
+            "a follow-up title is at most {} characters, short enough to name the session started for it ({} given); put the detail in --context",
+            FOLLOWUP_TITLE_CHARS,
+            title.chars().count()
+        ));
     }
     let mut asks = load_for_update(dir)?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -428,6 +449,21 @@ mod tests {
         assert_ne!(reopened.id, first.id);
         assert_eq!(open_asks(&d).len(), 2);
         assert!(load(&d).iter().find(|a| a.id == first.id).unwrap().message().contains("My answer: Yes"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_follow_up_title_is_short_enough_to_name_a_session() {
+        let d = dir();
+        let long = "Correct the never a third redirect entry claim in the rule, the skill and the service docs";
+        let err = add(&d, AskKind::Followup, long, Fields::default()).unwrap_err();
+        assert!(err.contains("--context"), "{}", err);
+        let fields = Fields { context: Some(long.into()), reference: Some("PR 12".into()), ..Default::default() };
+        let (ask, _) = add(&d, AskKind::Followup, "Fix the redirect URI claim in banno docs", fields).unwrap();
+        let text = ask.pickup_message();
+        assert!(text.starts_with("Go ahead with the follow-up you recorded: Fix the redirect URI claim"));
+        assert!(text.contains(long) && text.ends_with("Reference: PR 12"));
+        assert!(add(&d, AskKind::Decision, long, Fields::default()).is_ok(), "decisions keep longer titles");
         let _ = std::fs::remove_dir_all(&d);
     }
 

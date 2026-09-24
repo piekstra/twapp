@@ -35,7 +35,7 @@ function Row({ ask, session, now, showSession, onSelect }: Item & { now: number;
       setBusy(false);
     }
   };
-  const close = (outcome: "answered" | "done" | "dropped", text: string | null, send: boolean) =>
+  const close = (outcome: "answered" | "done" | "dropped" | "here", text: string | null, send: boolean) =>
     run(async () => {
       const sent = await hubApi.askClose(session.key, ask.id, outcome, text, send);
       if (sent) focusTerminal(onSelect, session.key);
@@ -107,6 +107,16 @@ function Row({ ask, session, now, showSession, onSelect }: Item & { now: number;
             >
               Start a session
             </button>
+            {running && (
+              <button
+                className="button small"
+                disabled={busy}
+                onClick={() => close("here", null, true)}
+                title="Paste this follow-up into its own session, for you to review and send"
+              >
+                Work on it here
+              </button>
+            )}
             <button className="button ghost small" disabled={busy} onClick={() => close("done", null, false)}>Done</button>
           </>
         )}
