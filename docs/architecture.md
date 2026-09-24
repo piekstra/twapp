@@ -282,8 +282,9 @@ started for it; the detail goes in `--context`.
 
 - **Window.** The panel's For you section lists a session's open items; the
   rail shows a one-line count (a single decision by its question); the
-  overview's For you section lists decisions across sessions and folds the
-  rest into counts. Answering a decision (a choice or free text) records the
+  overview's For you section lists every session's items by kind, starts open
+  when a decision is waiting, and starts actions and follow-ups folded; the
+  section and each kind fold on their own. Answering a decision (a choice or free text) records the
   answer and, when the session runs, pastes "Decision on: ... My answer: ..."
   into its input with a bracketed paste for the user to submit. An action is
   marked done, optionally with a note pasted the same way. A follow-up can

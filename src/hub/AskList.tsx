@@ -128,22 +128,28 @@ function Row({ ask, session, now, showSession, onSelect }: Item & { now: number;
 }
 
 /** Open asks grouped by kind, decisions first, oldest first within a kind. */
-export default function AskList({ items, now, showSession, onSelect, kinds }: {
+export default function AskList({ items, now, showSession, onSelect, folded = [] }: {
   items: Item[];
   now: number;
   showSession?: boolean;
   onSelect?: (key: string) => void;
-  kinds?: AskKind[];
+  /** Kinds whose group starts folded. */
+  folded?: AskKind[];
 }) {
+  const [open, setOpen] = useState<Partial<Record<AskKind, boolean>>>({});
   return (
     <div className="ask-list">
-      {GROUPS.filter((g) => !kinds || kinds.includes(g.kind)).map((g) => {
+      {GROUPS.map((g) => {
         const rows = items.filter((i) => i.ask.kind === g.kind).sort((a, b) => a.ask.created_at.localeCompare(b.ask.created_at));
         if (rows.length === 0) return null;
+        const isOpen = open[g.kind] ?? !folded.includes(g.kind);
         return (
           <div key={g.kind} className="ask-group">
-            <div className="ask-group-head" title={g.hint}>{g.label}<span className="count">{rows.length}</span></div>
-            {rows.map(({ ask, session }) => (
+            <button className="ask-group-head" title={g.hint} aria-expanded={isOpen} onClick={() => setOpen((o) => ({ ...o, [g.kind]: !isOpen }))}>
+              <svg className={`section-chevron${isOpen ? " open" : ""}`} width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
+              {g.label}<span className="count">{rows.length}</span>
+            </button>
+            {isOpen && rows.map(({ ask, session }) => (
               <Row key={`${session.key}:${ask.id}`} ask={ask} session={session} now={now} showSession={showSession} onSelect={onSelect} />
             ))}
           </div>
