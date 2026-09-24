@@ -31,9 +31,25 @@ pub struct DayFacts {
     pub blockers: Vec<BlockerDay>,
     #[serde(default)]
     pub yaks: Vec<YakDay>,
+    /// Decisions, actions and follow-ups raised or closed that day, or still
+    /// open when it ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asks: Vec<AskDay>,
     /// Summaries and transcript growth that day, split by tangent.
     #[serde(default)]
     pub stat: DayStat,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AskDay {
+    pub session: String,
+    pub kind: crate::cli::asks::AskKind,
+    pub title: String,
+    pub raised_today: bool,
+    /// `answered`, `done`, `dropped` that day, or `open` at the end of it.
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
 }
 
 impl DayFacts {
@@ -161,6 +177,7 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
     let codex = codex_prompts(&inputs.transcripts.codex_history, bounds);
     let mut blockers = Vec::new();
     let mut yaks = Vec::new();
+    let mut asks = Vec::new();
     let mut stat = DayStat::default();
     for source in inputs.sources {
         let key = source.dir.to_string_lossy().to_string();
@@ -185,6 +202,12 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
             let started = in_day(&yak.first_seen, bounds);
             if started || in_day(&yak.last_seen, bounds) {
                 yaks.push(YakDay { session: name.clone(), title: yak.title.clone(), status: yak.status, started_today: started });
+            }
+        }
+
+        for a in crate::cli::asks::load(&source.dir) {
+            if let Some(day) = ask_day(&a, &name, bounds) {
+                asks.push(day);
             }
         }
 
@@ -231,8 +254,44 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
         sessions: order.into_iter().filter_map(|k| sessions.remove(&k)).collect(),
         blockers,
         yaks,
+        asks,
         stat,
     }
+}
+
+fn ask_day(a: &crate::cli::asks::Ask, session: &str, bounds: (DateTime<Utc>, DateTime<Utc>)) -> Option<AskDay> {
+    use crate::cli::asks::{AskKind, AskStatus};
+    let before_end = |at: &str| DateTime::parse_from_rfc3339(at).is_ok_and(|t| t.with_timezone(&Utc) < bounds.1);
+    if !before_end(&a.created_at) {
+        return None;
+    }
+    let closed_today = a.closed_at.as_deref().is_some_and(|at| in_day(at, bounds));
+    let open_at_end = a.closed_at.as_deref().is_none_or(|at| !before_end(at));
+    let raised_today = in_day(&a.created_at, bounds);
+    let outcome = if closed_today {
+        match (a.status, a.kind) {
+            (AskStatus::Dropped, _) => "dropped",
+            (_, AskKind::Decision) => "answered",
+            _ => "done",
+        }
+    } else if open_at_end {
+        "open"
+    } else {
+        return None;
+    };
+    // An item still open from an earlier day is worth a line only when it is
+    // a decision the work waits on.
+    if outcome == "open" && !raised_today && a.kind != AskKind::Decision {
+        return None;
+    }
+    Some(AskDay {
+        session: session.to_string(),
+        kind: a.kind,
+        title: a.title.clone(),
+        raised_today,
+        outcome: outcome.to_string(),
+        answer: if closed_today { a.answer.clone() } else { None },
+    })
 }
 
 fn blocker_day(b: &Blocker, session: &str, bounds: (DateTime<Utc>, DateTime<Utc>)) -> Option<BlockerDay> {

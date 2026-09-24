@@ -9,6 +9,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 **Commands an agent in a session uses:**
 - `twapp note add|list|remove`: notes for the current session (the panel shows them).
 - `twapp blocker add|list|show|note|update|check|seen|resolve|remove`: what the session waits on outside itself (a vendor ticket, an email, a review), with an optional check command whose output change the window flags. `skills/twapp/SKILL.md` tells agents how to use it; the window installs and refreshes it at start (`twapp install-skill` by hand), and every harness twapp launches gets `hub::SESSION_CONTEXT` (Claude `--append-system-prompt`, Codex `developer_instructions`).
+- `twapp decision|action|followup add|list|answer|done|drop|remove`: what the session needs from the user (a decision, an action only they can take) and work noticed outside its scope; the window lists them under For you, per session and across sessions, and pastes an answer given there into the session.
 - `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`). The window also links the ticket the session's summaries find it working under, and never replaces one linked by hand.
 - `twapp prompt add|list|remove`: quick prompts, shared by every session.
 - `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
@@ -24,7 +25,7 @@ Run `twapp <command> --help` for flags.
 **Binary:** `~/.config/twapp/bin/twapp`, a symlink into `~/.config/twapp/twapp.app`.
 
 **Config and state:**
-- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-yaks.json` (tangents seen by summaries), `.twapp-archive/` (an archived session's kept transcripts and `archive.json`) in the session directory.
+- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-asks.json` (decisions, actions, follow-ups), `.twapp-yaks.json` (tangents seen by summaries), `.twapp-archive/` (an archived session's kept transcripts and `archive.json`) in the session directory.
 - Approved check commands: `~/.config/twapp/approved-checks.json`; every check the window runs is logged to `~/.local/state/twapp/blocker-checks.log`.
 - Global: `~/.config/twapp/config.yaml`, `quick-prompts.json`, `default-permissions.json`, `hub.json` (rail order, lanes, efforts, dismissed name suggestions, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).

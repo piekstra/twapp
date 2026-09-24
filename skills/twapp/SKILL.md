@@ -1,6 +1,6 @@
 ---
 name: twapp
-description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
 ---
 
 # Working in a twapp session
@@ -42,6 +42,21 @@ twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" -
 It prints the case's status, whether it is resolved, and how many replies the vendor has written, so it changes only when the case moves. Look up the real field names in the CLI's help or one real response before writing the check.
 
 A blocker without a check still shows in the window; the user checks it by hand.
+
+## Decisions, actions and follow-ups: what the session needs from the user
+
+A blocker is someone outside the session. What the session needs from the user goes here instead, so it shows in the window's For you list rather than being repeated at the end of message after message:
+
+- **Decision**: a choice only the user can make, which the work waits on or that shapes it. `twapp decision add "<the question>" --option "<choice>" --option "<choice>" --context "<what they need to know to decide>"`. Phrase the title as a question.
+- **Action**: something only the user can do: run a command in their own shell, click an approval, accept a prompt, delete a secret, reply to someone. `twapp action add "<what to do>" [--command "<the exact command>"] [--after "<when it can be done>"] [--ref <PR or URL>]`.
+- **Follow-up**: work you noticed that is outside this session's scope: a bug elsewhere, drift between environments, a cleanup for later. `twapp followup add "<what>" --context "<why it matters>"`. The user can start a new session for it from the window.
+
+Keep them current:
+
+- Record an item when it comes up; you may still mention it in your reply. Adding one again with the same title updates it instead of duplicating it, so record the whole list each time you would otherwise repeat it.
+- When the user answers a decision in the conversation, record it: `twapp decision answer <id> "<answer>"`. An answer given in the window arrives in your input as "Decision on: ... My answer: ...", already recorded.
+- Mark an action done when the user says they did it (`twapp action done <id>`), and drop what is no longer needed (`drop <id>`).
+- `twapp decision list --all` shows answered decisions and their answers; `list` alone shows open ones.
 
 ## Notes
 

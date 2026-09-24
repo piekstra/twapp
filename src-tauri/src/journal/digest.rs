@@ -43,7 +43,9 @@ const DAY_PROMPT: &str = "You write one day's entry in a user's work journal fro
 their coding-agent sessions that day. Each session record has the session name, its ticket, the \
 effort it belongs to (effort, else main_effort), the summaries' headlines in order, the prompts \
 the user typed, the agent's closing replies (what it reported back), and notes. Blockers are what sessions waited on outside themselves; yaks are \
-tangents away from a session's main effort. Group the work by effort: sessions with the same \
+tangents away from a session's main effort; asks are decisions the user made or still owes, actions \
+the user had to take, and follow-ups noticed for later. Name the decisions made and their answers in the \
+effort they belong to. Group the work by effort: sessions with the same \
 effort, ticket or evident purpose go together; a session that shares nothing gets its own entry \
 named after its work. For each effort list what was done (at most 6 items, each under 140 \
 characters) and, when the facts show it, where it stands at the end of the day in one short \
@@ -98,6 +100,7 @@ fn day_input(facts: &DayFacts) -> Value {
             "events": b.events,
         })).collect::<Vec<_>>(),
         "yaks": facts.yaks,
+        "asks": facts.asks,
     })
 }
 

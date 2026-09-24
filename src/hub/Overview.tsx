@@ -3,6 +3,7 @@ import { getDarkModeAccentColor } from "../color";
 import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
+import AskList, { asksOf } from "./AskList";
 import YakReport from "./YakReport";
 import Journal from "./Journal";
 import Linkify from "./Linkify";
@@ -167,6 +168,9 @@ export default function Overview({
   }).filter((l) => l.sessions.length > 0);
 
   const waiting = blockersOf(sessions);
+  const asks = asksOf(sessions);
+  const decisions = asks.filter((a) => a.ask.kind === "decision");
+  const [asksOpen, setAsksOpen] = useState(false);
   const updatedWaiting = waiting.filter((b) => b.blocker.status === "updated");
   const parties = [...waiting.reduce((m, b) => m.set(b.blocker.party || "Unnamed", (m.get(b.blocker.party || "Unnamed") ?? 0) + 1), new Map<string, number>())];
 
@@ -275,6 +279,32 @@ export default function Overview({
                 </ul>
               )}
             </div>
+          )}
+
+          {asks.length > 0 && (
+            <section className="overview-waiting">
+              <button className="overview-lane-head overview-fold" onClick={() => setAsksOpen((v) => !v)}>
+                <svg className={`section-chevron${asksOpen ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
+                For you
+                <span className="count">{asks.length}</span>
+                {decisions.length > 0 && <span className="ask-badge">{decisions.length} decision{decisions.length > 1 ? "s" : ""}</span>}
+                {!asksOpen && (
+                  <span className="overview-waiting-parties">
+                    {[
+                      ["action", "actions"],
+                      ["followup", "follow-ups"],
+                    ]
+                      .map(([k, label]) => [asks.filter((a) => a.ask.kind === k).length, label] as const)
+                      .filter(([n]) => n > 0)
+                      .map(([n, label]) => `${n} ${label}`)
+                      .join(" · ")}
+                  </span>
+                )}
+              </button>
+              {(asksOpen || decisions.length > 0) && (
+                <AskList items={asks} now={now} showSession onSelect={onSelect} kinds={asksOpen ? undefined : ["decision"]} />
+              )}
+            </section>
           )}
 
           {waiting.length > 0 && (
