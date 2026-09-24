@@ -2473,6 +2473,9 @@ pub async fn hub_yak_report(days: u32) -> Result<crate::cli::yaks::YakReport, St
                 sessions.push((path, name));
             }
         }
+        for (dir, _, data) in crate::cli::retired::list(&crate::cli::retired::default_root()) {
+            sessions.push((dir, data.name));
+        }
         Ok(crate::cli::yaks::report(&sessions, days.clamp(1, 366)))
     })
     .await

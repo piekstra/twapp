@@ -283,6 +283,8 @@ pub struct SessionYaks {
     pub main_effort: Option<String>,
     pub stat: DayStat,
     pub yaks_started: u32,
+    /// The session was deleted; its history is kept.
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -294,6 +296,7 @@ pub struct YakRow {
     pub first_seen: String,
     pub sightings: u32,
     pub transcript_bytes: u64,
+    pub deleted: bool,
 }
 
 /// Tangents across sessions over the last `days` local days, oldest day first.
@@ -321,7 +324,9 @@ pub fn report(sessions: &[(PathBuf, String)], days: u32) -> YakReport {
     let mut rows = Vec::new();
     let mut yaks = Vec::new();
     let mut first_day: Option<String> = None;
+    let retired = super::retired::default_root();
     for (dir, name) in sessions {
+        let deleted = dir.starts_with(&retired);
         let log = load(dir);
         if let Some(day) = log.days.keys().next() {
             if first_day.as_ref().is_none_or(|f| day < f) {
@@ -357,8 +362,9 @@ pub fn report(sessions: &[(PathBuf, String)], days: u32) -> YakReport {
             first_seen: y.first_seen.clone(),
             sightings: y.sightings,
             transcript_bytes: y.transcript_bytes,
+            deleted,
         }));
-        rows.push(SessionYaks { key, name: name.clone(), main_effort: log.main_effort, stat, yaks_started: started });
+        rows.push(SessionYaks { key, name: name.clone(), main_effort: log.main_effort, stat, yaks_started: started, deleted });
     }
     rows.sort_by(|a, b| b.stat.tangent_bytes.cmp(&a.stat.tangent_bytes));
     yaks.sort_by(|a, b| b.transcript_bytes.cmp(&a.transcript_bytes));
@@ -369,6 +375,9 @@ pub fn cmd_yak_report(days: u32, json: bool) -> i32 {
     let mut sessions = Vec::new();
     if let Ok(cfg) = super::config::GlobalConfig::load() {
         super::session::visit_sessions(&cfg.work_directory, 0, &mut |data, path| sessions.push((path, data.name)));
+    }
+    for (dir, _, data) in super::retired::list(&super::retired::default_root()) {
+        sessions.push((dir, data.name));
     }
     let r = report(&sessions, days.clamp(1, 366));
     if json {

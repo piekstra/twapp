@@ -345,8 +345,8 @@ export interface DayStat {
 export interface YakReport {
   days: [string, DayStat][];
   total: DayStat;
-  sessions: { key: string; name: string; main_effort: string | null; stat: DayStat; yaks_started: number }[];
-  yaks: { key: string; session: string; title: string; status: Yak["status"]; first_seen: string; sightings: number; transcript_bytes: number }[];
+  sessions: { key: string; name: string; main_effort: string | null; stat: DayStat; yaks_started: number; deleted?: boolean }[];
+  yaks: { key: string; session: string; title: string; status: Yak["status"]; first_seen: string; sightings: number; transcript_bytes: number; deleted?: boolean }[];
   first_day: string | null;
 }
 

@@ -119,6 +119,10 @@ pub struct YakDay {
 
 /// A session directory and its session file.
 pub struct Source {
+    /// The session key: its directory, or for a deleted session the
+    /// directory it had.
+    pub key: String,
+    /// Where its twapp files are read from.
     pub dir: PathBuf,
     pub data: SessionData,
 }
@@ -180,7 +184,7 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
     let mut asks = Vec::new();
     let mut stat = DayStat::default();
     for source in inputs.sources {
-        let key = source.dir.to_string_lossy().to_string();
+        let key = source.key.clone();
         let name = source.data.name.clone();
 
         let (mut prompts, replies) = claude_day(inputs.transcripts, source, bounds);
@@ -345,7 +349,7 @@ fn claude_day(roots: &TranscriptRoots, source: &Source, bounds: (DateTime<Utc>, 
         return (prompts, replies);
     }
     let cwd = if source.data.claude_cwd.is_empty() {
-        source.dir.to_string_lossy().to_string()
+        source.key.clone()
     } else {
         source.data.claude_cwd.clone()
     };
@@ -460,7 +464,7 @@ mod tests {
         old.resolved_at = Some(at(11, 9));
         std::fs::write(dir.join(crate::cli::blockers::FILE_NAME), serde_json::to_string(&vec![open, done, old]).unwrap()).unwrap();
 
-        let sources = [Source { dir: dir.clone(), data }];
+        let sources = [Source { key: dir.to_string_lossy().to_string(), dir: dir.clone(), data }];
         let efforts = HashMap::from([(key.clone(), "Reporting".to_string())]);
         let facts = gather(day, &Inputs { root: &root, sources: &sources, efforts: &efforts, transcripts: &roots });
         assert_eq!(facts.sessions.len(), 1);

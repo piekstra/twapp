@@ -63,7 +63,7 @@ impl Context {
         let mut sources = Vec::new();
         if let Ok(cfg) = crate::cli::config::GlobalConfig::load() {
             crate::cli::session::visit_sessions(&cfg.work_directory, 0, &mut |data, dir| {
-                sources.push(Source { dir, data });
+                sources.push(Source { key: dir.to_string_lossy().to_string(), dir, data });
             });
         }
         for key in extra {
@@ -72,7 +72,12 @@ impl Context {
                 continue;
             }
             if let Ok(data) = crate::cli::session::read_session(&dir) {
-                sources.push(Source { dir, data });
+                sources.push(Source { key: key.clone(), dir, data });
+            }
+        }
+        for (dir, retired, data) in crate::cli::retired::list(&crate::cli::retired::default_root()) {
+            if !sources.iter().any(|s| s.key == retired.key) {
+                sources.push(Source { key: retired.key, dir, data });
             }
         }
         Self { root, sources, efforts: load_efforts(), transcripts: TranscriptRoots::from_home() }

@@ -11,6 +11,7 @@ pub mod models;
 pub mod notes;
 pub mod permissions;
 pub mod prompts;
+pub mod retired;
 pub mod session;
 pub mod session_attribution;
 pub mod theme;
