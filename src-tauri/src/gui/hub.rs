@@ -2281,8 +2281,9 @@ pub fn hub_blocker_send(key: String, id: String) -> Result<(), String> {
 pub fn hub_ask_close(key: String, id: String, outcome: String, answer: Option<String>, send: bool) -> Result<bool, String> {
     use crate::cli::asks::{AskKind, AskStatus};
     let hub = require_hub()?;
+    let here = outcome == "here";
     let status = match outcome.as_str() {
-        "answered" | "done" => AskStatus::Done,
+        "answered" | "done" | "here" => AskStatus::Done,
         "dropped" => AskStatus::Dropped,
         other => return Err(format!("unknown outcome {}", other)),
     };
@@ -2290,12 +2291,16 @@ pub fn hub_ask_close(key: String, id: String, outcome: String, answer: Option<St
         if a.kind == AskKind::Decision && status == AskStatus::Done && answer.as_deref().is_none_or(|t| t.trim().is_empty()) {
             return Err("a decision needs an answer".into());
         }
-        a.close(status, answer.as_deref(), "user");
+        if here && a.kind != AskKind::Followup {
+            return Err("only a follow-up is picked up in its session".into());
+        }
+        a.close(status, answer.as_deref().or(here.then_some("Picked up in this session")), "user");
         Ok(())
     })?;
-    let send = (send || ask.kind == AskKind::Decision) && hub.is_hosted_running(&key);
+    let send = (send || here || ask.kind == AskKind::Decision) && hub.is_hosted_running(&key);
     if send {
-        let paste = format!("\x1b[200~{}\x1b[201~", ask.message());
+        let text = if here { ask.pickup_message() } else { ask.message() };
+        let paste = format!("\x1b[200~{}\x1b[201~", text);
         hub.write(&key, MAIN_TAB, paste.into_bytes());
     }
     hub.emit_changed();

@@ -202,7 +202,7 @@ export const hubApi = {
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
   dismissTicket: (key: string, ticket: string) => invoke("hub_dismiss_ticket", { key, ticket }),
   /** Resolves true when the outcome was pasted into the session. */
-  askClose: (key: string, id: string, outcome: "answered" | "done" | "dropped", answer: string | null, send: boolean) =>
+  askClose: (key: string, id: string, outcome: "answered" | "done" | "dropped" | "here", answer: string | null, send: boolean) =>
     invoke<boolean>("hub_ask_close", { key, id, outcome, answer, send }),
   askStartSession: (key: string, id: string) => invoke<string>("hub_ask_start_session", { key, id }),
   archive: (directory: string, note: string | null) => invoke("archive_session", { directory, note }),

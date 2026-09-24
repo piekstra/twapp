@@ -49,7 +49,7 @@ A blocker is someone outside the session. What the session needs from the user g
 
 - **Decision**: a choice only the user can make, which the work waits on or that shapes it. `twapp decision add "<the question>" --option "<choice>" --option "<choice>" --context "<what they need to know to decide>"`. Phrase the title as a question.
 - **Action**: something only the user can do: run a command in their own shell, click an approval, accept a prompt, delete a secret, reply to someone. `twapp action add "<what to do>" [--command "<the exact command>"] [--after "<when it can be done>"] [--ref <PR or URL>]`.
-- **Follow-up**: work you noticed that is outside this session's scope: a bug elsewhere, drift between environments, a cleanup for later. `twapp followup add "<what>" --context "<why it matters>"`. The user can start a new session for it from the window.
+- **Follow-up**: work you noticed that is outside this session's scope: a bug elsewhere, drift between environments, a cleanup for later. `twapp followup add "<what>" --context "<what to do, why it matters, what you found>"`. The title names the work in at most 48 characters, like a session name ("Fix the redirect URI claim in banno docs"), because the user can start a new session for it from the window and the title becomes that session's name; everything else goes in `--context`, which becomes the new session's prompt. The user can also send it back to this session to work on here.
 
 Keep them current:
 
