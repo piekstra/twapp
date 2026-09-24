@@ -346,7 +346,8 @@ Keyboard:
 The list keeps the user's order (drag to reorder) rather than sorting by state,
 so a session's `⌘` number does not change while its state does. Sessions sit in
 one of three lanes the user assigns (`priority`, `background`, `blocked`); every
-view lists them lane by lane, keeping the user's order within each. The backend
+view lists them lane by lane, keeping the user's order within each. A new
+session starts at the top of its lane. The backend
 holds one order across all sessions and the frontend groups it, so a drag sends
 the new full order and, when the row changed lanes, the new lane.
 
