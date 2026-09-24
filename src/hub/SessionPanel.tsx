@@ -58,6 +58,9 @@ interface Props {
   showCollapse: boolean;
 }
 
+/** Sessions whose stale-instructions notice was put off until the window restarts. */
+const laterContext = new Set<string>();
+
 export default function SessionPanel({
   session,
   linkedEffort,
@@ -83,6 +86,7 @@ export default function SessionPanel({
   // or `remove` from an agent), so the file is the source of truth: every
   // change here is an edit by note id, applied to what is on disk.
   const [notes, setNotes] = useState<Note[]>([]);
+  const [, setContextLater] = useState(0);
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
   const [asksOpen, setAsksOpen] = useState<boolean | null>(null);
   const [yaksOpen, setYaksOpen] = useState(false);
@@ -425,6 +429,27 @@ export default function SessionPanel({
             onClick={() => hubApi.dismissTicket(directory, session.ticket_suggestion!).catch(console.error)}
           >
             Dismiss
+          </button>
+        </div>
+      )}
+
+      {session.stale_context && !laterContext.has(session.key) && (
+        <div className="name-suggestion name-suggestion-stacked">
+          <span className="name-suggestion-text">
+            This agent started before the latest twapp instructions, so its decisions and follow-ups may not show
+            here. Restart resumes the conversation with them.
+          </span>
+          <button className="button small" onClick={onRestart}>
+            Restart
+          </button>
+          <button
+            className="button ghost small"
+            onClick={() => {
+              laterContext.add(session.key);
+              setContextLater((n) => n + 1);
+            }}
+          >
+            Later
           </button>
         </div>
       )}

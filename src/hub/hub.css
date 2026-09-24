@@ -2259,6 +2259,14 @@ kbd {
   line-height: 1.35;
 }
 
+.name-suggestion-stacked {
+  flex-wrap: wrap;
+}
+
+.name-suggestion-stacked .name-suggestion-text {
+  flex-basis: 100%;
+}
+
 .name-suggestion-text strong {
   color: var(--text-1);
   font-weight: 600;

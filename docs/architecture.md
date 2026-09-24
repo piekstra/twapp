@@ -387,9 +387,17 @@ Every main-tab launch goes through `Hub::main_spawn_request`, which adds
 `SESSION_CONTEXT` to the harness command: `--append-system-prompt` for
 Claude, `-c developer_instructions=...` for Codex; Antigravity has no such
 option and runs unchanged. The text tells the agent it runs in twapp and
-points at `twapp blocker`, `twapp note` and the twapp skill, which the window
-writes to `~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start when
-their content differs from the built-in copy.
+points at `twapp blocker`, `twapp decision`, `twapp action`, `twapp followup`,
+`twapp note` and the twapp skill, which the window writes to
+`~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start when their
+content differs from the built-in copy.
+
+The context is fixed for the life of the harness process, so an agent started
+by an older twapp, or by hand in the main tab, does not know commands added
+since. The status poll reads each harness process's command line once per
+process and sets `stale_context` on the session when it lacks the current
+`SESSION_CONTEXT`; the panel then offers Restart, which resumes the same
+conversation with the current text.
 
 ## Blockers
 
