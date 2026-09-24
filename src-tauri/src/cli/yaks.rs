@@ -89,6 +89,14 @@ impl YakLog {
         self.yaks.iter().map(|y| y.title.clone()).collect()
     }
 
+    pub fn finished_titles(&self) -> Vec<String> {
+        self.yaks
+            .iter()
+            .filter(|y| y.status == YakStatus::Shaved)
+            .map(|y| y.title.clone())
+            .collect()
+    }
+
     /// Fold one model summary into the log. Returns false when the summary
     /// was already recorded.
     pub fn record(&mut self, summary: &Summary) -> bool {
@@ -111,8 +119,11 @@ impl YakLog {
             }
         }
         let current = summary.tangent.as_ref().map(|t| t.title.to_lowercase());
+        let finished = |title: &str| summary.finished_tangents.iter().any(|f| f.eq_ignore_ascii_case(title));
         for yak in &mut self.yaks {
-            if yak.status == YakStatus::Shaving && Some(yak.title.to_lowercase()) != current {
+            if yak.status != YakStatus::Shaved && finished(&yak.title) {
+                yak.status = YakStatus::Shaved;
+            } else if yak.status == YakStatus::Shaving && Some(yak.title.to_lowercase()) != current {
                 yak.status = YakStatus::SetAside;
             }
         }
@@ -208,6 +219,7 @@ mod tests {
             suggested_name: None,
             main_effort: Some("CSV export".into()),
             tangent: tangent.map(|(title, done)| Tangent { title: title.into(), done }),
+            finished_tangents: Vec::new(),
             ticket: None,
         }
     }
@@ -240,6 +252,25 @@ mod tests {
         let status = |t: &str| log.yaks.iter().find(|y| y.title == t).unwrap().status;
         assert_eq!(status("Upgrade the test runner"), YakStatus::SetAside);
         assert_eq!(status("Flaky login test"), YakStatus::SetAside);
+    }
+
+    #[test]
+    fn a_tangent_the_summary_saw_finish_is_shaved() {
+        let mut log = YakLog::default();
+        log.record(&summary("t1", 100, Some(("Upgrade the test runner", false))));
+        log.record(&summary("t2", 200, Some(("Flaky login test", false))));
+        let mut back = summary("t3", 300, None);
+        back.finished_tangents = vec!["flaky login test".into()];
+        log.record(&back);
+        let status = |log: &YakLog, t: &str| log.yaks.iter().find(|y| y.title == t).unwrap().status;
+        assert_eq!(status(&log, "Upgrade the test runner"), YakStatus::SetAside);
+        assert_eq!(status(&log, "Flaky login test"), YakStatus::Shaved);
+
+        let mut later = summary("t4", 400, None);
+        later.finished_tangents = vec!["Upgrade the test runner".into()];
+        log.record(&later);
+        assert_eq!(status(&log, "Upgrade the test runner"), YakStatus::Shaved, "a set-aside tangent finished later is shaved");
+        assert_eq!(log.finished_titles().len(), 2);
     }
 }
 

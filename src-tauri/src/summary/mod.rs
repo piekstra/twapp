@@ -51,6 +51,9 @@ pub struct Summary {
     /// The detour the current work is on, when it is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tangent: Option<Tangent>,
+    /// Known tangents the excerpt shows were finished, by their known titles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finished_tangents: Vec<String>,
     /// The ticket or issue the main effort is being worked under, as the
     /// excerpt names it: a Jira key or `owner/repo#N`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,6 +105,7 @@ pub fn free_summary(condensed: &Condensed) -> Summary {
         suggested_name: None,
         main_effort: None,
         tangent: None,
+        finished_tangents: Vec::new(),
         ticket: None,
     }
 }

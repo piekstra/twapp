@@ -35,7 +35,9 @@ main effort, suggest a short name for the main effort (never for a tangent), in 
 the current name; otherwise suggested_name is null. When the current work is a tangent, describe \
 it in tangent; if it matches one of the known tangents listed in the input, use that title exactly. \
 tangent.done is true when the tangent is finished and the work can return to the main effort. When \
-the current work serves the main effort, tangent is null.
+the current work serves the main effort, tangent is null. finished_tangents lists the known tangents \
+not marked finished that the excerpt shows were completed (the fix landed, the question was answered, \
+the tool works again), by their titles exactly; a tangent dropped or left unfinished is not in it.
 
 ticket is the Jira key (PROJ-123) or GitHub issue (owner/repo#123) the main effort is being worked \
 under, when the excerpt shows the work is for it: the agent is implementing, fixing, reviewing or \
@@ -47,7 +49,8 @@ Reply with only a JSON object: \
 sentences on where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" \
 or null, \"main_effort\": \"<at most 80 characters naming what the session is for>\", \
 \"suggested_name\": \"<at most 48 characters>\" or null, \"tangent\": {\"title\": \"<at most 60 \
-characters>\", \"done\": false} or null, \"ticket\": \"<key>\" or null}.";
+characters>\", \"done\": false} or null, \"finished_tangents\": [\"<known title>\"], \"ticket\": \"<key>\" \
+or null}.";
 
 const INSTRUCTION: &str = "Summarize the session excerpt on stdin.";
 
@@ -215,6 +218,8 @@ pub struct SummaryRequest {
     /// Titles of tangents already seen in this session, so the summarizer
     /// names a returning one the same way.
     pub tangents: Vec<String>,
+    /// The known tangents already finished.
+    pub finished: Vec<String>,
 }
 
 type OnReady = Box<dyn Fn(String, Summary) + Send + Sync>;
@@ -411,7 +416,11 @@ pub(crate) fn model_summary(
     if !request.tangents.is_empty() {
         input.push_str("Known tangents:\n");
         for title in &request.tangents {
-            input.push_str(&format!("- {}\n", title));
+            if request.finished.contains(title) {
+                input.push_str(&format!("- {} (finished)\n", title));
+            } else {
+                input.push_str(&format!("- {}\n", title));
+            }
         }
     }
     input.push_str(&condensed.excerpt);
@@ -452,6 +461,15 @@ pub(crate) fn model_summary(
                 .unwrap_or(title),
             done: value["tangent"]["done"].as_bool().unwrap_or(false),
         });
+    let finished_tangents = value["finished_tangents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str())
+        .filter_map(|t| request.tangents.iter().find(|known| known.eq_ignore_ascii_case(t.trim())))
+        .filter(|known| !request.finished.contains(known))
+        .cloned()
+        .collect();
     let ticket = value["ticket"].as_str().and_then(|t| ticket_ref(t, &input));
     Ok(Summary {
         headline: clean_text(
@@ -467,6 +485,7 @@ pub(crate) fn model_summary(
         suggested_name,
         main_effort,
         tangent,
+        finished_tangents,
         ticket,
     })
 }
@@ -569,6 +588,7 @@ mod tests {
             force,
             state: None,
             tangents: Vec::new(),
+            finished: Vec::new(),
         }
     }
 
@@ -779,7 +799,10 @@ mod live {
             name: std::env::var("TWAPP_LIVE_NAME").unwrap_or_default(),
             force: true,
             state: None,
-            tangents: Vec::new(),
+            tangents: std::env::var("TWAPP_LIVE_TANGENTS")
+                .map(|t| t.split('|').map(String::from).collect())
+                .unwrap_or_default(),
+            finished: Vec::new(),
         };
         let runner = super::HarnessRunner::new(super::SummaryHarness::Claude, None, None);
         println!("input {} chars", condensed.excerpt.chars().count());

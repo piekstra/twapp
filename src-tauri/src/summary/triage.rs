@@ -231,6 +231,7 @@ mod tests {
                 force: true,
                 state: None,
                 tangents: Vec::new(),
+            finished: Vec::new(),
             };
             let summary =
                 crate::summary::queue::model_summary(&runner, &request, &condensed).unwrap();
