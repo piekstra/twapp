@@ -253,6 +253,20 @@ export default function Hub() {
     if (!selected && sessions.length === 0) setOverview(true);
   }, [hub.loaded, selected, sessions.length]);
 
+  // The session viewed before the current one, so a quick visit elsewhere
+  // can come back (⌘[). Going back swaps the two, like a browser's last tab.
+  const lastSelected = useRef<string | null>(null);
+  const [previousKey, setPreviousKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selected || selected === lastSelected.current) return;
+    if (lastSelected.current) setPreviousKey(lastSelected.current);
+    lastSelected.current = selected;
+  }, [selected]);
+  const previous = sessions.find((s) => s.key === previousKey && s.key !== selected) ?? null;
+  const goBack = useCallback(() => {
+    if (previous) selectSession(previous.key);
+  }, [previous, selectSession]);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -447,6 +461,7 @@ export default function Hub() {
             { id: "rebuild", label: "Rebuild twapp from this session's directory", run: () => rebuild() },
           ]
         : []),
+      ...(previous ? [{ id: "back", label: `Back to ${previous.name}`, hint: "⌘[", run: () => goBack() }] : []),
       { id: "next", label: "Next session that needs you", hint: "⌘J", run: () => nextAttention() },
       { id: "sidebar", label: layout.sidebarThin ? "Expand the sidebar" : "Collapse the sidebar to a thin bar", hint: "⌘\\", run: () => toggleSidebar() },
       ...(layout.mode === "split"
@@ -467,7 +482,7 @@ export default function Hub() {
         },
       },
     ],
-    [current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild, updateInfo, checkForUpdate],
+    [previous, goBack, current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild, updateInfo, checkForUpdate],
   );
 
   // --- Keyboard --------------------------------------------------------------
@@ -525,6 +540,11 @@ export default function Hub() {
         nextAttention();
         return;
       }
+      if (key === "[" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        goBack();
+        return;
+      }
       if (key === "\\" || key === "|") {
         e.preventDefault();
         if (e.shiftKey && layout.mode === "split") toggleRail();
@@ -580,7 +600,7 @@ export default function Hub() {
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, toggleSidebar, toggleRail, layout.mode, layout.collapsedLanes, layout.switcherCollapsedLanes, openLibrary, newTab, closeTab]);
+  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, goBack, toggleSidebar, toggleRail, layout.mode, layout.collapsedLanes, layout.switcherCollapsedLanes, openLibrary, newTab, closeTab]);
 
   // --- Render ----------------------------------------------------------------
   const releaseNotesComponents = markdownComponents((path) => previewRef.current?.open(path, null));
@@ -708,6 +728,8 @@ export default function Hub() {
       onCollapse={toggleSidebar}
       onSetLane={(lane) => setLane(current.key, lane)}
       showCollapse={split}
+      previous={previous}
+      onBack={goBack}
     />
   );
 

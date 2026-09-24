@@ -51,6 +51,9 @@ interface Props {
   onPreview: (path: string) => void;
   onRestart: () => void;
   onCloseSession: () => void;
+  /** The session viewed before this one, to go back to. */
+  previous?: SessionView | null;
+  onBack?: () => void;
   onFork: () => void;
   onCollapse: () => void;
   onSetLane: (lane: Lane) => void;
@@ -70,6 +73,8 @@ export default function SessionPanel({
   onPreview,
   onRestart,
   onCloseSession,
+  previous,
+  onBack,
   onFork,
   onCollapse,
   onSetLane,
@@ -385,6 +390,16 @@ export default function SessionPanel({
           </button>
         )}
       </header>
+
+      {previous && (
+        <button className="panel-back" onClick={onBack} title="Back to the session you were on (⌘[)">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9.5 3.5L5 8l4.5 4.5" />
+          </svg>
+          Back to <strong>{previous.name}</strong>
+          <span className="panel-back-key">⌘[</span>
+        </button>
+      )}
 
       {session.name_suggestion && (
         <div className="name-suggestion">
