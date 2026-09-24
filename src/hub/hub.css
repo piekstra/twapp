@@ -2731,10 +2731,46 @@ kbd {
 }
 
 .ask-group-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   font: 600 10.5px var(--font-ui);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+.ask-group-head:hover {
+  color: var(--text-2);
+}
+
+.overview-waiting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.overview-waiting-head .overview-fold {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.overview-check-result {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.overview-show-all {
+  align-self: flex-start;
+  margin-top: 6px;
+  font-size: 12px;
 }
 
 .ask-group-head .count {

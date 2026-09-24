@@ -209,7 +209,7 @@ Within each lane, the overview groups sessions by effort: an effort with two or 
 
 ### Waiting on: blockers outside the session
 
-A session often stops on someone else: a vendor's support case, an email, another team's review. The session's agent records each one with `twapp blocker add`, naming who it waits on and, optionally, a command that prints the blocker's current state (a CLI that reads the ticket, say). The overview's **Waiting on** line counts every open blocker across sessions, by who they wait on, and shows the updated ones; open it for the full list. The session panel shows its own.
+A session often stops on someone else: a vendor's support case, an email, another team's review. The session's agent records each one with `twapp blocker add`, naming who it waits on and, optionally, a command that prints the blocker's current state (a CLI that reads the ticket, say). The overview's **Waiting on** line counts every open blocker across sessions, by who they wait on, and shows the updated ones; open it for the full list. **Check all** runs every approved check at once; a check not approved yet is skipped until you run it from its blocker. The session panel shows its own.
 
 Each blocker keeps notes and a history: the agent adds notes with `twapp blocker note` (what it sent, what the other side asked, what to do once it moves), and the window records when a check's output changed, when it was seen and when it was resolved. Clicking a blocker opens its details, with its reference, check, last output, the notes and history, and a box for your own notes.
 

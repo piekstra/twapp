@@ -56,7 +56,9 @@ export default function Overview({
       }
       return next;
     });
-  const [waitingOpen, setWaitingOpen] = useState(false);
+  const [waitingFold, setWaitingFold] = useState<boolean | null>(null);
+  const [checkingAll, setCheckingAll] = useState(false);
+  const [checkAllResult, setCheckAllResult] = useState<string | null>(null);
   const [finding, setFinding] = useState(false);
   const [findResult, setFindResult] = useState<string | null>(null);
   const findRelated = async () => {
@@ -170,8 +172,42 @@ export default function Overview({
   const waiting = blockersOf(sessions);
   const asks = asksOf(sessions);
   const decisions = asks.filter((a) => a.ask.kind === "decision");
-  const [asksOpen, setAsksOpen] = useState(false);
+  const [asksFold, setAsksFold] = useState<boolean | null>(null);
+  const asksOpen = asksFold ?? decisions.length > 0;
   const updatedWaiting = waiting.filter((b) => b.blocker.status === "updated");
+  const waitingOpen = waitingFold ?? updatedWaiting.length > 0;
+  const checkable = waiting.filter((b) => b.blocker.check);
+  const checkAll = async () => {
+    const approved = checkable.filter((b) => b.blocker.check_approved);
+    setCheckingAll(true);
+    setCheckAllResult(null);
+    const results: ("changed" | "same" | "failed")[] = [];
+    const queue = [...approved];
+    await Promise.all(
+      Array.from({ length: Math.min(4, queue.length) }, async () => {
+        for (let b = queue.shift(); b; b = queue.shift()) {
+          results.push(
+            await hubApi
+              .blockerCheck(b.session.key, b.blocker.id, false)
+              .then((changed): "changed" | "same" => (changed ? "changed" : "same"))
+              .catch(() => "failed" as const),
+          );
+        }
+      }),
+    );
+    const n = (r: string) => results.filter((x) => x === r).length;
+    const unapproved = checkable.length - approved.length;
+    setCheckAllResult(
+      [
+        `Checked ${results.length}: ${n("changed")} changed`,
+        n("failed") > 0 && `${n("failed")} failed`,
+        unapproved > 0 && `${unapproved} not approved yet (use Run check on each)`,
+      ]
+        .filter(Boolean)
+        .join(", ") + ".",
+    );
+    setCheckingAll(false);
+  };
   const parties = [...waiting.reduce((m, b) => m.set(b.blocker.party || "Unnamed", (m.get(b.blocker.party || "Unnamed") ?? 0) + 1), new Map<string, number>())];
 
   return (
@@ -283,7 +319,7 @@ export default function Overview({
 
           {asks.length > 0 && (
             <section className="overview-waiting">
-              <button className="overview-lane-head overview-fold" onClick={() => setAsksOpen((v) => !v)}>
+              <button className="overview-lane-head overview-fold" onClick={() => setAsksFold(!asksOpen)}>
                 <svg className={`section-chevron${asksOpen ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
                 For you
                 <span className="count">{asks.length}</span>
@@ -291,25 +327,24 @@ export default function Overview({
                 {!asksOpen && (
                   <span className="overview-waiting-parties">
                     {[
-                      ["action", "actions"],
-                      ["followup", "follow-ups"],
+                      ["action", "action"],
+                      ["followup", "follow-up"],
                     ]
                       .map(([k, label]) => [asks.filter((a) => a.ask.kind === k).length, label] as const)
                       .filter(([n]) => n > 0)
-                      .map(([n, label]) => `${n} ${label}`)
+                      .map(([n, label]) => `${n} ${label}${n > 1 ? "s" : ""}`)
                       .join(" · ")}
                   </span>
                 )}
               </button>
-              {(asksOpen || decisions.length > 0) && (
-                <AskList items={asks} now={now} showSession onSelect={onSelect} kinds={asksOpen ? undefined : ["decision"]} />
-              )}
+              {asksOpen && <AskList items={asks} now={now} showSession onSelect={onSelect} folded={["action", "followup"]} />}
             </section>
           )}
 
           {waiting.length > 0 && (
             <section className="overview-waiting">
-              <button className="overview-lane-head overview-fold" onClick={() => setWaitingOpen((v) => !v)}>
+              <div className="overview-waiting-head">
+              <button className="overview-lane-head overview-fold" onClick={() => setWaitingFold(!waitingOpen)}>
                 <svg className={`section-chevron${waitingOpen ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
                 Waiting on
                 <span className="count">{waiting.length}</span>
@@ -320,8 +355,21 @@ export default function Overview({
                   </span>
                 )}
               </button>
-              {(waitingOpen || updatedWaiting.length > 0) && (
-                <BlockerList items={waitingOpen ? waiting : updatedWaiting} now={now} showSession onSelect={onSelect} />
+              {checkable.length > 0 && (
+                <button
+                  className="button ghost small"
+                  disabled={checkingAll}
+                  onClick={checkAll}
+                  title="Run every approved blocker check now; checks not approved yet are skipped"
+                >
+                  {checkingAll ? "Checking" : "Check all"}
+                </button>
+              )}
+              </div>
+              {checkAllResult && <div className="overview-check-result">{checkAllResult}</div>}
+              {waitingOpen && <BlockerList items={waitingFold ? waiting : updatedWaiting} now={now} showSession onSelect={onSelect} />}
+              {waitingOpen && !waitingFold && waiting.length > updatedWaiting.length && (
+                <button className="link-button overview-show-all" onClick={() => setWaitingFold(true)}>Show all {waiting.length}</button>
               )}
             </section>
           )}
