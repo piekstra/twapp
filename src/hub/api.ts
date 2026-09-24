@@ -95,6 +95,8 @@ export interface SessionView {
   forked_from?: string | null;
   /** What the main tab's last start did: resumed a conversation or began one. */
   launch_kind?: "resume" | "new" | null;
+  /** The running agent lacks the current twapp session instructions. */
+  stale_context?: boolean;
 }
 
 /** Something the session waits on outside itself (`twapp blocker`). */

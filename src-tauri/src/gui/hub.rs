@@ -181,6 +181,9 @@ pub struct SessionView {
     pub forked_from: Option<String>,
     /// `resume` or `new`: what the main tab's last start did.
     pub launch_kind: Option<String>,
+    /// The running agent was started without the current session context,
+    /// so it does not know the twapp commands added since.
+    pub stale_context: bool,
     /// The note of an archived session, `Some("")` when archived without one.
     pub archive_note: Option<String>,
 }
@@ -368,6 +371,9 @@ struct HubSession {
     effort: Option<EffortInfo>,
     /// Whether the main tab's last start resumed a conversation or began one.
     launch_kind: Option<String>,
+    /// The harness process last checked for the session context, and
+    /// whether its arguments lacked it.
+    context_check: Option<(u32, bool)>,
 }
 
 impl HubSession {
@@ -391,6 +397,7 @@ impl HubSession {
             blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
             effort: None,
             launch_kind: None,
+            context_check: None,
         }
     }
 
@@ -460,6 +467,7 @@ impl HubSession {
                 .and_then(|t| t.epic),
             forked_from: data.as_ref().and_then(|d| d.forked_from.clone()),
             launch_kind: self.launch_kind.clone(),
+            stale_context: self.context_check.is_some_and(|(_, stale)| stale),
             archive_note: crate::cli::archive::load(Path::new(&self.key)).map(|a| a.note.unwrap_or_default()),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
@@ -1748,6 +1756,7 @@ impl Hub {
             before: State,
             restored: bool,
             viewing: bool,
+            context_check: Option<(u32, bool)>,
         }
         let work: Vec<Work> = {
             let inner = self.inner.lock();
@@ -1764,6 +1773,7 @@ impl Hub {
                         before: s.status.state,
                         restored: s.restored,
                         viewing: focused && selected.as_deref() == Some(s.key.as_str()),
+                        context_check: s.context_check,
                     })
                 })
                 .collect()
@@ -1802,15 +1812,24 @@ impl Hub {
                 }
             }
             drop(tracker);
-            results.push((w, status));
+            let harness = shell_pid.and_then(|pid| ctx.procs.find_harness(pid, provider));
+            let context_check = match (harness, w.context_check) {
+                (Some(pid), Some((checked, _))) if pid == checked => w.context_check,
+                (Some(pid), _) => crate::status::proctree::args(pid)
+                    .map(|args| (pid, !args.contains(SESSION_CONTEXT)))
+                    .or(w.context_check),
+                (None, _) => w.context_check,
+            };
+            results.push((w, status, context_check));
         }
 
         let mut changed: Vec<String> = Vec::new();
         let mut summaries: Vec<SummaryRequest> = Vec::new();
         let mut newly_waiting = false;
+        let mut context_changed = false;
         {
             let mut inner = self.inner.lock();
-            for (w, status) in results {
+            for (w, status, context_check) in results {
                 let Some(session) = inner.session(&w.key) else { continue };
                 // The main tab was restarted or closed while this round ran.
                 if session.tabs[0].pty != Some(w.pty) {
@@ -1824,6 +1843,10 @@ impl Hub {
                     changed.push(session.key.clone());
                 }
                 session.status = status;
+                if context_check.map(|c| c.1) != session.context_check.map(|c| c.1) {
+                    context_changed = true;
+                }
+                session.context_check = context_check;
                 if w.viewing {
                     session.last_viewed = Some(chrono::Utc::now().to_rfc3339());
                 }
@@ -1852,6 +1875,9 @@ impl Hub {
         }
         if newly_waiting {
             self.request_attention();
+        }
+        if context_changed {
+            self.emit_changed();
         }
         self.update_badge();
     }

@@ -113,6 +113,18 @@ impl ProcTable {
     }
 }
 
+/// The full command line of a process.
+pub fn args(pid: u32) -> Option<String> {
+    let out = Command::new("ps")
+        .args(["-ww", "-o", "args=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn is_harness_comm(comm: &str, provider: AgentProvider) -> bool {
     let base = comm.rsplit('/').next().unwrap_or(comm);
     match provider {
