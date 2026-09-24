@@ -21,7 +21,7 @@ You run several agent sessions at once. Each one is somewhere between working, w
 - **Live state, no setup.** twapp reads the signals the harnesses already produce (Claude's session status files and transcripts, Codex's session logs, terminal titles and notifications) to tell working, needs approval, your turn, errored, and exited apart.
 - **Summaries.** When a session finishes a turn or stops on a prompt, twapp asks your preferred harness, headless and with no tools, to summarize what the session did and what it needs from you. Sessions carry their own titles until a summary arrives.
 - **Triage.** The overview has a Triage action that reads every running session and suggests which ones to look at first and why. It is advice for you; twapp never tells an agent what to do.
-- **Fast switching.** `⌘1` to `⌘9`, `⌘J` for the next session that needs you, and `⌘K` for a palette that switches to, opens or starts anything.
+- **Fast switching.** `⌘1` to `⌘9`, `⌘J` for the next session that needs you, `⌘[` back to the one you were on, and `⌘K` for a palette that switches to, opens or starts anything.
 - **Sessions survive the window.** Terminals live in a small background host, so quitting, updating or crashing the window leaves every agent running. The window reattaches when it opens.
 - **Per-session context.** Notes, a linked Jira ticket or GitHub issue (changeable at any time), session color, harness, and extra shell tabs. Quick prompts are global and the same in every session.
 - **Light on the machine.** One window, one web view and one GPU context, however many sessions are open. Only the terminal on screen renders.
@@ -142,6 +142,7 @@ The dock icon shows how many sessions need you and bounces once when a session s
 |----------|--------|
 | `⌘1` to `⌘9` | Select the session at that position among the rows showing |
 | `⌘J` | Next session that needs you |
+| `⌘[` | Back to the session you were on before |
 | `⌘K` | Switch to, open or start anything |
 | `⌥⌘↑` / `⌥⌘↓` | Previous or next session |
 | `⌘0` | Overview, or back to the session you were viewing |

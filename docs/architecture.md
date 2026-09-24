@@ -332,6 +332,7 @@ Keyboard:
 |---|---|
 | `⌘1` to `⌘9` | Select the session at that position among the rows showing (folded lanes are skipped). |
 | `⌘J` | Jump to the next session that needs attention. |
+| `⌘[` | Back to the session viewed before this one; again to return. The panel shows the same as a "Back to" button. |
 | `⌘K` | Command palette: switch to or open any known session, new session, fork, settings. |
 | `⌥⌘↑`, `⌥⌘↓` | Previous or next session in the rail. |
 | `⌘0` | Overview. |

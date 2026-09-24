@@ -3833,3 +3833,41 @@ kbd {
     max-height: 180px;
   }
 }
+
+.panel-back {
+  flex: none;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 14px 6px;
+  padding: 3px 8px;
+  max-width: calc(100% - 28px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: 11.5px var(--font-ui);
+  cursor: pointer;
+  align-self: flex-start;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.panel-back strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.panel-back:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-1);
+}
+
+.panel-back-key {
+  margin-left: 2px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
