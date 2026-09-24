@@ -2060,6 +2060,7 @@ fn summary_request(session: &HubSession, force: bool) -> Option<SummaryRequest> 
         .ok()
         .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok())
         .map(|t| (t.key, t.title));
+    let yaks = crate::cli::yaks::load(Path::new(&session.key));
     Some(SummaryRequest {
         key: session.key.clone(),
         harness: data.provider.unwrap_or(AgentProvider::Claude),
@@ -2068,7 +2069,8 @@ fn summary_request(session: &HubSession, force: bool) -> Option<SummaryRequest> 
         name: data.name.clone(),
         force,
         state: state_in_words(&session.status),
-        tangents: crate::cli::yaks::load(Path::new(&session.key)).titles(),
+        tangents: yaks.titles(),
+        finished: yaks.finished_titles(),
     })
 }
 
@@ -2690,6 +2692,7 @@ mod tests {
             suggested_name: Some(n.into()),
             main_effort: None,
             tangent: None,
+            finished_tangents: Vec::new(),
             ticket: None,
         };
         let none: Vec<String> = Vec::new();

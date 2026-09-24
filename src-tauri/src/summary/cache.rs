@@ -92,6 +92,7 @@ mod tests {
             suggested_name: None,
             main_effort: None,
             tangent: None,
+            finished_tangents: Vec::new(),
             ticket: None,
         }
     }

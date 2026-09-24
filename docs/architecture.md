@@ -156,8 +156,12 @@ itself.
   harness's latest compaction summary; when the excerpt budget is tight, the
   newest assistant message outranks them, and the earlier prompts go first,
   then the recap, then the opening prompt. Each model summary is folded into
-  `.twapp-yaks.json`: a tangent seen again is the same yak; one the work left
-  unfinished is set aside; one reported done is shaved; transcript growth
+  `.twapp-yaks.json`: a tangent seen again is the same yak; one reported done,
+  or named in `finished_tangents` (known tangents the excerpt shows were
+  completed, which the summarizer answers from the known-tangents list in its
+  input), is shaved, including one set aside earlier; one the work left
+  without either is set aside. A tangent finished outside the excerpt stays
+  set aside. Transcript growth
   since the previous summary counts toward the current tangent. The log also keeps, per local day,
   the number of summaries and the transcript growth, split by whether the
   summary found a tangent; the Yaks report (`hub_yak_report`) sums those days
