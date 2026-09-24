@@ -711,46 +711,37 @@ export default function SessionPanel({
         )}
       </section>
 
-      <section className="panel-section">
-        <div className="section-head" onClick={() => setAsksOpen(!asksExpanded)}>
-          <Chevron open={asksExpanded} />
-          <span className="section-title" title="Decisions, actions and follow-ups the session's agent recorded for you">For you</span>
-          {asks.length > 0 && <span className="count">{asks.length}</span>}
-          {asks.some((a) => a.kind === "decision") && <span className="ask-badge">Decision</span>}
-          {!asksExpanded && asks.length === 0 && <span className="section-empty">Nothing</span>}
-        </div>
-        {asksExpanded &&
-          (asks.length > 0 ? (
+      {asks.length > 0 && (
+        <section className="panel-section">
+          <div className="section-head" onClick={() => setAsksOpen(!asksExpanded)}>
+            <Chevron open={asksExpanded} />
+            <span className="section-title" title="Decisions, actions and follow-ups the session's agent recorded for you">For you</span>
+            <span className="count">{asks.length}</span>
+            {asks.some((a) => a.kind === "decision") && <span className="ask-badge">Decision</span>}
+          </div>
+          {asksExpanded && (
             <div className="section-body">
               <AskList items={asks.map((ask) => ({ ask, session }))} now={now} />
             </div>
-          ) : (
-            <div className="section-empty blocker-empty">
-              Nothing recorded. The session's agent adds what it needs from you with <code>twapp decision</code>,{" "}
-              <code>twapp action</code> and <code>twapp followup</code>.
-            </div>
-          ))}
-      </section>
+          )}
+        </section>
+      )}
 
-      <section className="panel-section">
-        <div className="section-head" onClick={() => setBlockersOpen(!blockersExpanded)}>
-          <Chevron open={blockersExpanded} />
-          <span className="section-title">Waiting on</span>
-          {blockers.length > 0 && <span className="count">{blockers.length}</span>}
-          {blockers.some((b) => b.status === "updated") && <span className="blocker-badge">Updated</span>}
-          {!blockersExpanded && blockers.length === 0 && <span className="section-empty">Nothing</span>}
-        </div>
-        {blockersExpanded &&
-          (blockers.length > 0 ? (
+      {blockers.length > 0 && (
+        <section className="panel-section">
+          <div className="section-head" onClick={() => setBlockersOpen(!blockersExpanded)}>
+            <Chevron open={blockersExpanded} />
+            <span className="section-title">Waiting on</span>
+            <span className="count">{blockers.length}</span>
+            {blockers.some((b) => b.status === "updated") && <span className="blocker-badge">Updated</span>}
+          </div>
+          {blockersExpanded && (
             <div className="section-body">
               <BlockerList items={blockers.map((blocker) => ({ blocker, session }))} now={now} />
             </div>
-          ) : (
-            <div className="section-empty blocker-empty">
-              Nothing recorded. The session's agent can add what it waits on with <code>twapp blocker add</code>.
-            </div>
-          ))}
-      </section>
+          )}
+        </section>
+      )}
 
       {(session.yaks?.yaks.length ?? 0) > 0 && (
         <section className="panel-section">
