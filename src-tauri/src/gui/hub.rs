@@ -893,7 +893,8 @@ impl Hub {
                 // A session started from here is what the user is on now.
                 session.lane.lane = if args.command.is_some() { Lane::Priority } else { Lane::Background };
                 session.summary = self.summarizer.cached(&key);
-                inner.sessions.push(session);
+                // New sessions go at the top of their lane.
+                inner.sessions.insert(0, session);
             }
             let session = inner.session(&key).expect("just inserted");
             let start_now = !session.main_running() && args.command.is_some();
