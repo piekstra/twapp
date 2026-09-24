@@ -297,7 +297,7 @@ note, when it was archived, and each copy with the path the harness reads.
 - **Protection.** Delete (window and CLI) refuses an archived session, and
   forgetting sessions with no conversation skips it. Unarchiving restores
   anything missing, then removes `.twapp-archive/`.
-- **Surfaces.** Archive in the panel's summary actions (with an optional note)
+- **Surfaces.** Archive at the bottom of the session settings (with an optional note)
   and on each row of All sessions, which shows an Archived badge with the note,
   searches notes, and has an Archived only filter; `twapp archive [--note]`
   and `twapp unarchive`.
@@ -332,7 +332,7 @@ Keyboard:
 |---|---|
 | `⌘1` to `⌘9` | Select the session at that position among the rows showing (folded lanes are skipped). |
 | `⌘J` | Jump to the next session that needs attention. |
-| `⌘[` | Back to the session viewed before this one; again to return. The panel shows the same as a "Back to" button. |
+| `⌘[` | Back to the session viewed before this one; again to return. The panel footer shows the same, at the left of the version. |
 | `⌘K` | Command palette: switch to or open any known session, new session, fork, settings. |
 | `⌥⌘↑`, `⌥⌘↓` | Previous or next session in the rail. |
 | `⌘0` | Overview. |

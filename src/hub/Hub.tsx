@@ -728,13 +728,20 @@ export default function Hub() {
       onCollapse={toggleSidebar}
       onSetLane={(lane) => setLane(current.key, lane)}
       showCollapse={split}
-      previous={previous}
-      onBack={goBack}
     />
   );
 
   const versionFooter = appVersion && (
     <div className="panel-footer">
+      {previous && !overview && (
+        <button className="footer-back" onClick={goBack} title={`Back to ${previous.name} (⌘[)`}>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9.5 3.5L5 8l4.5 4.5" />
+          </svg>
+          <span className="footer-back-name">{previous.name}</span>
+          <span className="footer-back-key">⌘[</span>
+        </button>
+      )}
       <button
         className={`version-button${updateInfo ? " has-update" : ""}`}
         onClick={() => {

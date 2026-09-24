@@ -52,6 +52,8 @@ Run `twapp <command> --help` for flags.
 
 Verify UI changes visually before committing. Run the Vite dev server (`npm run dev`, http://localhost:1420) and drive it with headless Playwright. `invoke()` needs a Tauri backend, so inject a mock `window.__TAURI_INTERNALS__` (an `invoke` returning fixture data for `hub_snapshot` and friends, plus `transformCallback`) with `page.addInitScript` to render realistic states.
 
+Check every panel or overview change in both themes (set `window.__THEME` in the mock and the page's `colorScheme`) and at sidebar widths 260, 340 and 480 (`sidebarWidth` in the `twapp-layout` localStorage entry), with mock data that fills the view: long names, every optional button present, several items per list. Screenshot each one and flag elements wider than their container.
+
 To exercise the real backend, build the app (`npm run tauri build --bundles app`), open it with `open -g -n -a <bundle>` so it does not take focus, and open sessions with `{"open_background": [...]}` on `hub.sock`. `twapp status` shows what the window sees.
 
 ### Building and installing

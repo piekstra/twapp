@@ -51,9 +51,6 @@ interface Props {
   onPreview: (path: string) => void;
   onRestart: () => void;
   onCloseSession: () => void;
-  /** The session viewed before this one, to go back to. */
-  previous?: SessionView | null;
-  onBack?: () => void;
   onFork: () => void;
   onCollapse: () => void;
   onSetLane: (lane: Lane) => void;
@@ -73,8 +70,6 @@ export default function SessionPanel({
   onPreview,
   onRestart,
   onCloseSession,
-  previous,
-  onBack,
   onFork,
   onCollapse,
   onSetLane,
@@ -157,18 +152,16 @@ export default function SessionPanel({
   };
 
   // --- Archive -------------------------------------------------------------
-  const [archiving, setArchiving] = useState(false);
   const [archiveNote, setArchiveNote] = useState("");
   const [archiveError, setArchiveError] = useState<string | null>(null);
   useEffect(() => {
-    setArchiving(false);
     setArchiveError(null);
   }, [directory]);
   const archiveSession = () => {
     setArchiveError(null);
     hubApi
       .archive(directory, archiveNote.trim() || null)
-      .then(() => setArchiving(false))
+      .then(() => setSettingsOpen(false))
       .catch((e) => setArchiveError(String(e)));
   };
 
@@ -391,16 +384,6 @@ export default function SessionPanel({
         )}
       </header>
 
-      {previous && (
-        <button className="panel-back" onClick={onBack} title="Back to the session you were on (⌘[)">
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9.5 3.5L5 8l4.5 4.5" />
-          </svg>
-          Back to <strong>{previous.name}</strong>
-          <span className="panel-back-key">⌘[</span>
-        </button>
-      )}
-
       {session.name_suggestion && (
         <div className="name-suggestion">
           <span className="name-suggestion-text">
@@ -574,35 +557,8 @@ export default function SessionPanel({
             <button className="button ghost" onClick={() => setHistoryOpen(true)}>History</button>
           )}
           <span className="spacer" />
-          {session.archive_note == null && (
-            <button className="button ghost" onClick={() => { setArchiveNote(""); setArchiving(true); }} title="Close it and keep its conversation, safe from Claude's cleanup">
-              Archive
-            </button>
-          )}
           <button className="button ghost danger" onClick={onCloseSession} title="Stop and remove from the window">Close</button>
         </div>
-        {archiving && (
-          <div className="archive-form">
-            <input
-              className="input"
-              autoFocus
-              placeholder="Why keep it? (optional)"
-              value={archiveNote}
-              onChange={(e) => setArchiveNote(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") archiveSession();
-                if (e.key === "Escape") setArchiving(false);
-              }}
-            />
-            <button className="button primary small" onClick={archiveSession}>Archive</button>
-            <button className="button ghost small" onClick={() => setArchiving(false)}>Cancel</button>
-            <div className="archive-hint">
-              Closes the session and keeps a copy of its conversation in the session folder. Opening it later restores
-              the conversation if Claude has cleaned it up. Archived sessions are listed under All sessions and can't be deleted until unarchived.
-            </div>
-            {archiveError && <div className="inline-error">{archiveError}</div>}
-          </div>
-        )}
         {session.archive_note != null && (
           <div className="archive-state">
             <span className="archive-badge">Archived</span>
@@ -1071,6 +1027,27 @@ export default function SessionPanel({
                   </>
                 )}
               </div>
+              {session.archive_note == null && (
+                <div className="config-section">
+                  <div className="session-settings-label">Archive</div>
+                  <div className="archive-hint">
+                    Closes the session and keeps a copy of its conversation in the session folder, so opening it later
+                    restores the conversation even after Claude has cleaned it up. Archived sessions are listed under All
+                    sessions and can't be deleted until unarchived.
+                  </div>
+                  <div className="archive-form">
+                    <input
+                      className="session-settings-input"
+                      placeholder="Why keep it? (optional)"
+                      value={archiveNote}
+                      onChange={(e) => setArchiveNote(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") archiveSession(); }}
+                    />
+                    <button className="button small" onClick={archiveSession}>Archive</button>
+                  </div>
+                  {archiveError && <div className="inline-error">{archiveError}</div>}
+                </div>
+              )}
             </div>
           </div>
         </div>
