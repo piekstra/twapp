@@ -28,6 +28,14 @@ the status engine, the summary cache and the frontend store. Each hosted
 session has a `main` tab running the harness and can have extra plain-shell
 tabs (`tab-1`, `tab-2`, ...).
 
+The session file names the harness conversation a start resumes. Claude moves
+a running process to a new conversation id on `/clear`, on `/resume`, and when
+a compaction continues in a new conversation, so the status poll reads the
+`~/.claude/sessions/<pid>.json` file of the session's own Claude process and
+records its `sessionId` and `cwd` in the session file when they differ. Only
+the process under the session's shell counts: other Claude runs in the same
+directory have conversations of their own.
+
 Per-session data stays in the working directory: the session file, notes
 (`.twapp-notes*.json`) and the linked ticket. Quick prompts are global
 (`~/.config/twapp/quick-prompts.json`) and appear the same in every session.

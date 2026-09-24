@@ -281,6 +281,38 @@ skill for these; twapp note adds a note the user sees in the session panel. twap
 /// A harness command with twapp's session context added: Claude takes it as
 /// an appended system prompt, Codex as developer instructions. Other
 /// harnesses have no such option and run unchanged.
+/// Record the conversation the session's Claude process is on when it moved
+/// to another one (`/clear`, `/resume`, or a compaction that continues in a
+/// new conversation), so the next start resumes that conversation.
+fn follow_conversation(
+    dir: &Path,
+    data: &mut crate::cli::session::SessionData,
+    provider: AgentProvider,
+    shell_pid: Option<u32>,
+    ctx: &crate::status::engine::PollContext,
+) {
+    if provider != AgentProvider::Claude {
+        return;
+    }
+    let Some(pid) = shell_pid.and_then(|pid| ctx.procs.find_harness(pid, provider)) else {
+        return;
+    };
+    let Some(file) = ctx.claude_files.iter().find(|f| f.pid == pid) else {
+        return;
+    };
+    let Some(id) = file.session_id.as_deref().filter(|id| !id.is_empty()) else {
+        return;
+    };
+    if id == data.session_id {
+        return;
+    }
+    let cwd = file.cwd.clone().unwrap_or_else(|| data.native_cwd(AgentProvider::Claude, dir));
+    data.set_provider_session(AgentProvider::Claude, id.to_string(), cwd);
+    if let Err(e) = crate::cli::session::write_session(dir, data) {
+        eprintln!("twapp: recording the conversation of {}: {}", dir.display(), e);
+    }
+}
+
 fn with_session_context(command: &str) -> String {
     let insert = |command: &str, program: &str, args: &str| -> Option<String> {
         // The program starts the command or follows the `cd ... && ` prefix
@@ -1784,11 +1816,14 @@ impl Hub {
         let mut results = Vec::new();
         for w in work {
             let (shell_pid, idle_ms) = live.get(&w.pty).cloned().unwrap_or((w.shell_pid, 0));
-            let data = read_session(Path::new(&w.key)).ok();
+            let mut data = read_session(Path::new(&w.key)).ok();
             let provider = data
                 .as_ref()
                 .and_then(|d| d.provider)
                 .unwrap_or(AgentProvider::Claude);
+            if let Some(d) = data.as_mut() {
+                follow_conversation(Path::new(&w.key), d, provider, shell_pid, &ctx);
+            }
             let probe = SessionProbe {
                 key: w.key.clone(),
                 provider,
@@ -2609,6 +2644,38 @@ mod tests {
         );
         let parsed: HubRequest = serde_json::from_str(r#"{"open_argv":["--cwd","/w"]}"#).unwrap();
         assert!(matches!(parsed, HubRequest::OpenArgv(a) if a == ["--cwd", "/w"]));
+    }
+
+    #[test]
+    fn a_session_follows_its_claude_process_to_a_new_conversation() {
+        use crate::status::{claude::ClaudeStatusFile, engine::PollContext, proctree::ProcTable, StatusRoots};
+        let dir = std::env::temp_dir().join(format!("twapp-follow-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut data: crate::cli::session::SessionData = serde_json::from_str(
+            r##"{"session_id":"old","name":"n","color":"#fff","claude_cwd":"/w"}"##,
+        )
+        .unwrap();
+        let file = |pid: u32, id: &str| ClaudeStatusFile {
+            pid,
+            session_id: Some(id.into()),
+            cwd: Some("/w".into()),
+            status: None,
+            waiting_for: None,
+            status_updated_at: None,
+        };
+        let ctx = PollContext {
+            procs: ProcTable::parse("  100     1 /bin/zsh\n  200   100 claude\n  300     1 claude\n"),
+            claude_files: vec![file(300, "someone-else"), file(200, "after-clear")],
+            now: std::time::SystemTime::now(),
+            roots: StatusRoots::under(&dir),
+        };
+
+        follow_conversation(&dir, &mut data, AgentProvider::Codex, Some(100), &ctx);
+        assert_eq!(data.session_id, "old", "only Claude conversations are followed");
+        follow_conversation(&dir, &mut data, AgentProvider::Claude, Some(100), &ctx);
+        assert_eq!(data.session_id, "after-clear");
+        assert_eq!(read_session(&dir).unwrap().session_id, "after-clear");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
