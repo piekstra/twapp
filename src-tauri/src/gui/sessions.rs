@@ -107,6 +107,7 @@ fn launcher_session_from_data(
     let imported = session_data.imported.unwrap_or(false);
     let forked_from = session_data.forked_from.clone();
     let fallback_session_key = directory.to_string_lossy().to_string();
+    let archive = crate::cli::archive::load(directory);
 
     LauncherSession {
         session_id: session_data
@@ -129,10 +130,14 @@ fn launcher_session_from_data(
         message_count,
         imported,
         forked_from,
+        // An archived conversation is restored on open.
         conversation_missing: preferred == AgentProvider::Claude
+            && archive.as_ref().is_none_or(|a| a.files.is_empty())
             && session_data
                 .native_session_id(AgentProvider::Claude)
                 .is_some_and(|id| !claude_ids.contains(id)),
+        archived: archive.is_some(),
+        archive_note: archive.and_then(|a| a.note),
     }
 }
 
@@ -729,12 +734,47 @@ pub async fn delete_session(directory: String, delete_everything: bool) -> Resul
     delete_session_files(&directory, delete_everything)
 }
 
+/// Archive a session and close it in the window; archiving an archived
+/// session refreshes its copies and, given a note, replaces the note.
+#[tauri::command]
+pub async fn archive_session(directory: String, note: Option<String>) -> Result<(), String> {
+    let key = super::hub::session_key(&directory);
+    let dir = std::path::PathBuf::from(&key);
+    // Closed first, so the copy is taken once the harness stopped writing.
+    if let Some(hub) = super::hub::hub() {
+        if !crate::cli::archive::is_archived(&dir) {
+            let _ = hub.close(&key);
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::cli::archive::archive(&dir, note.as_deref(), &crate::cli::archive::Homes::from_home())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if let Some(hub) = super::hub::hub() {
+        let _ = hub.close(&key);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unarchive_session(directory: String) -> Result<(), String> {
+    crate::cli::archive::unarchive(std::path::Path::new(&super::hub::session_key(&directory)))?;
+    if let Some(hub) = super::hub::hub() {
+        hub.emit_changed();
+    }
+    Ok(())
+}
+
 /// Delete a session that is not running: its Claude conversation and project
 /// entry, then twapp's files in the directory, or the whole directory.
 pub fn delete_session_files(directory: &str, delete_everything: bool) -> Result<(), String> {
     let directory = directory.to_string();
     let work_dir = std::path::PathBuf::from(&directory);
     let session_data = crate::cli::session::read_session(&work_dir)?;
+    if crate::cli::archive::is_archived(&work_dir) {
+        return Err("The session is archived. Unarchive it before deleting.".to_string());
+    }
 
     // 1. Delete conversation JSONL
     let home = dirs::home_dir().unwrap_or_default();
@@ -806,7 +846,7 @@ pub async fn forget_sessions(directories: Vec<String>) -> Result<u32, String> {
     let mut forgotten = 0;
     for directory in directories {
         let dir = std::path::PathBuf::from(&directory);
-        if session_running(&dir) || !dir.join(".twapp-session.json").is_file() {
+        if session_running(&dir) || !dir.join(".twapp-session.json").is_file() || crate::cli::archive::is_archived(&dir) {
             continue;
         }
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {

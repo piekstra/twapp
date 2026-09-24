@@ -149,6 +149,22 @@ export default function SessionPanel({
     hubApi.write(session.key, activeTab, text).catch(console.error);
   };
 
+  // --- Archive -------------------------------------------------------------
+  const [archiving, setArchiving] = useState(false);
+  const [archiveNote, setArchiveNote] = useState("");
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  useEffect(() => {
+    setArchiving(false);
+    setArchiveError(null);
+  }, [directory]);
+  const archiveSession = () => {
+    setArchiveError(null);
+    hubApi
+      .archive(directory, archiveNote.trim() || null)
+      .then(() => setArchiving(false))
+      .catch((e) => setArchiveError(String(e)));
+  };
+
   // --- Ticket --------------------------------------------------------------
   const [ticket, setTicket] = useState<TicketInfo | null>(null);
   // Until the user toggles it, the section is open only when a ticket is linked.
@@ -539,8 +555,45 @@ export default function SessionPanel({
             <button className="button ghost" onClick={() => setHistoryOpen(true)}>History</button>
           )}
           <span className="spacer" />
+          {session.archive_note == null && (
+            <button className="button ghost" onClick={() => { setArchiveNote(""); setArchiving(true); }} title="Close it and keep its conversation, safe from Claude's cleanup">
+              Archive
+            </button>
+          )}
           <button className="button ghost danger" onClick={onCloseSession} title="Stop and remove from the window">Close</button>
         </div>
+        {archiving && (
+          <div className="archive-form">
+            <input
+              className="input"
+              autoFocus
+              placeholder="Why keep it? (optional)"
+              value={archiveNote}
+              onChange={(e) => setArchiveNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") archiveSession();
+                if (e.key === "Escape") setArchiving(false);
+              }}
+            />
+            <button className="button primary small" onClick={archiveSession}>Archive</button>
+            <button className="button ghost small" onClick={() => setArchiving(false)}>Cancel</button>
+            <div className="archive-hint">
+              Closes the session and keeps a copy of its conversation in the session folder. Opening it later restores
+              the conversation if Claude has cleaned it up. Archived sessions are listed under All sessions and can't be deleted until unarchived.
+            </div>
+            {archiveError && <div className="inline-error">{archiveError}</div>}
+          </div>
+        )}
+        {session.archive_note != null && (
+          <div className="archive-state">
+            <span className="archive-badge">Archived</span>
+            {session.archive_note && <span className="archive-note">{session.archive_note}</span>}
+            <span className="spacer" />
+            <button className="button ghost small" onClick={() => hubApi.unarchive(directory).catch(console.error)} title="Drop the kept copy; the session can be deleted again">
+              Unarchive
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="panel-section">

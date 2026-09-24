@@ -81,6 +81,8 @@ export interface SessionView {
   name_suggestion?: string | null;
   /** A ticket the summaries find the session working under, when the user linked another. */
   ticket_suggestion?: string | null;
+  /** Set for an archived session: its note, or "" when it has none. */
+  archive_note?: string | null;
   /** Open blockers recorded in the session directory. */
   blockers?: Blocker[];
   yaks?: YakLog;
@@ -179,6 +181,8 @@ export const hubApi = {
   setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
   dismissTicket: (key: string, ticket: string) => invoke("hub_dismiss_ticket", { key, ticket }),
+  archive: (directory: string, note: string | null) => invoke("archive_session", { directory, note }),
+  unarchive: (directory: string) => invoke("unarchive_session", { directory }),
   setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),
   findEfforts: () => invoke<number>("hub_find_efforts"),
   yakReport: (days: number) => invoke<YakReport>("hub_yak_report", { days }),

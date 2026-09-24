@@ -179,6 +179,8 @@ pub struct SessionView {
     pub forked_from: Option<String>,
     /// `resume` or `new`: what the main tab's last start did.
     pub launch_kind: Option<String>,
+    /// The note of an archived session, `Some("")` when archived without one.
+    pub archive_note: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -454,6 +456,7 @@ impl HubSession {
                 .and_then(|t| t.epic),
             forked_from: data.as_ref().and_then(|d| d.forked_from.clone()),
             launch_kind: self.launch_kind.clone(),
+            archive_note: crate::cli::archive::load(Path::new(&self.key)).map(|a| a.note.unwrap_or_default()),
             name,
             color: data.as_ref().map(|d| d.color.clone()).unwrap_or_default(),
             provider,
@@ -1455,8 +1458,9 @@ impl Hub {
 
     /// Remove a session from the window, stopping every PTY it has.
     pub fn close(&self, key: &str) -> Result<(), String> {
-        let ptys: Vec<u64> = {
+        let (ptys, was_open): (Vec<u64>, bool) = {
             let mut inner = self.inner.lock();
+            let was_open = inner.session(key).is_some();
             let ptys: Vec<u64> = inner
                 .session(key)
                 .map(|s| s.tabs.iter().filter_map(|t| t.pty).collect())
@@ -1468,12 +1472,21 @@ impl Hub {
             if inner.selected.as_deref() == Some(key) {
                 inner.selected = inner.sessions.first().map(|s| s.key.clone());
             }
-            ptys
+            (ptys, was_open)
         };
         if let Ok(client) = self.ptyd() {
             for p in ptys {
                 client.kill(p).ok();
             }
+        }
+        // An archived session opened again keeps its copy current.
+        let dir = PathBuf::from(key);
+        if was_open && crate::cli::archive::is_archived(&dir) {
+            std::thread::spawn(move || {
+                if let Err(e) = crate::cli::archive::archive(&dir, None, &crate::cli::archive::Homes::from_home()) {
+                    log::warn!("refresh archive of {}: {}", dir.display(), e);
+                }
+            });
         }
         self.persist();
         self.emit_changed();

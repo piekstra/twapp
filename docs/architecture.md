@@ -250,6 +250,30 @@ under `~/.local/share/twapp/journal/`.
   `hub_journal_days`, `hub_journal_day`, `hub_journal_period`) and
   `twapp journal [day|period]` (`--list`, `--json`, `--path`, `--regenerate`).
 
+## Archive
+
+Claude deletes transcripts after its cleanup period (`cleanupPeriodDays`,
+measured from the file's last change), so a session left closed long enough
+has nothing to resume. Archiving a session closes it and copies its
+transcripts into `.twapp-archive/transcripts/` in the session directory: the
+Claude conversation, found under whichever project holds it, the subagent
+transcripts beside it, and the Codex rollout. `archive.json` records the
+note, when it was archived, and each copy with the path the harness reads.
+
+- **Restore.** `harness::prepare_launch`, which every launch goes through,
+  first copies back any kept transcript missing from its path, so the
+  harness resumes the conversation as if it had never been removed.
+- **Keeping the copy current.** Closing an archived session that was open in
+  the window copies its transcripts again, and so does archiving it again. A
+  copy whose original is gone stays in the archive.
+- **Protection.** Delete (window and CLI) refuses an archived session, and
+  forgetting sessions with no conversation skips it. Unarchiving restores
+  anything missing, then removes `.twapp-archive/`.
+- **Surfaces.** Archive in the panel's summary actions (with an optional note)
+  and on each row of All sessions, which shows an Archived badge with the note,
+  searches notes, and has an Archived only filter; `twapp archive [--note]`
+  and `twapp unarchive`.
+
 ## Window layout
 
 - **Layouts.** `right` (the default) puts one sidebar right of the terminal,

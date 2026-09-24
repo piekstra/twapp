@@ -116,6 +116,8 @@ pub fn run(args: GuiArgs) {
             sessions::get_session_history,
             sessions::forget_sessions,
             sessions::delete_session,
+            sessions::archive_session,
+            sessions::unarchive_session,
             sessions::discover_sessions,
             sessions::import_sessions,
             hub::hub_snapshot,

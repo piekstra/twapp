@@ -1,4 +1,5 @@
 pub mod app_bundle;
+pub mod archive;
 pub mod blockers;
 pub mod yaks;
 pub mod config;
@@ -194,6 +195,23 @@ pub enum Commands {
     },
     /// Stop the session and remove it from the window; its files stay
     Close {
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Archive a session: close it and keep a copy of its conversation in
+    /// the session directory, restored when the harness no longer has it.
+    /// Archived sessions cannot be deleted until unarchived.
+    Archive {
+        /// Why the session is worth keeping
+        #[arg(long)]
+        note: Option<String>,
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Unarchive a session: restore anything missing and drop the copy
+    Unarchive {
         /// Target session directory (default: current directory)
         #[arg(long)]
         dir: Option<String>,
@@ -573,6 +591,8 @@ pub fn run(cmd: Commands) -> i32 {
             _ => cmd_rename_suggested(),
         },
         Commands::Lane { lane, dir } => cmd_lane(lane, dir.as_deref()),
+        Commands::Archive { note, dir } => archive::cmd_archive(dir.as_deref(), note.as_deref(), false),
+        Commands::Unarchive { dir } => archive::cmd_archive(dir.as_deref(), None, true),
         Commands::Close { dir } => cmd_close(dir.as_deref()),
         Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),
         Commands::Delete { dir, everything, yes } => cmd_delete(dir.as_deref(), everything, yes),

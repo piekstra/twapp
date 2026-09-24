@@ -127,6 +127,8 @@ export interface LauncherSession {
   forked_from: string | null;
   /** No transcript for the Claude conversation: opening starts a new one. */
   conversation_missing?: boolean;
+  archived?: boolean;
+  archive_note?: string | null;
 }
 
 export interface LauncherResponse {

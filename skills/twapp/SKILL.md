@@ -47,6 +47,10 @@ A blocker without a check still shows in the window; the user checks it by hand.
 
 `twapp note add "<text>"` adds a note the user sees in the session's panel; `twapp note list`, `twapp note remove <id>`. Notes are for the user: decisions to make, things to verify later.
 
+## Archiving
+
+`twapp archive --note "<why it is worth keeping>"` closes the session and keeps a copy of its conversation in the session directory, so it can be resumed after the harness would have deleted it. Archive only when the user asks; `twapp unarchive` undoes it.
+
 ## The window's view
 
 `twapp status` lists the window's sessions by lane (priority, background, blocked) with state and summary; `--json` for the full record. The lanes are the user's: change one with `twapp lane <lane>` only when the user asks.
