@@ -83,6 +83,23 @@ pub fn day_markdown(record: &DayRecord) -> String {
         out.push('\n');
     }
 
+    if !facts.asks.is_empty() {
+        out.push_str("## Decisions, actions and follow-ups\n\n");
+        for a in &facts.asks {
+            let kind = match a.kind {
+                crate::cli::asks::AskKind::Decision => "Decision",
+                crate::cli::asks::AskKind::Action => "Action",
+                crate::cli::asks::AskKind::Followup => "Follow-up",
+            };
+            let mut line = format!("- {} ({}): {} ({})", kind, a.outcome, a.title, a.session);
+            if let Some(answer) = &a.answer {
+                let _ = write!(line, ". Answer: {}", answer);
+            }
+            let _ = writeln!(out, "{}", line);
+        }
+        out.push('\n');
+    }
+
     if !facts.yaks.is_empty() {
         out.push_str("## Tangents\n\n");
         if facts.stat.bytes > 0 {

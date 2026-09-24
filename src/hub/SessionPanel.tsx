@@ -13,6 +13,7 @@ import type { EditingPromptState } from "../components/PromptSections";
 import { markdownComponents } from "../components/markdown";
 import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
+import AskList from "./AskList";
 import BlockerList from "./BlockerList";
 import Linkify from "./Linkify";
 
@@ -83,6 +84,7 @@ export default function SessionPanel({
   // change here is an edit by note id, applied to what is on disk.
   const [notes, setNotes] = useState<Note[]>([]);
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
+  const [asksOpen, setAsksOpen] = useState<boolean | null>(null);
   const [yaksOpen, setYaksOpen] = useState(false);
   const [editingEffort, setEditingEffort] = useState(false);
   const [effortDraft, setEffortDraft] = useState("");
@@ -350,6 +352,8 @@ export default function SessionPanel({
   const notesExpanded = notesOpen ?? notes.length > 0;
   const blockers = session.blockers ?? [];
   const blockersExpanded = blockersOpen ?? blockers.length > 0;
+  const asks = session.asks ?? [];
+  const asksExpanded = asksOpen ?? asks.length > 0;
   const summary = session.summary;
   const status = session.status;
 
@@ -690,6 +694,27 @@ export default function SessionPanel({
             )}
           </div>
         )}
+      </section>
+
+      <section className="panel-section">
+        <div className="section-head" onClick={() => setAsksOpen(!asksExpanded)}>
+          <Chevron open={asksExpanded} />
+          <span className="section-title" title="Decisions, actions and follow-ups the session's agent recorded for you">For you</span>
+          {asks.length > 0 && <span className="count">{asks.length}</span>}
+          {asks.some((a) => a.kind === "decision") && <span className="ask-badge">Decision</span>}
+          {!asksExpanded && asks.length === 0 && <span className="section-empty">Nothing</span>}
+        </div>
+        {asksExpanded &&
+          (asks.length > 0 ? (
+            <div className="section-body">
+              <AskList items={asks.map((ask) => ({ ask, session }))} now={now} />
+            </div>
+          ) : (
+            <div className="section-empty blocker-empty">
+              Nothing recorded. The session's agent adds what it needs from you with <code>twapp decision</code>,{" "}
+              <code>twapp action</code> and <code>twapp followup</code>.
+            </div>
+          ))}
       </section>
 
       <section className="panel-section">

@@ -170,6 +170,8 @@ pub struct SessionView {
     pub ticket_suggestion: Option<String>,
     /// Open blockers recorded in the session directory.
     pub blockers: Vec<super::blockers::BlockerView>,
+    /// Open decisions, actions and follow-ups the agent recorded for the user.
+    pub asks: Vec<crate::cli::asks::Ask>,
     /// Tangents the session took, and its main effort, as summaries saw them.
     pub yaks: crate::cli::yaks::YakLog,
     pub effort: Option<EffortInfo>,
@@ -269,8 +271,9 @@ fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) 
 /// of either kind, since it goes inside quoted shell and TOML strings.
 pub const SESSION_CONTEXT: &str = "This session runs in twapp, the window that hosts every coding-agent session of this user. \
 When the work waits on someone outside the session (a support case, a ticket, an email, a review), record \
-it with twapp blocker and follow the twapp skill; twapp note adds a note the user sees in the session panel. twapp \
---help lists the commands. Leave other sessions alone: they belong to the user.";
+it with twapp blocker; when it needs the user to decide something or do something only they can, record it with \
+twapp decision or twapp action, and work noticed outside the scope of the session with twapp followup. Follow the twapp \
+skill for these; twapp note adds a note the user sees in the session panel. twapp --help lists the commands. Leave other sessions alone: they belong to the user.";
 
 /// A harness command with twapp's session context added: Claude takes it as
 /// an appended system prompt, Codex as developer instructions. Other
@@ -448,6 +451,7 @@ impl HubSession {
                 _ => None,
             },
             blockers: super::blockers::open_blockers(Path::new(&self.key)),
+            asks: crate::cli::asks::open_asks(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
             effort: self.effort.clone(),
             epic: std::fs::read_to_string(Path::new(&self.key).join(".twapp-ticket.json"))
@@ -2237,6 +2241,74 @@ pub fn hub_blocker_send(key: String, id: String) -> Result<(), String> {
     })?;
     hub.refresh_blockers();
     Ok(())
+}
+
+/// Close a decision, action or follow-up from the window: `answered` (with
+/// the answer), `done` or `dropped`. With `send`, the outcome is pasted into
+/// the session for the user to submit; a decision is always sent when the
+/// session runs, since its work waits on the answer. Returns whether it was
+/// sent.
+#[tauri::command]
+pub fn hub_ask_close(key: String, id: String, outcome: String, answer: Option<String>, send: bool) -> Result<bool, String> {
+    use crate::cli::asks::{AskKind, AskStatus};
+    let hub = require_hub()?;
+    let status = match outcome.as_str() {
+        "answered" | "done" => AskStatus::Done,
+        "dropped" => AskStatus::Dropped,
+        other => return Err(format!("unknown outcome {}", other)),
+    };
+    let ask = crate::cli::asks::update(Path::new(&key), &id, |a| {
+        if a.kind == AskKind::Decision && status == AskStatus::Done && answer.as_deref().is_none_or(|t| t.trim().is_empty()) {
+            return Err("a decision needs an answer".into());
+        }
+        a.close(status, answer.as_deref(), "user");
+        Ok(())
+    })?;
+    let send = (send || ask.kind == AskKind::Decision) && hub.is_hosted_running(&key);
+    if send {
+        let paste = format!("\x1b[200~{}\x1b[201~", ask.message());
+        hub.write(&key, MAIN_TAB, paste.into_bytes());
+    }
+    hub.emit_changed();
+    Ok(send)
+}
+
+/// Start a new session for a follow-up, with the follow-up in its prompt for
+/// the user to review and submit, and mark the follow-up picked up.
+#[tauri::command]
+pub async fn hub_ask_start_session(key: String, id: String) -> Result<String, String> {
+    let hub = require_hub()?;
+    let dir = PathBuf::from(&key);
+    let ask = crate::cli::asks::load(&dir)
+        .into_iter()
+        .find(|a| a.id == id)
+        .ok_or_else(|| format!("no item {}", id))?;
+    let from = read_session(&dir).map(|d| d.name).unwrap_or_else(|_| key.clone());
+    let name = crate::summary::truncate_chars(&ask.title, crate::summary::SUGGESTED_NAME_MAX_CHARS);
+    let mut prompt = format!("A follow-up from the session \"{}\": {}", from, ask.title);
+    if let Some(context) = &ask.context {
+        prompt.push_str(&format!("\n\n{}", context));
+    }
+    if let Some(reference) = &ask.reference {
+        prompt.push_str(&format!("\n\nReference: {}", reference));
+    }
+    let provider = crate::cli::config::GlobalConfig::load().map(|c| c.agent_provider).unwrap_or(AgentProvider::Claude);
+    let created = tauri::async_runtime::spawn_blocking(move || {
+        crate::cli::create_session_core(None, Some(name), None, None, provider, false, None, None, false)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let mut args = created.app_args;
+    args.push("--prefill".into());
+    args.push(prompt);
+    let new_key = hub.open_argv(&args, true)?;
+    let new_name = read_session(Path::new(&new_key)).map(|d| d.name).unwrap_or_default();
+    crate::cli::asks::update(&dir, &id, |a| {
+        a.close(crate::cli::asks::AskStatus::Done, Some(&format!("Started the session \"{}\"", new_name)), "user");
+        Ok(())
+    })?;
+    hub.emit_changed();
+    Ok(new_key)
 }
 
 /// Add the user's note to a blocker.

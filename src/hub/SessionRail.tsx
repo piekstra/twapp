@@ -1,3 +1,4 @@
+import { askSummary } from "./AskList";
 import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
 import { LANES, STATE_LABELS, effortsOf, headlineOf, sinceLabel, type Lane, type SessionView } from "./api";
@@ -168,6 +169,9 @@ export default function SessionRail({
             {shortcut !== undefined && shortcut < 9 && <span className="rail-shortcut">⌘{shortcut + 1}</span>}
           </div>
           {blocked && <div className="rail-blocked">{blocked}</div>}
+          {(s.asks?.length ?? 0) > 0 && (
+            <div className={`rail-waiting rail-asks${s.asks!.some((a) => a.kind === "decision") ? " decision" : ""}`}>{askSummary(s.asks!)}</div>
+          )}
           {(s.blockers?.length ?? 0) > 0 && (
             <div className={`rail-waiting${s.blockers!.some((b) => b.status === "updated") ? " updated" : ""}`}>
               {s.blockers!.some((b) => b.status === "updated")

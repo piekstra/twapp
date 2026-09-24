@@ -151,6 +151,11 @@ fn merge_facts(mut new: DayFacts, old: &DayFacts) -> DayFacts {
             new.blockers.push(b.clone());
         }
     }
+    for a in &old.asks {
+        if !new.asks.iter().any(|n| n.title == a.title && n.session == a.session) {
+            new.asks.push(a.clone());
+        }
+    }
     for y in &old.yaks {
         if !new.yaks.iter().any(|n| n.title == y.title && n.session == y.session) {
             new.yaks.push(y.clone());

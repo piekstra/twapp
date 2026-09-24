@@ -250,6 +250,34 @@ under `~/.local/share/twapp/journal/`.
   `hub_journal_days`, `hub_journal_day`, `hub_journal_period`) and
   `twapp journal [day|period]` (`--list`, `--json`, `--path`, `--regenerate`).
 
+## Decisions, actions and follow-ups
+
+What a session needs from the user, as opposed to what it waits on outside
+itself (blockers), is kept in `.twapp-asks.json` (`cli/asks.rs`):
+
+- a **decision**: a question only the user can answer, with optional
+  choices and context;
+- an **action**: something only the user can do, with an optional command to
+  run and a condition for when it can be done;
+- a **follow-up**: work noticed outside the session's scope.
+
+Agents add them with `twapp decision|action|followup add`. Adding an open item
+of the same kind and title again updates it, so an agent that restates its
+list does not duplicate it. `hub::SESSION_CONTEXT` and the twapp skill tell
+agents when to use each.
+
+- **Window.** The panel's For you section lists a session's open items; the
+  rail shows a one-line count (a single decision by its question); the
+  overview's For you section lists decisions across sessions and folds the
+  rest into counts. Answering a decision (a choice or free text) records the
+  answer and, when the session runs, pastes "Decision on: ... My answer: ..."
+  into its input with a bracketed paste for the user to submit. An action is
+  marked done, optionally with a note pasted the same way. A follow-up can
+  start a new session named after it, with the follow-up as its prefilled
+  prompt, which marks it picked up.
+- **Journal.** A day's facts include the items raised or closed that day,
+  with decisions' answers, and decisions still open when it ended.
+
 ## Archive
 
 Claude deletes transcripts after its cleanup period (`cleanupPeriodDays`,

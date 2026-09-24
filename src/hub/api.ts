@@ -85,6 +85,8 @@ export interface SessionView {
   archive_note?: string | null;
   /** Open blockers recorded in the session directory. */
   blockers?: Blocker[];
+  /** Open decisions, actions and follow-ups the agent recorded for the user. */
+  asks?: Ask[];
   yaks?: YakLog;
   /** The effort the user put the session in, or one "Find related" found. */
   effort?: { name: string; source: "user" | "auto" } | null;
@@ -96,6 +98,22 @@ export interface SessionView {
 }
 
 /** Something the session waits on outside itself (`twapp blocker`). */
+export type AskKind = "decision" | "action" | "followup";
+
+export interface Ask {
+  id: string;
+  kind: AskKind;
+  title: string;
+  context?: string | null;
+  options?: string[];
+  command?: string | null;
+  after?: string | null;
+  reference?: string | null;
+  status: "open" | "done" | "dropped";
+  created_at: string;
+  updated_at?: string | null;
+}
+
 export interface Blocker {
   id: string;
   title: string;
@@ -181,6 +199,10 @@ export const hubApi = {
   setLane: (key: string, lane: Lane) => invoke("hub_set_lane", { key, lane }),
   dismissName: (key: string, name: string) => invoke("hub_dismiss_name", { key, name }),
   dismissTicket: (key: string, ticket: string) => invoke("hub_dismiss_ticket", { key, ticket }),
+  /** Resolves true when the outcome was pasted into the session. */
+  askClose: (key: string, id: string, outcome: "answered" | "done" | "dropped", answer: string | null, send: boolean) =>
+    invoke<boolean>("hub_ask_close", { key, id, outcome, answer, send }),
+  askStartSession: (key: string, id: string) => invoke<string>("hub_ask_start_session", { key, id }),
   archive: (directory: string, note: string | null) => invoke("archive_session", { directory, note }),
   unarchive: (directory: string) => invoke("unarchive_session", { directory }),
   setEffort: (key: string, name: string | null) => invoke("hub_set_effort", { key, name }),

@@ -1,5 +1,6 @@
 pub mod app_bundle;
 pub mod archive;
+pub mod asks;
 pub mod blockers;
 pub mod yaks;
 pub mod config;
@@ -89,6 +90,21 @@ pub enum Commands {
     Note {
         #[command(subcommand)]
         command: NoteCommands,
+    },
+    /// A decision only the user can make, which the session's work waits on
+    Decision {
+        #[command(subcommand)]
+        command: asks::AskCommands,
+    },
+    /// Something only the user can do: run a command, approve, delete a secret
+    Action {
+        #[command(subcommand)]
+        command: asks::AskCommands,
+    },
+    /// Work noticed outside the session's scope, for later or another session
+    Followup {
+        #[command(subcommand)]
+        command: asks::AskCommands,
     },
     /// Track what the session waits on outside itself (a vendor ticket, an
     /// email, a review), with an optional command that shows its state
@@ -552,6 +568,9 @@ pub fn run(cmd: Commands) -> i32 {
             }
         },
         Commands::Blocker { command } => blockers::run_command(command),
+        Commands::Decision { command } => asks::run_command(asks::AskKind::Decision, command),
+        Commands::Action { command } => asks::run_command(asks::AskKind::Action, command),
+        Commands::Followup { command } => asks::run_command(asks::AskKind::Followup, command),
         Commands::Prompt { command } => match command {
             PromptCommands::List { .. } => prompts::cmd_prompt_list(true, None),
             PromptCommands::Add {
