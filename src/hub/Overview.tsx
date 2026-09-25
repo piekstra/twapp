@@ -58,6 +58,7 @@ export default function Overview({
     });
   const [waitingFold, setWaitingFold] = useState<boolean | null>(null);
   const [checkingAll, setCheckingAll] = useState(false);
+  const [askingAll, setAskingAll] = useState(false);
   const [checkAllResult, setCheckAllResult] = useState<string | null>(null);
   const [finding, setFinding] = useState(false);
   const [findResult, setFindResult] = useState<string | null>(null);
@@ -177,18 +178,22 @@ export default function Overview({
   const updatedWaiting = waiting.filter((b) => b.blocker.status === "updated");
   const waitingOpen = waitingFold ?? updatedWaiting.length > 0;
   const checkable = waiting.filter((b) => b.blocker.check);
-  const checkAll = async () => {
-    const approved = checkable.filter((b) => b.blocker.check_approved);
+  const unapprovedChecks = checkable.filter((b) => !b.blocker.check_approved);
+  /** `unapproved`: what to do with checks not approved yet: skip them, run them once, or approve them. */
+  const checkAll = async (unapproved: "skip" | "once" | "approve") => {
+    setAskingAll(false);
+    const runs = unapproved === "skip" ? checkable.filter((b) => b.blocker.check_approved) : checkable;
     setCheckingAll(true);
     setCheckAllResult(null);
     const results: ("changed" | "same" | "failed")[] = [];
-    const queue = [...approved];
+    const queue = [...runs];
     await Promise.all(
       Array.from({ length: Math.min(4, queue.length) }, async () => {
         for (let b = queue.shift(); b; b = queue.shift()) {
+          const approved = b.blocker.check_approved;
           results.push(
             await hubApi
-              .blockerCheck(b.session.key, b.blocker.id, false)
+              .blockerCheck(b.session.key, b.blocker.id, !approved && unapproved === "approve", !approved && unapproved === "once", b.blocker.check ?? null)
               .then((changed): "changed" | "same" => (changed ? "changed" : "same"))
               .catch(() => "failed" as const),
           );
@@ -196,12 +201,12 @@ export default function Overview({
       }),
     );
     const n = (r: string) => results.filter((x) => x === r).length;
-    const unapproved = checkable.length - approved.length;
+    const skipped = checkable.length - runs.length;
     setCheckAllResult(
       [
         `Checked ${results.length}: ${n("changed")} changed`,
         n("failed") > 0 && `${n("failed")} failed`,
-        unapproved > 0 && `${unapproved} not approved yet (use Run check on each)`,
+        skipped > 0 && `${skipped} skipped, not approved`,
       ]
         .filter(Boolean)
         .join(", ") + ".",
@@ -359,13 +364,36 @@ export default function Overview({
                 <button
                   className="button ghost small"
                   disabled={checkingAll}
-                  onClick={checkAll}
-                  title="Run every approved blocker check now; checks not approved yet are skipped"
+                  onClick={() => (unapprovedChecks.length > 0 ? setAskingAll((v) => !v) : checkAll("skip"))}
+                  title="Run every blocker check now"
                 >
                   {checkingAll ? "Checking" : "Check all"}
                 </button>
               )}
               </div>
+              {askingAll && (
+                <div className="check-ask">
+                  <div className="check-ask-text">
+                    {unapprovedChecks.length === 1 ? "This check runs" : `These ${unapprovedChecks.length} checks run`} commands the sessions' agents wrote, on your
+                    machine, and {unapprovedChecks.length === 1 ? "has" : "have"} not been approved yet:
+                    {unapprovedChecks.map((b) => (
+                      <span key={`${b.session.key}:${b.blocker.id}`} className="check-ask-item">
+                        <span className="check-ask-session">{b.session.name}</span>
+                        <code>{b.blocker.check}</code>
+                      </span>
+                    ))}
+                    twapp can also run them every hour and tell you when their output changes.
+                  </div>
+                  <div className="check-ask-actions">
+                    <button className="button ghost small" onClick={() => setAskingAll(false)}>Cancel</button>
+                    {unapprovedChecks.length < checkable.length && (
+                      <button className="button ghost small" onClick={() => checkAll("skip")}>Approved only</button>
+                    )}
+                    <button className="button ghost small" onClick={() => checkAll("once")}>Run all once</button>
+                    <button className="button primary small" onClick={() => checkAll("approve")}>Run all now and every hour</button>
+                  </div>
+                </div>
+              )}
               {checkAllResult && <div className="overview-check-result">{checkAllResult}</div>}
               {waitingOpen && <BlockerList items={waitingFold ? waiting : updatedWaiting} now={now} showSession onSelect={onSelect} />}
               {waitingOpen && !waitingFold && waiting.length > updatedWaiting.length && (
