@@ -3580,6 +3580,19 @@ kbd {
   word-break: break-all;
 }
 
+.check-ask-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+
+.check-ask-session {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
 .check-ask-actions {
   display: flex;
   justify-content: flex-end;
