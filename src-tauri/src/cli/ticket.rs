@@ -76,6 +76,9 @@ pub fn classify_ticket_ref(
     force_github: bool,
 ) -> TicketRef {
     let input = input.trim();
+    if let Some(reference) = ref_from_url(input) {
+        return reference;
+    }
     if force_github || input.contains('#') {
         return TicketRef::GitHub(input.to_string());
     }
@@ -85,6 +88,43 @@ pub fn classify_ticket_ref(
         }
         _ => TicketRef::Jira(input.to_string()),
     }
+}
+
+/// A ticket reference in a pasted link: a Jira issue page (`/browse/KEY`, or
+/// a board or search URL with `selectedIssue=KEY`) or a GitHub issue or pull
+/// request (`github.com/owner/repo/issues/N`).
+fn ref_from_url(input: &str) -> Option<TicketRef> {
+    let rest = input.strip_prefix("https://").or_else(|| input.strip_prefix("http://"))?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
+    let path = path.split('#').next().unwrap_or(path);
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if host == "github.com" || host == "www.github.com" {
+        return match segments.as_slice() {
+            [owner, repo, "issues" | "pull", number, ..] if number.chars().all(|c| c.is_ascii_digit()) => {
+                Some(TicketRef::GitHub(format!("{}/{}#{}", owner, repo, number)))
+            }
+            _ => None,
+        };
+    }
+    let is_key = |s: &str| {
+        s.split_once('-').is_some_and(|(project, number)| {
+            !project.is_empty()
+                && project.chars().all(|c| c.is_ascii_alphanumeric())
+                && !number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+        })
+    };
+    let browsed = segments
+        .windows(2)
+        .find(|w| w[0] == "browse" && is_key(w[1]))
+        .map(|w| w[1].to_string());
+    let selected = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, v)| *k == "selectedIssue" && is_key(v))
+        .map(|(_, v)| v.to_string());
+    browsed.or(selected).map(|key| TicketRef::Jira(key.to_ascii_uppercase()))
 }
 
 /// Fetch any ticket reference, reading the Jira project and GitHub repo
@@ -514,6 +554,30 @@ mod tests {
         assert_eq!(
             classify_ticket_ref("12", Some("ABC"), true),
             TicketRef::GitHub("12".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pasted_link_is_read_as_its_ticket() {
+        let jira = |key: &str| TicketRef::Jira(key.to_string());
+        assert_eq!(classify_ticket_ref("https://example.atlassian.net/browse/ABC-7754", None, false), jira("ABC-7754"));
+        assert_eq!(classify_ticket_ref(" https://example.atlassian.net/browse/abc-12?focusedCommentId=1 ", None, false), jira("ABC-12"));
+        assert_eq!(
+            classify_ticket_ref("https://example.atlassian.net/jira/software/c/projects/ABC/boards/23?selectedIssue=ABC-9", None, false),
+            jira("ABC-9")
+        );
+        assert_eq!(
+            classify_ticket_ref("https://github.com/owner/repo/issues/12#issuecomment-3", Some("ABC"), false),
+            TicketRef::GitHub("owner/repo#12".to_string())
+        );
+        assert_eq!(
+            classify_ticket_ref("https://github.com/owner/repo/pull/40/files", None, false),
+            TicketRef::GitHub("owner/repo#40".to_string())
+        );
+        assert_eq!(
+            classify_ticket_ref("https://example.com/page", None, false),
+            jira("https://example.com/page"),
+            "a link with no ticket in it goes through unchanged"
         );
     }
 
