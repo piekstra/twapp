@@ -87,6 +87,13 @@ export default function SessionPanel({
   // change here is an edit by note id, applied to what is on disk.
   const [notes, setNotes] = useState<Note[]>([]);
   const [, setContextLater] = useState(0);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  useEffect(() => setNameDraft(null), [session.key]);
+  const saveName = () => {
+    const name = nameDraft?.trim();
+    setNameDraft(null);
+    if (name && name !== session.name) hubApi.rename(directory, name).catch(console.error);
+  };
   const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
   const [asksOpen, setAsksOpen] = useState<boolean | null>(null);
   const [yaksOpen, setYaksOpen] = useState(false);
@@ -370,7 +377,26 @@ export default function SessionPanel({
       <header className="panel-head">
         <span className="panel-swatch" style={{ background: session.color ? (isDark ? getDarkModeAccentColor(session.color) : session.color) : undefined }} />
         <div className="panel-head-text">
-          <span className="panel-title" title={directory}>{session.name}</span>
+          {nameDraft === null ? (
+            <button className="panel-title" title="Click to rename" onClick={() => setNameDraft(session.name)}>
+              {session.name}
+            </button>
+          ) : (
+            <input
+              className="panel-title-edit"
+              aria-label="Session name"
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              onBlur={saveName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveName();
+                if (e.key === "Escape") setNameDraft(null);
+                e.stopPropagation();
+              }}
+            />
+          )}
           <span className="panel-path">{directory.replace(/^\/Users\/[^/]+/, "~")}</span>
         </div>
         <button className="icon-button" onClick={() => setSettingsOpen(true)} title="Session settings">
