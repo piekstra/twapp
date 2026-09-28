@@ -995,11 +995,35 @@ kbd {
 }
 
 .panel-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: text;
   font-size: 13.5px;
   font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.panel-title:hover {
+  text-decoration: underline dotted var(--text-3);
+  text-underline-offset: 3px;
+}
+
+.panel-title-edit {
+  width: 100%;
+  min-width: 0;
+  margin: -2px 0 -2px -4px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s, 4px);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: 650 13.5px var(--font-ui);
+  outline: none;
 }
 
 .panel-path {

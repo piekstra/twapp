@@ -32,7 +32,12 @@ the whole excerpt, not only the latest request, which is often a tangent.
 
 The session's name is the user's label for its main effort. When the name no longer describes the \
 main effort, suggest a short name for the main effort (never for a tangent), in the same style as \
-the current name; otherwise suggested_name is null. When the current work is a tangent, describe \
+the current name; otherwise suggested_name is null. Answer name_covers first: true when the current \
+name covers the main effort, including when the main effort is one part, phase or piece of what \
+the name names (a session named \"Billing integration\" working on invoice retry handling is \
+covered: the user is still on the billing integration). false only when the name names different \
+work, or is too vague to tell sessions apart (\"new session\", \"misc\"). When name_covers is true, \
+suggested_name is null; never suggest a narrower name for work the current name covers. When the current work is a tangent, describe \
 it in tangent; if it matches one of the known tangents listed in the input, use that title exactly. \
 tangent.done is true when the tangent is finished and the work can return to the main effort. When \
 the current work serves the main effort, tangent is null. finished_tangents lists the known tangents \
@@ -48,7 +53,7 @@ Reply with only a JSON object: \
 {\"headline\": \"<at most 80 characters naming the task at hand>\", \"doing\": \"<one or two \
 sentences on where the work stands>\", \"needs_user\": \"<what the user must do, in one sentence>\" \
 or null, \"main_effort\": \"<at most 80 characters naming what the session is for>\", \
-\"suggested_name\": \"<at most 48 characters>\" or null, \"tangent\": {\"title\": \"<at most 60 \
+\"name_covers\": true or false, \"suggested_name\": \"<at most 48 characters>\" or null, \"tangent\": {\"title\": \"<at most 60 \
 characters>\", \"done\": false} or null, \"finished_tangents\": [\"<known title>\"], \"ticket\": \"<key>\" \
 or null}.";
 
@@ -435,8 +440,10 @@ pub(crate) fn model_summary(
         .as_str()
         .map(|n| clean_text(n, 300))
         .filter(|n| !n.is_empty() && !n.eq_ignore_ascii_case("null"));
+    let name_covers = value["name_covers"].as_bool().unwrap_or(false);
     let suggested_name = value["suggested_name"]
         .as_str()
+        .filter(|_| !name_covers)
         .map(|n| clean_text(n, SUGGESTED_NAME_MAX_CHARS))
         .filter(|n| {
             !n.is_empty()
@@ -648,6 +655,21 @@ mod tests {
             let answer = format!(
                 r#"{{"headline": "h", "doing": "d", "needs_user": null, "suggested_name": "{}"}}"#,
                 suggested
+            );
+            let runner = FakeRunner::new(Ok(&answer));
+            let (s, rx) = start(cfg(Duration::ZERO), Some(runner));
+            s.request(request("/a", false));
+            let (_, summary) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(summary.suggested_name.as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn no_name_is_suggested_when_the_current_one_covers_the_work() {
+        for (covers, expected) in [("true", None), ("false", Some("Invoice retry handling"))] {
+            let answer = format!(
+                r#"{{"headline": "h", "doing": "d", "needs_user": null, "name_covers": {}, "suggested_name": "Invoice retry handling"}}"#,
+                covers
             );
             let runner = FakeRunner::new(Ok(&answer));
             let (s, rx) = start(cfg(Duration::ZERO), Some(runner));
