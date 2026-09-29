@@ -973,6 +973,7 @@ kbd {
 }
 
 .panel-head {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -982,9 +983,32 @@ kbd {
 .panel-swatch {
   width: 10px;
   height: 10px;
+  padding: 0;
+  border: 0;
   border-radius: 3px;
   flex-shrink: 0;
   background: var(--line-strong);
+  cursor: pointer;
+}
+
+.panel-swatch:hover {
+  box-shadow: 0 0 0 2px var(--line-strong);
+}
+
+.panel-colors {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 8px;
+  z-index: 20;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface-1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.panel-colors .session-color-dot {
+  padding: 0;
 }
 
 .panel-head-text {
