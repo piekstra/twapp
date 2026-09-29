@@ -83,6 +83,24 @@ pub fn day_markdown(record: &DayRecord) -> String {
         out.push('\n');
     }
 
+    if !facts.wrapped_up.is_empty() {
+        out.push_str("## Wrapped up\n\n");
+        for w in &facts.wrapped_up {
+            let mut line = format!("- {}", w.session);
+            if let Some(ticket) = &w.ticket {
+                let _ = write!(line, " ({})", ticket);
+            }
+            if let Some(effort) = w.main_effort.as_ref().filter(|e| !e.eq_ignore_ascii_case(&w.session)) {
+                let _ = write!(line, ": {}", effort);
+            }
+            if let Some(started) = w.started.get(..10) {
+                let _ = write!(line, ", started {}", started);
+            }
+            let _ = writeln!(out, "{}", line);
+        }
+        out.push('\n');
+    }
+
     if !facts.asks.is_empty() {
         out.push_str("## Decisions, actions and follow-ups\n\n");
         for a in &facts.asks {

@@ -63,7 +63,7 @@ impl Context {
         let mut sources = Vec::new();
         if let Ok(cfg) = crate::cli::config::GlobalConfig::load() {
             crate::cli::session::visit_sessions(&cfg.work_directory, 0, &mut |data, dir| {
-                sources.push(Source { key: dir.to_string_lossy().to_string(), dir, data });
+                sources.push(Source { key: dir.to_string_lossy().to_string(), dir, data, retired: None });
             });
         }
         for key in extra {
@@ -72,12 +72,12 @@ impl Context {
                 continue;
             }
             if let Ok(data) = crate::cli::session::read_session(&dir) {
-                sources.push(Source { key: key.clone(), dir, data });
+                sources.push(Source { key: key.clone(), dir, data, retired: None });
             }
         }
         for (dir, retired, data) in crate::cli::retired::list(&crate::cli::retired::default_root()) {
             if !sources.iter().any(|s| s.key == retired.key) {
-                sources.push(Source { key: retired.key, dir, data });
+                sources.push(Source { key: retired.key.clone(), dir, data, retired: Some(retired) });
             }
         }
         Self { root, sources, efforts: load_efforts(), transcripts: TranscriptRoots::from_home() }
@@ -94,6 +94,9 @@ impl Context {
         for source in &self.sources {
             let log = crate::cli::yaks::load(&source.dir);
             days.extend(log.days.keys().filter_map(|d| d.parse::<NaiveDate>().ok()));
+            if let Some(day) = source.retired.as_ref().and_then(|r| super::work_day_of(&r.retired_at)) {
+                days.insert(day);
+            }
         }
         days
     }
@@ -164,6 +167,11 @@ fn merge_facts(mut new: DayFacts, old: &DayFacts) -> DayFacts {
     for y in &old.yaks {
         if !new.yaks.iter().any(|n| n.title == y.title && n.session == y.session) {
             new.yaks.push(y.clone());
+        }
+    }
+    for w in &old.wrapped_up {
+        if !new.wrapped_up.iter().any(|n| n.session == w.session) {
+            new.wrapped_up.push(w.clone());
         }
     }
     if new.stat.summaries < old.stat.summaries {

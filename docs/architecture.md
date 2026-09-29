@@ -301,8 +301,13 @@ and the journal build from, and both read them from session directories.
 Deleting or forgetting a session would take that record with it, so
 `cli::retired::retire` first copies the directory's `.twapp-*.json` files to
 `~/.local/share/twapp/retired/<session id>/`, with `retired.json` naming the
-session key it had. A session with no yak log, asks or blockers is not kept.
-A delete whose copy fails deletes nothing; a forget skips that session. The
+session key it had and whether it was deleted or forgotten. A delete is how
+the user wraps up finished work, so every deleted session is kept; a
+forgotten one (a session whose conversation is gone) is kept only when it has
+a yak log, asks or blockers. A delete whose copy fails deletes nothing; a
+forget skips that session. A day's journal facts list the sessions deleted
+that day as `wrapped_up`, with their main effort, ticket and start date, and
+the day's digest names that work as finished. The
 Yaks report lists retired sessions marked deleted, and the journal reads them
 as sources under their old key, so a day not built yet still gets their
 tangents, asks and blockers. The conversation itself is deleted, so such a

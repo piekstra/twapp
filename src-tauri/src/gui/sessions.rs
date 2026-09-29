@@ -775,7 +775,7 @@ pub fn delete_session_files(directory: &str, delete_everything: bool) -> Result<
     if crate::cli::archive::is_archived(&work_dir) {
         return Err("The session is archived. Unarchive it before deleting.".to_string());
     }
-    crate::cli::retired::retire(&crate::cli::retired::default_root(), &work_dir)
+    crate::cli::retired::retire(&crate::cli::retired::default_root(), &work_dir, crate::cli::retired::How::Deleted)
         .map_err(|e| format!("Could not keep the session's history, so nothing was deleted: {}", e))?;
 
     // 1. Delete conversation JSONL
@@ -851,7 +851,7 @@ pub async fn forget_sessions(directories: Vec<String>) -> Result<u32, String> {
         if session_running(&dir) || !dir.join(".twapp-session.json").is_file() || crate::cli::archive::is_archived(&dir) {
             continue;
         }
-        if crate::cli::retired::retire(&crate::cli::retired::default_root(), &dir).is_err() {
+        if crate::cli::retired::retire(&crate::cli::retired::default_root(), &dir, crate::cli::retired::How::Forgotten).is_err() {
             continue;
         }
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
