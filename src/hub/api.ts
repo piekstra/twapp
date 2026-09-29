@@ -393,6 +393,8 @@ export interface JournalFacts {
     events: string[];
   }[];
   yaks: { session: string; title: string; status: Yak["status"]; started_today: boolean }[];
+  /** Sessions deleted that day: finished work. */
+  wrapped_up?: { session: string; main_effort?: string | null; ticket?: string | null; started?: string }[];
   stat: DayStat;
 }
 

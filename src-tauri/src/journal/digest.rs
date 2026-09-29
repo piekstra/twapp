@@ -45,7 +45,8 @@ effort it belongs to (effort, else main_effort), the summaries' headlines in ord
 the user typed, the agent's closing replies (what it reported back), and notes. Blockers are what sessions waited on outside themselves; yaks are \
 tangents away from a session's main effort; asks are decisions the user made or still owes, actions \
 the user had to take, and follow-ups noticed for later. Name the decisions made and their answers in the \
-effort they belong to. Group the work by effort: sessions with the same \
+effort they belong to. wrapped_up lists sessions the user closed out that day because their work was \
+finished: say so in that effort's state, and name the finished work in the overview. Group the work by effort: sessions with the same \
 effort, ticket or evident purpose go together; a session that shares nothing gets its own entry \
 named after its work. For each effort list what was done (at most 6 items, each under 140 \
 characters) and, when the facts show it, where it stands at the end of the day in one short \
@@ -101,6 +102,7 @@ fn day_input(facts: &DayFacts) -> Value {
         })).collect::<Vec<_>>(),
         "yaks": facts.yaks,
         "asks": facts.asks,
+        "wrapped_up": facts.wrapped_up,
     })
 }
 

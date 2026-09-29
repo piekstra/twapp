@@ -35,9 +35,25 @@ pub struct DayFacts {
     /// open when it ended.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asks: Vec<AskDay>,
+    /// Sessions the user deleted that day, which is how finished work is
+    /// wrapped up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wrapped_up: Vec<WrappedUp>,
     /// Summaries and transcript growth that day, split by tangent.
     #[serde(default)]
     pub stat: DayStat,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WrappedUp {
+    pub session: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+    /// When the session was created, when known.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub started: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,7 +70,7 @@ pub struct AskDay {
 
 impl DayFacts {
     pub fn is_empty(&self) -> bool {
-        self.sessions.is_empty() && self.blockers.iter().all(|b| !b.changed_today())
+        self.sessions.is_empty() && self.wrapped_up.is_empty() && self.blockers.iter().all(|b| !b.changed_today())
     }
 }
 
@@ -125,6 +141,8 @@ pub struct Source {
     /// Where its twapp files are read from.
     pub dir: PathBuf,
     pub data: SessionData,
+    /// Set for a deleted or forgotten session.
+    pub retired: Option<crate::cli::retired::Retired>,
 }
 
 pub struct Inputs<'a> {
@@ -182,6 +200,7 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
     let mut blockers = Vec::new();
     let mut yaks = Vec::new();
     let mut asks = Vec::new();
+    let mut wrapped_up = Vec::new();
     let mut stat = DayStat::default();
     for source in inputs.sources {
         let key = source.key.clone();
@@ -201,6 +220,14 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
             .collect();
 
         let log = crate::cli::yaks::load(&source.dir);
+        if source.retired.as_ref().is_some_and(|r| r.how == crate::cli::retired::How::Deleted && in_day(&r.retired_at, bounds)) {
+            wrapped_up.push(WrappedUp {
+                session: name.clone(),
+                main_effort: log.main_effort.clone(),
+                ticket: source.data.ticket_key.clone(),
+                started: source.data.created.clone(),
+            });
+        }
         let day_stat = log.days.get(&day_key).copied().unwrap_or_default();
         for yak in &log.yaks {
             let started = in_day(&yak.first_seen, bounds);
@@ -259,6 +286,7 @@ pub fn gather(day: NaiveDate, inputs: &Inputs) -> DayFacts {
         blockers,
         yaks,
         asks,
+        wrapped_up,
         stat,
     }
 }
@@ -428,6 +456,31 @@ mod tests {
     }
 
     #[test]
+    fn a_session_deleted_that_day_is_wrapped_up() {
+        let tmp = std::env::temp_dir().join(format!("twapp-wrapped-{}", uuid::Uuid::new_v4()));
+        let roots = TranscriptRoots { claude_projects: tmp.join("projects"), codex_history: tmp.join("history.jsonl") };
+        let data = |name: &str| -> SessionData {
+            serde_json::from_value(serde_json::json!({
+                "session_id": name, "name": name, "ticket_key": "PROJ-9", "created": at(12, 9)
+            }))
+            .unwrap()
+        };
+        let retired = |how, when: String| Some(crate::cli::retired::Retired { key: "/w".into(), retired_at: when, how });
+        use crate::cli::retired::How;
+        let sources = [
+            Source { key: "/w/a".into(), dir: tmp.join("a"), data: data("CSV export"), retired: retired(How::Deleted, at(22, 15)) },
+            Source { key: "/w/b".into(), dir: tmp.join("b"), data: data("Stale probe"), retired: retired(How::Forgotten, at(22, 15)) },
+            Source { key: "/w/c".into(), dir: tmp.join("c"), data: data("Old work"), retired: retired(How::Deleted, at(20, 15)) },
+        ];
+        let efforts = HashMap::new();
+        let facts = gather("2026-09-22".parse().unwrap(), &Inputs { root: &tmp.join("journal"), sources: &sources, efforts: &efforts, transcripts: &roots });
+        assert_eq!(facts.wrapped_up.len(), 1, "{:?}", facts.wrapped_up);
+        assert_eq!(facts.wrapped_up[0].session, "CSV export");
+        assert_eq!(facts.wrapped_up[0].ticket.as_deref(), Some("PROJ-9"));
+        assert!(!facts.is_empty(), "a day whose only event is a wrap-up still gets an entry");
+    }
+
+    #[test]
     fn a_day_gathers_summaries_prompts_blockers_and_tangents() {
         let tmp = std::env::temp_dir().join(format!("twapp-facts-{}", uuid::Uuid::new_v4()));
         let root = tmp.join("journal");
@@ -464,7 +517,7 @@ mod tests {
         old.resolved_at = Some(at(11, 9));
         std::fs::write(dir.join(crate::cli::blockers::FILE_NAME), serde_json::to_string(&vec![open, done, old]).unwrap()).unwrap();
 
-        let sources = [Source { key: dir.to_string_lossy().to_string(), dir: dir.clone(), data }];
+        let sources = [Source { key: dir.to_string_lossy().to_string(), dir: dir.clone(), data, retired: None }];
         let efforts = HashMap::from([(key.clone(), "Reporting".to_string())]);
         let facts = gather(day, &Inputs { root: &root, sources: &sources, efforts: &efforts, transcripts: &roots });
         assert_eq!(facts.sessions.len(), 1);

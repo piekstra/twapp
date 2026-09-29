@@ -93,6 +93,26 @@ function Facts({ facts, onSelect }: { facts: JournalFacts; onSelect: (key: strin
   const tangentShare = facts.stat.bytes > 0 ? Math.round((facts.stat.tangent_bytes / facts.stat.bytes) * 100) : null;
   return (
     <>
+      {(facts.wrapped_up?.length ?? 0) > 0 && (
+        <section className="journal-block">
+          <div className="overview-lane-head">Wrapped up<span className="count">{facts.wrapped_up!.length}</span></div>
+          <ul className="journal-list">
+            {facts.wrapped_up!.map((w, i) => (
+              <li key={i}>
+                <span className="journal-tag journal-tag-resolved">done</span>
+                <span className="journal-list-text">
+                  {w.session}
+                  <span className="journal-list-sub">
+                    {[w.ticket, w.main_effort && w.main_effort.toLowerCase() !== w.session.toLowerCase() ? w.main_effort : null, w.started && `started ${dayLabel(w.started.slice(0, 10))}`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {facts.blockers.length > 0 && (
         <section className="journal-block">
           <div className="overview-lane-head">Blockers</div>
