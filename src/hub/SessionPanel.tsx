@@ -88,7 +88,25 @@ export default function SessionPanel({
   const [notes, setNotes] = useState<Note[]>([]);
   const [, setContextLater] = useState(0);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
-  useEffect(() => setNameDraft(null), [session.key]);
+  const [colorsOpen, setColorsOpen] = useState(false);
+  useEffect(() => {
+    setNameDraft(null);
+    setColorsOpen(false);
+  }, [session.key]);
+  useEffect(() => {
+    if (!colorsOpen) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element).closest?.(".panel-colors, .panel-swatch")) {
+        setColorsOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [colorsOpen]);
   const saveName = () => {
     const name = nameDraft?.trim();
     setNameDraft(null);
@@ -375,7 +393,36 @@ export default function SessionPanel({
   return (
     <div className="session-panel">
       <header className="panel-head">
-        <span className="panel-swatch" style={{ background: session.color ? (isDark ? getDarkModeAccentColor(session.color) : session.color) : undefined }} />
+        <button
+          className="panel-swatch"
+          title="Change the session color"
+          aria-expanded={colorsOpen}
+          onClick={() => setColorsOpen((v) => !v)}
+          style={{ background: session.color ? (isDark ? getDarkModeAccentColor(session.color) : session.color) : undefined }}
+        />
+        {colorsOpen && (
+          <div className="panel-colors" role="dialog" aria-label="Session color">
+            <div className="session-color-grid">
+              {SESSION_COLORS.map(({ hex, name }) => (
+                <button
+                  key={hex}
+                  className={`session-color-dot${session.color === hex ? " selected" : ""}`}
+                  style={{ backgroundColor: isDark ? getDarkModeAccentColor(hex) : hex }}
+                  title={name}
+                  aria-label={name}
+                  onClick={() => {
+                    setColor(hex);
+                    setColorsOpen(false);
+                  }}
+                />
+              ))}
+            </div>
+            <div className="session-color-custom">
+              <label className="session-settings-label">Custom</label>
+              <input type="color" value={session.color || "#e0e8ff"} onInput={(e) => setColor((e.target as HTMLInputElement).value)} />
+            </div>
+          </div>
+        )}
         <div className="panel-head-text">
           {nameDraft === null ? (
             <button className="panel-title" title="Click to rename" onClick={() => setNameDraft(session.name)}>
