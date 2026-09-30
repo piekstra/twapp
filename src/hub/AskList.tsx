@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
-import { hubApi, sinceLabel, type Ask, type AskKind, type SessionView } from "./api";
+import { RUN_IN_SHELL_EVENT, copyText, hubApi, sinceLabel, type Ask, type AskKind, type SessionView } from "./api";
 
 interface Item {
   ask: Ask;
@@ -62,10 +62,19 @@ function Row({ ask, session, now, showSession, onSelect }: Item & { now: number;
           <code>{ask.command}</code>
           <button
             className="button ghost small"
-            onClick={() => navigator.clipboard.writeText(ask.command!).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(console.error)}
+            onClick={() => copyText(ask.command!).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(console.error)}
           >
             {copied ? "Copied" : "Copy"}
           </button>
+          {session.tabs.length > 0 && (
+            <button
+              className="button ghost small"
+              onClick={() => window.dispatchEvent(new CustomEvent(RUN_IN_SHELL_EVENT, { detail: { key: session.key, command: ask.command } }))}
+              title="Open a shell tab in the session with this command typed in, for you to check and run with Enter"
+            >
+              Run in a shell tab
+            </button>
+          )}
         </div>
       )}
       {error && <div className="blocker-error">{error}</div>}

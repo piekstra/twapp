@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, type MouseEvent } fr
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { hubApi } from "../hub/api";
+import { copyText, hubApi } from "../hub/api";
 import { getDarkModeAccentColor } from "../color";
 import { formatRelativeTime, formatBytes, shortenPath } from "../utils/format";
 import DeleteSessionDialog from "./DeleteSessionDialog";
@@ -484,7 +484,7 @@ function SessionLauncher({
 
   const handleCopyProviderSessionId = (e: MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(sessionId).catch(console.error);
+    copyText(sessionId).catch(console.error);
   };
 
   const handleAddPermission = async () => {
@@ -536,7 +536,7 @@ function SessionLauncher({
   };
 
   const handleCopyColor = (hex: string) => {
-    navigator.clipboard.writeText(hex).then(() => {
+    copyText(hex).then(() => {
       setCopiedColor(hex);
       setTimeout(() => setCopiedColor(null), 1500);
     });

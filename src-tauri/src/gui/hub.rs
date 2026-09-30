@@ -358,6 +358,8 @@ struct HubTab {
     /// Last size a terminal asked for, as (rows, cols).
     size: (u16, u16),
     channel: Option<Channel<InvokeResponseBody>>,
+    /// Typed into the tab's shell once it starts, without Enter.
+    pending_input: Option<String>,
 }
 
 impl HubTab {
@@ -370,6 +372,7 @@ impl HubTab {
             exited: false,
             size: DEFAULT_SIZE,
             channel: None,
+            pending_input: None,
         }
     }
 }
@@ -1033,13 +1036,16 @@ impl Hub {
         self.emit_changed();
     }
 
-    pub fn new_tab(&self, key: &str) -> Result<String, String> {
+    /// Add a shell tab; `input` is typed into its shell when it starts.
+    pub fn new_tab(&self, key: &str, input: Option<String>) -> Result<String, String> {
         let mut inner = self.inner.lock();
         inner.tab_counter += 1;
         let tab = format!("tab-{}", inner.tab_counter);
         let session = inner.session(key).ok_or("session is not in the window")?;
         let title = format!("Shell {}", session.tabs.len());
-        session.tabs.push(HubTab::new(&tab, &title));
+        let mut new = HubTab::new(&tab, &title);
+        new.pending_input = input.map(|i| i.trim().to_string()).filter(|i| !i.is_empty());
+        session.tabs.push(new);
         drop(inner);
         self.emit_changed();
         Ok(tab)
@@ -1100,6 +1106,12 @@ impl Hub {
         }
 
         let result = self.spawn_tab(&client, key, tab);
+        if result.is_ok() {
+            let input = self.inner.lock().tab(key, tab).and_then(|t| t.pending_input.take());
+            if let Some(input) = input {
+                self.write(key, tab, input.into_bytes());
+            }
+        }
         if let Err(e) = &result {
             if let Some(t) = self.inner.lock().tab(key, tab) {
                 t.spawning = false;
@@ -2457,8 +2469,27 @@ pub fn hub_resize(key: String, tab: String, rows: u16, cols: u16) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn hub_new_tab(key: String) -> Result<String, String> {
-    require_hub()?.new_tab(&key)
+pub fn hub_new_tab(key: String, input: Option<String>) -> Result<String, String> {
+    require_hub()?.new_tab(&key, input)
+}
+
+/// Put text on the system clipboard. The webview's clipboard API can refuse
+/// a write, so copying goes through `pbcopy`.
+#[tauri::command]
+pub fn hub_copy_text(text: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("pbcopy: {}", e))?;
+    child
+        .stdin
+        .take()
+        .ok_or("pbcopy: no stdin")?
+        .write_all(text.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err(format!("pbcopy exited with {}", status)) }
 }
 
 #[tauri::command]

@@ -18,7 +18,7 @@ import { markdownComponents } from "../components/markdown";
 import SessionLauncher from "../components/SessionLauncher";
 import DeleteSessionDialog from "../components/DeleteSessionDialog";
 import type { LauncherView } from "../types";
-import { byLane, effortsOf, hubApi, type Lane, type SessionView } from "./api";
+import { RUN_IN_SHELL_EVENT, byLane, effortsOf, hubApi, type Lane, type SessionView } from "./api";
 import { TerminalManager } from "./terminals";
 import { useHub } from "./useHub";
 import SessionRail from "./SessionRail";
@@ -325,6 +325,23 @@ export default function Hub() {
     const tab = await hubApi.newTab(current.key);
     setActiveTabs((prev) => ({ ...prev, [current.key]: tab }));
   }, [current]);
+
+  // An action's command, from the For you list: a shell tab in its session
+  // with the command typed in, so it runs the same whatever the harness.
+  useEffect(() => {
+    const run = (e: Event) => {
+      const { key, command } = (e as CustomEvent<{ key: string; command: string }>).detail;
+      hubApi
+        .newTab(key, command)
+        .then((tab) => {
+          setActiveTabs((prev) => ({ ...prev, [key]: tab }));
+          selectSession(key);
+        })
+        .catch(console.error);
+    };
+    window.addEventListener(RUN_IN_SHELL_EVENT, run);
+    return () => window.removeEventListener(RUN_IN_SHELL_EVENT, run);
+  }, [selectSession]);
 
   const closeTab = useCallback(
     async (tab: string) => {

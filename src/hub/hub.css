@@ -2812,15 +2812,16 @@ kbd {
 
 .ask-command {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   align-items: center;
 }
 
 .ask-command code {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-all;
   padding: 4px 8px;
   border-radius: var(--radius-s);
   background: var(--surface-1);

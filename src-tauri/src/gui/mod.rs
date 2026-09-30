@@ -141,6 +141,7 @@ pub fn run(args: GuiArgs) {
             hub::hub_write,
             hub::hub_resize,
             hub::hub_new_tab,
+            hub::hub_copy_text,
             hub::hub_rename_tab,
             hub::hub_close_tab,
             hub::hub_close,

@@ -285,8 +285,12 @@ started for it; the detail goes in `--context`.
   when a decision is waiting, and starts actions and follow-ups folded; the
   section and each kind fold on their own. Answering a decision (a choice or free text) records the
   answer and, when the session runs, pastes "Decision on: ... My answer: ..."
-  into its input with a bracketed paste for the user to submit. An action is
-  marked done, optionally with a note pasted the same way. A follow-up can
+  into its input with a bracketed paste for the user to submit. An action's
+  command is copied with `hub_copy_text` (`pbcopy`, since the webview's
+  clipboard API can refuse a write) or opened in a new shell tab of the session
+  with the command typed in and not run, which works the same for every
+  harness. An action is marked done, optionally with a note pasted the same
+  way. A follow-up can
   start a new session named after it, with the follow-up as its prefilled
   prompt, or, when its own session runs, be pasted into that session as
   "Go ahead with the follow-up you recorded: ..."; either marks it picked up.

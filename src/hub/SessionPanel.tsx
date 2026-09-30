@@ -9,7 +9,7 @@ import { remarkAutolinkFilePaths } from "../utils/markdown";
 import { buildSessionFieldsArgs } from "../utils/session";
 import { getDarkModeAccentColor } from "../color";
 import { markdownComponents } from "../components/markdown";
-import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
+import { copyText, LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
 import AskList from "./AskList";
 import BlockerList from "./BlockerList";
@@ -984,7 +984,7 @@ export default function SessionPanel({
                 {session.session_id && (
                   <>
                     <div className="session-settings-label">Conversation</div>
-                    <code className="config-directory" onClick={() => navigator.clipboard.writeText(session.session_id!)} title="Click to copy">
+                    <code className="config-directory" onClick={() => copyText(session.session_id!)} title="Click to copy">
                       {session.session_id}
                     </code>
                   </>

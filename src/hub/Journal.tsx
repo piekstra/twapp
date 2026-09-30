@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import Linkify from "./Linkify";
 import {
+  copyText,
   hubApi,
   type JournalDay,
   type JournalDayRow,
@@ -46,7 +47,7 @@ function CopyPath({ path }: { path: string | null }) {
       className="link-button journal-path"
       title={path}
       onClick={() => {
-        navigator.clipboard.writeText(path).then(() => {
+        copyText(path).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }).catch(console.error);
