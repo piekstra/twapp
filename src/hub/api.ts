@@ -1,6 +1,13 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { AgentProvider } from "../types";
 
+/** Copy through the system clipboard; the webview's clipboard API can refuse a write. */
+export const copyText = (text: string): Promise<void> =>
+  invoke<void>("hub_copy_text", { text }).catch(() => navigator.clipboard.writeText(text));
+
+/** Asks the window to open a shell tab in a session with a command typed in. */
+export const RUN_IN_SHELL_EVENT = "twapp:run-in-shell";
+
 export type SessionState =
   | "starting"
   | "working"
@@ -225,7 +232,8 @@ export const hubApi = {
   write: (key: string, tab: string, data: string) => invoke("hub_write", { key, tab, data }),
   resize: (key: string, tab: string, rows: number, cols: number) =>
     invoke("hub_resize", { key, tab, rows, cols }),
-  newTab: (key: string) => invoke<string>("hub_new_tab", { key }),
+  /** `input` is typed into the new tab's shell when it starts, without Enter. */
+  newTab: (key: string, input: string | null = null) => invoke<string>("hub_new_tab", { key, input }),
   renameTab: (key: string, tab: string, title: string) =>
     invoke("hub_rename_tab", { key, tab, title }),
   closeTab: (key: string, tab: string) => invoke("hub_close_tab", { key, tab }),
