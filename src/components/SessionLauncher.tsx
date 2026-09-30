@@ -16,7 +16,6 @@ import type {
   ImportResult,
   SortMode,
   LauncherView,
-  PromptStore,
   AgentProvider,
   AgentHarnessInfo,
   GlobalConfig,
@@ -73,7 +72,7 @@ function SessionLauncher({
   const [scanning, setScanning] = useState(() => !lastList);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [launcherView, setLauncherView] = useState<LauncherView>(initialView);
-  const [settingsTab, setSettingsTab] = useState<"general" | "prompts" | "permissions">("general");
+  const [settingsTab, setSettingsTab] = useState<"general" | "permissions">("general");
   const [showUpdatePanel, setShowUpdatePanel] = useState(false);
 
   // New session form
@@ -97,9 +96,6 @@ function SessionLauncher({
   const [sessionColorPref, setSessionColorPref] = useState("random");
   const [permissions, setPermissions] = useState<string[]>([]);
   const [newPermission, setNewPermission] = useState("");
-  const [globalPrompts, setGlobalPrompts] = useState<PromptStore>({ sections: [] });
-  const [editingSection, setEditingSection] = useState<{ id: string | null; title: string } | null>(null);
-  const [editingPrompt, setEditingPrompt] = useState<{ sectionId: string; promptId: string | null; title: string; text: string } | null>(null);
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
 
   // Delete session state
@@ -294,9 +290,6 @@ function SessionLauncher({
     invoke<string[]>("get_default_permissions")
       .then((perms) => setPermissions(perms))
       .catch((e) => console.error("Failed to load permissions:", e));
-    invoke<PromptStore>("load_global_prompts")
-      .then((store) => setGlobalPrompts(store || { sections: [] }))
-      .catch((e) => console.error("Failed to load global prompts:", e));
     setSettingsLoaded(true);
     void scanAgentHarnesses();
   }, [launcherView, settingsLoaded, scanAgentHarnesses]);
@@ -513,63 +506,6 @@ function SessionLauncher({
     } catch (e) {
       console.error("Failed to remove permission:", e);
     }
-  };
-
-  const saveGlobalPrompts = async (store: PromptStore) => {
-    setGlobalPrompts(store);
-    try {
-      await invoke("save_global_prompts", { data: store });
-    } catch (e) {
-      console.error("Failed to save global prompts:", e);
-    }
-  };
-
-  const handleAddPromptSection = () => {
-    setEditingSection({ id: null, title: "" });
-  };
-
-  const handleSavePromptSection = () => {
-    if (!editingSection || !editingSection.title.trim()) return;
-    const store = { ...globalPrompts };
-    if (editingSection.id) {
-      store.sections = store.sections.map((s) =>
-        s.id === editingSection.id ? { ...s, title: editingSection.title.trim() } : s
-      );
-    } else {
-      store.sections = [...store.sections, { id: crypto.randomUUID(), title: editingSection.title.trim(), prompts: [] }];
-    }
-    saveGlobalPrompts(store);
-    setEditingSection(null);
-  };
-
-  const handleDeletePromptSection = (sectionId: string) => {
-    const store = { ...globalPrompts, sections: globalPrompts.sections.filter((s) => s.id !== sectionId) };
-    saveGlobalPrompts(store);
-  };
-
-  const handleSavePrompt = () => {
-    if (!editingPrompt || !editingPrompt.title.trim() || !editingPrompt.text.trim()) return;
-    const store = { ...globalPrompts };
-    store.sections = store.sections.map((s) => {
-      if (s.id !== editingPrompt.sectionId) return s;
-      if (editingPrompt.promptId) {
-        return { ...s, prompts: s.prompts.map((p) =>
-          p.id === editingPrompt.promptId ? { ...p, title: editingPrompt.title.trim(), text: editingPrompt.text.trim() } : p
-        )};
-      } else {
-        return { ...s, prompts: [...s.prompts, { id: crypto.randomUUID(), title: editingPrompt.title.trim(), text: editingPrompt.text.trim() }] };
-      }
-    });
-    saveGlobalPrompts(store);
-    setEditingPrompt(null);
-  };
-
-  const handleDeletePrompt = (sectionId: string, promptId: string) => {
-    const store = { ...globalPrompts };
-    store.sections = store.sections.map((s) =>
-      s.id === sectionId ? { ...s, prompts: s.prompts.filter((p) => p.id !== promptId) } : s
-    );
-    saveGlobalPrompts(store);
   };
 
   const handleCreateSession = async () => {
@@ -803,7 +739,6 @@ function SessionLauncher({
     <div className="launcher-settings">
       <div className="launcher-settings-tabs">
         <button className={`launcher-settings-tab${settingsTab === "general" ? " active" : ""}`} onClick={() => setSettingsTab("general")}>General</button>
-        <button className={`launcher-settings-tab${settingsTab === "prompts" ? " active" : ""}`} onClick={() => setSettingsTab("prompts")}>Prompts</button>
         <button className={`launcher-settings-tab${settingsTab === "permissions" ? " active" : ""}`} onClick={() => setSettingsTab("permissions")}>Permissions</button>
       </div>
 
@@ -946,128 +881,6 @@ function SessionLauncher({
             </div>
 
           </>
-        )}
-
-        {settingsTab === "prompts" && (
-          <div className="launcher-settings-section">
-            <div className="launcher-settings-section-header">
-              Global Quick Prompts
-              <button className="launcher-settings-add-btn" onClick={handleAddPromptSection}>+ Section</button>
-            </div>
-            <p className="launcher-settings-hint">
-              Reusable prompts that appear in every session's sidebar. Organize them into sections.
-            </p>
-            {editingSection && !editingSection.id && (
-              <div className="launcher-prompt-edit-row">
-                <input
-                  type="text"
-                  value={editingSection.title}
-                  onChange={(e) => setEditingSection({ ...editingSection, title: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && handleSavePromptSection()}
-                  placeholder="Section name"
-                  autoFocus
-                />
-                <button onClick={handleSavePromptSection} disabled={!editingSection.title.trim()}>Save</button>
-                <button onClick={() => setEditingSection(null)}>Cancel</button>
-              </div>
-            )}
-            {globalPrompts.sections.map((section) => (
-              <div key={section.id} className="launcher-prompt-section">
-                <div className="launcher-prompt-section-header">
-                  {editingSection?.id === section.id ? (
-                    <div className="launcher-prompt-edit-row">
-                      <input
-                        type="text"
-                        value={editingSection.title}
-                        onChange={(e) => setEditingSection({ ...editingSection, title: e.target.value })}
-                        onKeyDown={(e) => e.key === "Enter" && handleSavePromptSection()}
-                        autoFocus
-                      />
-                      <button onClick={handleSavePromptSection} disabled={!editingSection.title.trim()}>Save</button>
-                      <button onClick={() => setEditingSection(null)}>Cancel</button>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="launcher-prompt-section-title">{section.title}</span>
-                      <div className="launcher-prompt-section-actions">
-                        <button onClick={() => setEditingSection({ id: section.id, title: section.title })} title="Rename">
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M8.5 1.5l2 2L4 10H2v-2z" /></svg>
-                        </button>
-                        <button onClick={() => setEditingPrompt({ sectionId: section.id, promptId: null, title: "", text: "" })} title="Add prompt">
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 2v8M2 6h8" /></svg>
-                        </button>
-                        <button onClick={() => handleDeletePromptSection(section.id)} title="Delete section">
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-                {editingPrompt?.sectionId === section.id && !editingPrompt.promptId && (
-                  <div className="launcher-prompt-edit-form">
-                    <input
-                      type="text"
-                      value={editingPrompt.title}
-                      onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
-                      placeholder="Prompt title"
-                      autoFocus
-                    />
-                    <textarea
-                      value={editingPrompt.text}
-                      onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
-                      placeholder="Prompt text"
-                      rows={3}
-                    />
-                    <div className="launcher-prompt-edit-actions">
-                      <button onClick={handleSavePrompt} disabled={!editingPrompt.title.trim() || !editingPrompt.text.trim()}>Save</button>
-                      <button onClick={() => setEditingPrompt(null)}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-                {section.prompts.map((prompt) => (
-                  <div key={prompt.id} className="launcher-prompt-item">
-                    {editingPrompt?.promptId === prompt.id ? (
-                      <div className="launcher-prompt-edit-form">
-                        <input
-                          type="text"
-                          value={editingPrompt.title}
-                          onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
-                          autoFocus
-                        />
-                        <textarea
-                          value={editingPrompt.text}
-                          onChange={(e) => setEditingPrompt({ ...editingPrompt, text: e.target.value })}
-                          rows={3}
-                        />
-                        <div className="launcher-prompt-edit-actions">
-                          <button onClick={handleSavePrompt} disabled={!editingPrompt.title.trim() || !editingPrompt.text.trim()}>Save</button>
-                          <button onClick={() => setEditingPrompt(null)}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="launcher-prompt-title">{prompt.title}</span>
-                        <div className="launcher-prompt-actions">
-                          <button onClick={() => setEditingPrompt({ sectionId: section.id, promptId: prompt.id, title: prompt.title, text: prompt.text })} title="Edit">
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M8.5 1.5l2 2L4 10H2v-2z" /></svg>
-                          </button>
-                          <button onClick={() => handleDeletePrompt(section.id, prompt.id)} title="Delete">
-                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {section.prompts.length === 0 && !editingPrompt?.sectionId && (
-                  <div className="launcher-prompt-empty">No prompts in this section</div>
-                )}
-              </div>
-            ))}
-            {globalPrompts.sections.length === 0 && !editingSection && (
-              <div className="launcher-permission-empty">No global quick prompts configured</div>
-            )}
-          </div>
         )}
 
         {settingsTab === "permissions" && (

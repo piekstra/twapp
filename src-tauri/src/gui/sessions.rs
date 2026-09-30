@@ -577,12 +577,6 @@ pub async fn rename_session(
             let _ = std::fs::rename(&old_notes, &new_notes);
         }
 
-        // Rename prompts file
-        let old_prompts = work_dir.join(format!(".twapp-prompts-{}.json", old_safe));
-        let new_prompts = work_dir.join(format!(".twapp-prompts-{}.json", new_safe));
-        if old_prompts.exists() && !new_prompts.exists() {
-            let _ = std::fs::rename(&old_prompts, &new_prompts);
-        }
     }
 
     let _ = app.emit("hub:changed", ());
