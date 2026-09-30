@@ -37,8 +37,7 @@ the process under the session's shell counts: other Claude runs in the same
 directory have conversations of their own.
 
 Per-session data stays in the working directory: the session file, notes
-(`.twapp-notes*.json`) and the linked ticket. Quick prompts are global
-(`~/.config/twapp/quick-prompts.json`) and appear the same in every session.
+(`.twapp-notes*.json`) and the linked ticket.
 
 ## ptyd protocol
 
@@ -356,7 +355,7 @@ note, when it was archived, and each copy with the path the harness reads.
   session's state, what it needs, and how many other sessions need attention.
 - **Terminal.** The selected session's terminal, with its extra shell tabs.
 - **Details.** Summary, restart, fork and close; ticket (link, change, unlink,
-  refresh); notes; quick prompts; session settings.
+  refresh); notes; session settings.
 - **Overview.** A card per hosted session with its full summary and what it
   needs, the Triage action, and the list of every known session for opening
   one that is not hosted.

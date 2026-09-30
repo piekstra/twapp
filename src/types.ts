@@ -38,22 +38,6 @@ export interface Note {
   timestamp: number;
 }
 
-export interface QuickPrompt {
-  id: string;
-  title: string;
-  text: string;
-}
-
-export interface PromptSection {
-  id: string;
-  title: string;
-  prompts: QuickPrompt[];
-}
-
-export interface PromptStore {
-  sections: PromptSection[];
-}
-
 export function getLightTheme(bg?: string) {
   return {
     background: bg ?? "#ffffff",

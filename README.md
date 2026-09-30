@@ -23,7 +23,7 @@ You run several agent sessions at once. Each one is somewhere between working, w
 - **Triage.** The overview has a Triage action that reads every running session and suggests which ones to look at first and why. It is advice for you; twapp never tells an agent what to do.
 - **Fast switching.** `⌘1` to `⌘9`, `⌘J` for the next session that needs you, `⌘[` back to the one you were on, and `⌘K` for a palette that switches to, opens or starts anything.
 - **Sessions survive the window.** Terminals live in a small background host, so quitting, updating or crashing the window leaves every agent running. The window reattaches when it opens.
-- **Per-session context.** Notes, a linked Jira ticket or GitHub issue (changeable at any time), session color, harness, and extra shell tabs. Quick prompts are global and the same in every session.
+- **Per-session context.** Notes, a linked Jira ticket or GitHub issue (changeable at any time), session color, harness, and extra shell tabs.
 - **Light on the machine.** One window, one web view and one GPU context, however many sessions are open. Only the terminal on screen renders.
 
 ![The overview: counts of sessions that need you, cards with each session's summary, and the Triage action](docs/images/overview.png)
@@ -166,13 +166,12 @@ Each lane folds from its header. The list next to a session's details starts wit
 
 ### Notes, tickets and prompts
 
-The sidebar shows the selected session's details first (its state, summary, ticket, notes and your quick prompts) and the session list below them; the layout menu can put the list on top instead. The summary starts collapsed to its state line in the session you are working in; click it to expand.
+The sidebar shows the selected session's details first (its state, summary, ticket and notes) and the session list below them; the layout menu can put the list on top instead. The summary starts collapsed to its state line in the session you are working in; click it to expand.
 
 - **Notes** are Markdown and belong to the session. `↵` on a note types it into the terminal and removes it from the list.
 - **Tickets** accept a Jira key (`ABC-1234`), a bare number (prefixed with your configured Jira project), or a GitHub issue (`owner/repo#42` or `#42`). Change or unlink them from the panel, or with `twapp ticket link <ref>`.
-- **Quick prompts** are shared by every session. Clicking one types it into the terminal without submitting it.
 
-Agents in a session can use the same data from the CLI: `twapp note add`, `twapp ticket link`, `twapp prompt add`.
+Agents in a session can use the same data from the CLI: `twapp note add`, `twapp ticket link`.
 
 ### Forking
 
@@ -245,7 +244,7 @@ summaries:
   provider: auto
 ```
 
-Settings (`⌘,`) edits the same file, and also manages global quick prompts and default Claude permissions.
+Settings (`⌘,`) edits the same file, and also manages default Claude permissions.
 
 ### Files
 
@@ -255,7 +254,6 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `.twapp-notes-{name}.json` | Session directory | Session notes |
 | `.twapp-ticket.json` | Session directory | Linked ticket |
 | `config.yaml` | `~/.config/twapp/` | Global configuration |
-| `quick-prompts.json` | `~/.config/twapp/` | Quick prompts |
 | `default-permissions.json` | `~/.config/twapp/` | Default Claude permissions |
 | `hub.json` | `~/.config/twapp/` | Rail order, lanes, selection, last-viewed times |
 | `run/hub.sock`, `run/ptyd.sock` | `~/.config/twapp/` | Sockets for the window and the terminal host |
@@ -280,7 +278,6 @@ Settings (`⌘,`) edits the same file, and also manages global quick prompts and
 | `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
 | `twapp note add\|list\|remove` | Session notes |
-| `twapp prompt add\|list\|remove` | Quick prompts |
 | `twapp ticket link\|create\|refresh` | Link or create a ticket |
 | `twapp permissions list\|add\|remove\|sync` | Default Claude permissions |
 | `twapp models list\|refresh` | Models known for a harness |

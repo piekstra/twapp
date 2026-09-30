@@ -4,7 +4,6 @@ pub mod files;
 pub mod hub;
 pub mod import;
 pub mod notes;
-pub mod prompts;
 pub mod sessions;
 pub mod shell_env;
 pub mod tickets;
@@ -90,8 +89,6 @@ pub fn run(args: GuiArgs) {
             files::read_file_base64,
             notes::load_notes,
             notes::save_notes,
-            prompts::load_global_prompts,
-            prompts::save_global_prompts,
             tickets::get_session_info,
             files::install_update,
             files::relaunch_app,

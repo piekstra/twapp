@@ -3,13 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AgentProvider, GlobalConfig, Note, PromptSection, PromptStore, QuickPrompt, SessionHistoryEvent, TicketInfo } from "../types";
+import type { AgentProvider, GlobalConfig, Note, SessionHistoryEvent, TicketInfo } from "../types";
 import { formatTicketBadge, formatTime } from "../utils/format";
 import { remarkAutolinkFilePaths } from "../utils/markdown";
 import { buildSessionFieldsArgs } from "../utils/session";
 import { getDarkModeAccentColor } from "../color";
-import PromptSections from "../components/PromptSections";
-import type { EditingPromptState } from "../components/PromptSections";
 import { markdownComponents } from "../components/markdown";
 import { LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
@@ -45,9 +43,6 @@ interface Props {
   knownEfforts: string[];
   activeTab: string;
   now: number;
-  globalPrompts: PromptStore;
-  setGlobalPrompts: (update: (prev: PromptStore) => PromptStore) => void;
-  reloadPrompts: () => void;
   onPreview: (path: string) => void;
   onRestart: () => void;
   onCloseSession: () => void;
@@ -67,9 +62,6 @@ export default function SessionPanel({
   knownEfforts,
   activeTab,
   now,
-  globalPrompts,
-  setGlobalPrompts,
-  reloadPrompts,
   onPreview,
   onRestart,
   onCloseSession,
@@ -246,47 +238,6 @@ export default function SessionPanel({
     await invoke("unlink_ticket", { directory }).catch(console.error);
     setTicket(null);
     setChangingTicket(false);
-  };
-
-  // --- Quick prompts (global) ---------------------------------------------
-  const [promptsExpanded, setPromptsExpanded] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
-  const [editingPrompt, setEditingPrompt] = useState<EditingPromptState | null>(null);
-
-  const toggleSection = (key: string) =>
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  const savePromptEdit = () => {
-    if (!editingPrompt) return;
-    const { mode, sectionId, promptId, title, text } = editingPrompt;
-    if (mode === "new-section" && title.trim()) {
-      const section: PromptSection = { id: crypto.randomUUID(), title: title.trim(), prompts: [] };
-      setGlobalPrompts((prev) => ({ sections: [...prev.sections, section] }));
-      setExpandedSections((prev) => new Set(prev).add(`global-${section.id}`));
-    } else if (mode === "edit-section" && sectionId && title.trim()) {
-      setGlobalPrompts((prev) => ({
-        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, title: title.trim() } : s)),
-      }));
-    } else if (mode === "new-prompt" && sectionId && title.trim() && text.trim()) {
-      const prompt: QuickPrompt = { id: crypto.randomUUID(), title: title.trim(), text: text.trim() };
-      setGlobalPrompts((prev) => ({
-        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, prompts: [...s.prompts, prompt] } : s)),
-      }));
-    } else if (mode === "edit-prompt" && sectionId && promptId && title.trim() && text.trim()) {
-      setGlobalPrompts((prev) => ({
-        sections: prev.sections.map((s) =>
-          s.id === sectionId
-            ? { ...s, prompts: s.prompts.map((p) => (p.id === promptId ? { ...p, title: title.trim(), text: text.trim() } : p)) }
-            : s,
-        ),
-      }));
-    }
-    setEditingPrompt(null);
   };
 
   // --- Settings and history -------------------------------------------------
@@ -937,92 +888,6 @@ export default function SessionPanel({
               ))}
               {notes.length === 0 && <div className="empty-hint">No notes yet.</div>}
             </div>
-          </div>
-        )}
-      </section>
-
-      <section className="panel-section">
-        <div className="section-head" onClick={() => setPromptsExpanded(!promptsExpanded)}>
-          <Chevron open={promptsExpanded} />
-          <span className="section-title">Quick prompts</span>
-          <span className="spacer" />
-          <button
-            className="icon-button small"
-            onClick={(e) => {
-              e.stopPropagation();
-              reloadPrompts();
-            }}
-            title="Reload prompts from disk"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
-            </svg>
-          </button>
-          <button
-            className="icon-button small"
-            onClick={(e) => {
-              e.stopPropagation();
-              setPromptsExpanded(true);
-              setEditingPrompt({ mode: "new-section", scope: "global", sectionId: null, promptId: null, title: "", text: "" });
-            }}
-            title="Add section"
-          >
-            +
-          </button>
-        </div>
-        {promptsExpanded && (
-          <div className="section-body prompts-content">
-            {editingPrompt?.mode === "new-section" && (
-              <div className="prompt-edit-form">
-                <input
-                  className="input"
-                  placeholder="Section name"
-                  value={editingPrompt.title}
-                  onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") savePromptEdit();
-                    if (e.key === "Escape") setEditingPrompt(null);
-                  }}
-                  autoFocus
-                />
-                <div className="prompt-edit-form-actions">
-                  <button className="button ghost small" onClick={() => setEditingPrompt(null)}>Cancel</button>
-                  <button className="button primary small" onClick={savePromptEdit}>Save</button>
-                </div>
-              </div>
-            )}
-            <PromptSections
-              sections={globalPrompts.sections}
-              scope="global"
-              expandedSections={expandedSections}
-              editingPrompt={editingPrompt}
-              setEditingPrompt={setEditingPrompt}
-              toggleSection={toggleSection}
-              savePromptEdit={savePromptEdit}
-              startEditSection={(scope, section) =>
-                setEditingPrompt({ mode: "edit-section", scope, sectionId: section.id, promptId: null, title: section.title, text: "" })
-              }
-              startNewPrompt={(scope, sectionId) =>
-                setEditingPrompt({ mode: "new-prompt", scope, sectionId, promptId: null, title: "", text: "" })
-              }
-              startEditPrompt={(scope, sectionId, prompt) =>
-                setEditingPrompt({ mode: "edit-prompt", scope, sectionId, promptId: prompt.id, title: prompt.title, text: prompt.text })
-              }
-              deleteSection={(_scope, sectionId) =>
-                setGlobalPrompts((prev) => ({ sections: prev.sections.filter((s) => s.id !== sectionId) }))
-              }
-              deletePrompt={(_scope, sectionId, promptId) =>
-                setGlobalPrompts((prev) => ({
-                  sections: prev.sections.map((s) =>
-                    s.id === sectionId ? { ...s, prompts: s.prompts.filter((p) => p.id !== promptId) } : s,
-                  ),
-                }))
-              }
-              sendPrompt={send}
-            />
-            {globalPrompts.sections.length === 0 && !editingPrompt && (
-              <div className="empty-hint">No prompts yet. + adds a section.</div>
-            )}
           </div>
         )}
       </section>

@@ -10,7 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import "../App.css";
 import "./hub.css";
 import { getDarkModeAccentColor } from "../color";
-import type { PromptStore, ThemeMode } from "../types";
+import type { ThemeMode } from "../types";
 import { getDarkTheme, getLightTheme } from "../types";
 import { isNewerVersion } from "../utils/version";
 import FilePreviewOverlay, { type FilePreviewHandle } from "../components/FilePreview/FilePreviewOverlay";
@@ -81,8 +81,6 @@ export default function Hub() {
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const isDark = useIsDark(themeMode);
   const [now, setNow] = useState(Date.now());
-  const [globalPrompts, setGlobalPromptsState] = useState<PromptStore>({ sections: [] });
-  const promptsLoaded = useRef(false);
   const [renamingTab, setRenamingTab] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
@@ -141,31 +139,6 @@ export default function Hub() {
       document.documentElement.style.setProperty("--bg-terminal", isDark ? getDarkModeAccentColor(current.color) : current.color);
     }
   }, [isDark, sessions, current?.color, showingTerminal, manager]);
-
-  // --- Prompts ---------------------------------------------------------------
-  const reloadPrompts = useCallback(() => {
-    invoke<PromptStore>("load_global_prompts")
-      .then((store) => {
-        setGlobalPromptsState(store || { sections: [] });
-        promptsLoaded.current = true;
-      })
-      .catch(console.error);
-  }, []);
-  useEffect(reloadPrompts, [reloadPrompts]);
-  // quick-prompts.json is also written by the library's settings and by
-  // `twapp prompt`, so a change here is applied to the file's current
-  // contents rather than to this window's copy, which may be stale.
-  const setGlobalPrompts = useCallback((update: (prev: PromptStore) => PromptStore) => {
-    setGlobalPromptsState((prev) => update(prev));
-    if (!promptsLoaded.current) return;
-    invoke<PromptStore>("load_global_prompts")
-      .then((disk) => {
-        const next = update(disk || { sections: [] });
-        setGlobalPromptsState(next);
-        return invoke("save_global_prompts", { data: next });
-      })
-      .catch(console.error);
-  }, []);
 
   // --- Updates ---------------------------------------------------------------
   const checkForUpdate = useCallback(
@@ -718,9 +691,6 @@ export default function Hub() {
       knownEfforts={[...new Set(effortsOf(sessions).values())]}
       activeTab={activeTab}
       now={now}
-      globalPrompts={globalPrompts}
-      setGlobalPrompts={setGlobalPrompts}
-      reloadPrompts={reloadPrompts}
       onPreview={(path) => previewRef.current?.open(path, current.key)}
       onRestart={restart}
       onFork={() => setForkOpen(true)}

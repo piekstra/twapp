@@ -10,7 +10,6 @@ pub mod hub_link;
 pub mod models;
 pub mod notes;
 pub mod permissions;
-pub mod prompts;
 pub mod retired;
 pub mod session;
 pub mod session_attribution;
@@ -113,11 +112,6 @@ pub enum Commands {
     Blocker {
         #[command(subcommand)]
         command: BlockerCommands,
-    },
-    /// Manage quick prompts
-    Prompt {
-        #[command(subcommand)]
-        command: PromptCommands,
     },
     /// Manage default permissions
     Permissions {
@@ -438,43 +432,6 @@ pub enum BlockerCommands {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum PromptCommands {
-    /// List quick prompts
-    List {
-        /// Accepted for compatibility; quick prompts are always global
-        #[arg(long, hide = true)]
-        global: bool,
-        #[arg(long, hide = true)]
-        dir: Option<String>,
-    },
-    /// Add a quick prompt (shared by every session)
-    Add {
-        /// Prompt title
-        title: String,
-        /// Prompt text
-        text: String,
-        /// Target section (created if missing, default: "General")
-        #[arg(long)]
-        section: Option<String>,
-        /// Accepted for compatibility; quick prompts are always global
-        #[arg(long, hide = true)]
-        global: bool,
-        #[arg(long, hide = true)]
-        dir: Option<String>,
-    },
-    /// Remove a quick prompt by ID prefix
-    Remove {
-        /// Prompt ID (or unique prefix)
-        id: String,
-        /// Accepted for compatibility; quick prompts are always global
-        #[arg(long, hide = true)]
-        global: bool,
-        #[arg(long, hide = true)]
-        dir: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 pub enum ModelsCommands {
     /// List known models for the provider (cache if present, else bundled default).
     List {
@@ -572,16 +529,6 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::Decision { command } => asks::run_command(asks::AskKind::Decision, command),
         Commands::Action { command } => asks::run_command(asks::AskKind::Action, command),
         Commands::Followup { command } => asks::run_command(asks::AskKind::Followup, command),
-        Commands::Prompt { command } => match command {
-            PromptCommands::List { .. } => prompts::cmd_prompt_list(true, None),
-            PromptCommands::Add {
-                title,
-                text,
-                section,
-                ..
-            } => prompts::cmd_prompt_add(&title, &text, section.as_deref(), true, None),
-            PromptCommands::Remove { id, .. } => prompts::cmd_prompt_remove(&id, true, None),
-        },
         Commands::Permissions { command } => match command {
             PermissionCommands::List => permissions::cmd_list(),
             PermissionCommands::Add { pattern } => permissions::cmd_add(&pattern),
@@ -2103,12 +2050,6 @@ fn cmd_rename(new_name: &str) -> i32 {
             let _ = std::fs::rename(&old_notes, &new_notes);
         }
 
-        // Rename prompts file
-        let old_prompts = work_dir.join(format!(".twapp-prompts-{}.json", old_safe));
-        let new_prompts = work_dir.join(format!(".twapp-prompts-{}.json", new_safe));
-        if old_prompts.exists() && !new_prompts.exists() {
-            let _ = std::fs::rename(&old_prompts, &new_prompts);
-        }
 
         // Remove old instance bundle (will be recreated on next launch)
         let home = dirs::home_dir().unwrap_or_default();
