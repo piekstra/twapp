@@ -10,7 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import "../App.css";
 import "./hub.css";
 import { getDarkModeAccentColor } from "../color";
-import type { ThemeMode } from "../types";
+import type { AgentProvider, GlobalConfig, ThemeMode } from "../types";
 import { getDarkTheme, getLightTheme } from "../types";
 import { isNewerVersion } from "../utils/version";
 import FilePreviewOverlay, { type FilePreviewHandle } from "../components/FilePreview/FilePreviewOverlay";
@@ -74,6 +74,8 @@ export default function Hub() {
   const [forkOpen, setForkOpen] = useState(false);
   const [forkTicket, setForkTicket] = useState("");
   const [forkName, setForkName] = useState("");
+  const [forkProvider, setForkProvider] = useState<AgentProvider | null>(null);
+  const [forkProviders, setForkProviders] = useState<AgentProvider[]>([]);
   const [forkError, setForkError] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
   const [confirmClose, setConfirmClose] = useState<SessionView | null>(null);
@@ -371,6 +373,17 @@ export default function Hub() {
     [manager],
   );
 
+  useEffect(() => {
+    if (!forkOpen) return;
+    let cancelled = false;
+    invoke<GlobalConfig>("get_global_config").then((config) => {
+      if (!cancelled) setForkProviders(config.agent_providers);
+    }).catch(() => {
+      if (!cancelled) setForkProviders([]);
+    });
+    return () => { cancelled = true; };
+  }, [forkOpen]);
+
   const fork = async () => {
     if (!current) return;
     setForking(true);
@@ -380,10 +393,12 @@ export default function Hub() {
         directory: current.key,
         ticketKey: forkTicket.trim() || null,
         name: forkName.trim() || null,
+        provider: forkProvider,
       });
       setForkOpen(false);
       setForkTicket("");
       setForkName("");
+      setForkProvider(null);
     } catch (e) {
       setForkError(String(e));
     } finally {
@@ -1065,8 +1080,23 @@ export default function Hub() {
             <div className="config-body">
               <p className="fork-explanation">
                 Starts a new session with this conversation's context. With a ticket it gets the ticket's directory;
-                otherwise a sibling directory next to this one.
+                otherwise a sibling directory next to this one. The original session stays available.
               </p>
+              <label>
+                Harness
+                <select
+                  className="fork-input"
+                  value={forkProvider ?? current.provider}
+                  onChange={(e) => {
+                    const provider = forkProviders.find((p) => p === e.target.value);
+                    setForkProvider(provider ?? null);
+                  }}
+                >
+                  {Array.from(new Set([current.provider, ...forkProviders])).map((provider) => (
+                    <option key={provider} value={provider}>{provider}</option>
+                  ))}
+                </select>
+              </label>
               <input
                 className="fork-input"
                 placeholder="Ticket, e.g. ABC-123"
@@ -1090,7 +1120,7 @@ export default function Hub() {
               <div className="fork-actions">
                 <button className="fork-cancel" onClick={() => setForkOpen(false)}>Cancel</button>
                 <button className="fork-submit" onClick={fork} disabled={forking}>
-                  {forking ? "Forking..." : "Fork"}
+                  {forking ? "Forking..." : forkProvider && forkProvider !== current.provider ? "Fork and convert" : "Fork"}
                 </button>
               </div>
             </div>

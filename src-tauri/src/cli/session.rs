@@ -57,7 +57,7 @@ impl std::fmt::Display for AgentProvider {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionData {
     pub session_id: String,
     pub name: String,

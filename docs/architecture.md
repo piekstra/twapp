@@ -316,6 +316,38 @@ as sources under their old key, so a day not built yet still gets their
 tangents, asks and blockers. The conversation itself is deleted, so such a
 day has no prompts or replies from it.
 
+## Harness migration
+
+`cli::harness::build_migration_prompt` is shared by the launcher, restarts and
+CLI resume. It asks `cli::migration` to locate the source conversation, copy
+the entire saved JSONL transcript into the destination's `.twapp-migration/`
+directory, and export every saved user/assistant text message and compaction
+summary in transcript order. Dialogue parts are at most 24 KiB, splitting
+long messages at UTF-8 boundaries without shortening their text. A manifest
+lists every part and the raw snapshot that retains tool calls, results and
+non-text records. Snapshot files are private to the user and ignored by git.
+
+The receiving harness is instructed to read the manifest and every dialogue
+part before acting, reconcile earlier corrections and decisions with the
+repository, and report any unread history. This supplies saved history; it
+does not transplant a harness's internal state or guarantee that a model can
+retain an arbitrarily large conversation in its context. Missing source
+transcripts and formats without a history reader, including Antigravity's
+conversation database, are named as recovery gaps.
+
+Claude lookup uses the recorded project and falls back to locating that
+conversation under other projects. Codex reads its rollout in `sessions/`
+or `archived_sessions/`, rather than the input-only `history.jsonl`. A fork
+converted before its first transcript is written falls back to `forked_from`.
+
+The Fork dialog accepts a target harness. `twapp resume --fork --provider
+codex` (or `claude`) uses the same backend. A same-harness fork keeps the
+harness's native fork mechanism; a cross-harness fork creates a fresh target
+conversation with the saved source history. The copy receives no native
+conversation handles from its parent, so switching the copy's harness later
+cannot resume the parent's conversation. No source-harness request is needed,
+so usage exhaustion does not prevent a copy from being made.
+
 ## Archive
 
 Claude deletes transcripts after its cleanup period (`cleanupPeriodDays`,

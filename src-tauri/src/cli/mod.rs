@@ -8,6 +8,7 @@ pub mod fsutil;
 pub mod harness;
 pub mod hub_link;
 pub mod models;
+pub mod migration;
 pub mod notes;
 pub mod permissions;
 pub mod retired;
@@ -63,11 +64,14 @@ pub enum Commands {
         background: bool,
     },
     /// Resume session in current directory
-    #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
+    #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one\n  twapp resume --fork --provider codex  Copy into another harness")]
     Resume {
         /// Fork into a new session (keeps context, new session ID)
         #[arg(long)]
         fork: bool,
+        /// Fork into this harness, leaving the original session available
+        #[arg(long, requires = "fork")]
+        provider: Option<AgentProvider>,
     },
     /// Show the sessions open in the twapp window and what each is doing
     Status {
@@ -497,7 +501,7 @@ pub fn run(cmd: Commands) -> i32 {
             chrome,
             background,
         ),
-        Commands::Resume { fork } => cmd_resume(fork),
+        Commands::Resume { fork, provider } => cmd_resume(fork, provider),
         Commands::Status { json } => cmd_status(json),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
@@ -931,7 +935,7 @@ fn cmd_work(
     0
 }
 
-fn cmd_resume(fork: bool) -> i32 {
+fn cmd_resume(fork: bool, fork_provider: Option<AgentProvider>) -> i32 {
     // Check twapp-gui app bundle exists
     if let Err(e) = app_bundle::check_gui_installed() {
         eprintln!("{}", e);
@@ -946,6 +950,15 @@ fn cmd_resume(fork: bool) -> i32 {
             return 1;
         }
     };
+
+    if let Some(provider) = fork_provider {
+        return match tauri::async_runtime::block_on(crate::gui::sessions::fork_session(
+            work_dir.to_string_lossy().into_owned(), None, None, Some(provider),
+        )) {
+            Ok(name) => { println!("Opened {}", name); 0 }
+            Err(error) => { eprintln!("Error: {}", error); 1 }
+        };
+    }
 
     // The window hosts one session per directory. Forking in place while that
     // directory's session is running would leave the running terminal on the
@@ -976,17 +989,9 @@ fn cmd_resume(fork: bool) -> i32 {
 
     let window_name = session_data.name.clone();
     let provider = session_data.last_provider();
-    let migration_prompt = session_data
-        .migration_source(provider)
-        .map(|source| {
-            harness::build_migration_prompt(
-                &session_data,
-                &work_dir,
-                source,
-                provider,
-                &transcript::TranscriptRoots::from_home(),
-            )
-        });
+    let migration_prompt = harness::migration_prompt(
+        &session_data, &work_dir, provider, &transcript::TranscriptRoots::from_home(),
+    );
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {

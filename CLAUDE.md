@@ -33,6 +33,8 @@ Run `twapp <command> --help` for flags.
 
 **Harnesses:** `defaults.agent_providers` in `config.yaml` lists the harnesses offered for new sessions (Claude, Codex, Antigravity). Each session keeps its active harness and a separate conversation id per harness; switching stages a migration briefing when the target has no conversation yet. Default permissions are Claude-only.
 
+**Fork and convert:** choose the target harness in the Fork dialog, or run `twapp resume --fork --provider codex` (or `claude`). The copy gets its own directory and native conversation; the original session and all its harness handles stay intact. A cross-harness handoff keeps the saved source transcript under `.twapp-migration/` in the destination, with every saved user/assistant text message in numbered dialogue parts. The receiving harness is instructed to read all parts before acting and report anything it could not read. Do not substitute a summary or a few recent prompts for that history. Tool evidence remains in the raw snapshot. Missing transcripts and unsupported history formats are explicit recovery gaps.
+
 ## Architecture
 
 [docs/architecture.md](docs/architecture.md) is the design reference: processes, the ptyd and hub socket protocols, the status engine's signals, summaries, layout and restore.

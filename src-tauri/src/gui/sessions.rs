@@ -1288,10 +1288,12 @@ pub async fn fork_session(
     directory: String,
     ticket_key: Option<String>,
     name: Option<String>,
+    provider: Option<AgentProvider>,
 ) -> Result<String, String> {
     let parent_session = crate::cli::session::read_session(std::path::Path::new(&directory))?;
-    let provider = parent_session.last_provider();
-    if provider == AgentProvider::Antigravity {
+    let source = parent_session.last_provider();
+    let provider = provider.unwrap_or(source);
+    if provider == source && source == AgentProvider::Antigravity {
         return Err(
             "Antigravity forks must be created inside the harness with /fork".to_string(),
         );
@@ -1373,18 +1375,49 @@ pub async fn fork_session(
     // Pick random color
     let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
 
+    if provider != source {
+        // The copy continues the parent's task unless a different ticket was chosen.
+        let destination = std::path::Path::new(&work_dir);
+        if ticket_file.is_none() {
+            let inherited = std::path::Path::new(&directory).join(".twapp-ticket.json");
+            if inherited.is_file() {
+                let target = destination.join(".twapp-ticket.json");
+                std::fs::copy(inherited, &target).map_err(|e| e.to_string())?;
+                ticket_file = Some(target.to_string_lossy().into_owned());
+            }
+            ticket_key_for_session = parent_session.ticket_key.clone();
+        }
+        for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())?.flatten() {
+            let name = entry.file_name();
+            let text = name.to_string_lossy();
+            if text.starts_with(".twapp-notes") && text.ends_with(".json") && entry.path().is_file() {
+                std::fs::copy(entry.path(), destination.join(name)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
     let old_session_id = parent_session.display_session_id(provider);
     let chrome = parent_session.use_chrome.unwrap_or(false);
     let chrome_flag = if chrome { " --chrome" } else { "" };
 
-    let capture_started_at = if provider == AgentProvider::Codex {
+    let capture_started_at = if matches!(provider, AgentProvider::Codex | AgentProvider::Antigravity) {
         Some(chrono::Utc::now().to_rfc3339())
     } else {
         None
     };
 
     let created_at = chrono::Utc::now().to_rfc3339();
-    let (command, session_id_for_app, mut session_data) = if provider == AgentProvider::Codex {
+    let mut prefill = None;
+    let (command, session_id_for_app, mut session_data) = if provider != source {
+        let (mut data, launch) = crate::cli::harness::fork_into_provider(
+            &parent_session, std::path::Path::new(&work_dir), provider, &TranscriptRoots::from_home(),
+        )?;
+        data.name = window_name.clone();
+        data.color = color.to_string();
+        data.ticket_key = ticket_key_for_session.clone();
+        prefill = launch.prefill;
+        (launch.command, launch.conversation.known_id().map(str::to_string), data)
+    } else if provider == AgentProvider::Codex {
         let command = match &old_session_id {
             Some(old_id) => format!(
                 "codex fork {} -C '{}'",
@@ -1488,6 +1521,10 @@ pub async fn fork_session(
     if let Some(capture_started_at) = capture_started_at {
         app_args.push("--capture-started-at".to_string());
         app_args.push(capture_started_at);
+    }
+    if let Some(prefill) = prefill {
+        app_args.push("--prefill".to_string());
+        app_args.push(prefill);
     }
     if let Some(ref tf) = ticket_file {
         app_args.push("--ticket".to_string());

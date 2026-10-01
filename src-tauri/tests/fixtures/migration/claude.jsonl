@@ -1,0 +1,6 @@
+{"type":"user","timestamp":"2026-09-01T10:00:00Z","message":{"role":"user","content":"Keep the original session available when switching harnesses."}}
+{"type":"assistant","timestamp":"2026-09-01T10:01:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Private reasoning"},{"type":"text","text":"I will create a separate copy."},{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"git status --short"}}]}}
+{"type":"user","timestamp":"2026-09-01T10:02:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"M src/example.rs"}]}}
+{"type":"summary","summary":"A copy is being prepared."}
+{"type":"user","timestamp":"2026-09-01T10:03:00Z","message":{"role":"user","content":[{"type":"text","text":"Correction: carry all earlier decisions, including this one."},{"type":"text","text":"Do not replace the original conversation."}]}}
+{"type":"assistant","timestamp":"2026-09-01T10:04:00Z","message":{"role":"assistant","content":[{"type":"text","text":"The patch is local. Live migration still needs verification."}]}}

@@ -216,6 +216,12 @@ For a blocker with a check command, the window runs the command hourly, one at a
 
 Every session twapp starts knows it runs in twapp: Claude gets a short appended system prompt and Codex the same text as developer instructions, pointing the agent at `twapp blocker`, `twapp note` and the twapp skill. The window installs that skill for Claude and Codex when it starts, and refreshes it when a new version changes it (`twapp install-skill` does the same by hand). The skill teaches when to record blockers and how to write a check command whose output changes only when the blocker does.
 
+### Forking into another harness
+
+In the session's **Fork** dialog, choose a different harness and press **Fork and convert**. The copy starts a fresh conversation in its own directory; the original session and its saved conversations stay available. From the CLI, use `twapp resume --fork --provider codex` or `--provider claude`.
+
+The handoff saves the complete source transcript locally and tells the new harness to read all saved user/assistant dialogue before continuing, including earlier corrections and decisions. Tool calls and results remain available in the raw snapshot. It needs no request to the original harness, so you can make the copy when that harness is out of usage. Missing history is reported explicitly; very large histories may still exceed the receiving model's context, and Antigravity source history currently has no reader.
+
 ### Sessions whose conversation is gone
 
 Claude removes conversations after its cleanup period (`cleanupPeriodDays`), and a session that never got a message has no conversation yet. All sessions lists those under **No conversation**, folded, and **Forget all...** removes twapp's files from their directories (and a directory that holds nothing else), leaving code and project settings. Opening one starts a new conversation in its directory. A session whose conversation ran in a different directory than the one it records resumes from where the transcript is.
