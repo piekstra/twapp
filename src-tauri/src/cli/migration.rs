@@ -13,10 +13,37 @@ use super::transcript::TranscriptRoots;
 const PART_BYTES: usize = 24 * 1024;
 
 fn migration_dir(dir: &Path) -> std::io::Result<PathBuf> {
-    let root = dir.join(".twapp-migration");
-    std::fs::create_dir_all(&root)?;
+    use std::os::unix::fs::DirBuilderExt;
+    let parent = dir.canonicalize()?;
+    let root = parent.join(".twapp-migration");
+    match std::fs::DirBuilder::new().mode(0o700).create(&root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    if !std::fs::symlink_metadata(&root)?.file_type().is_dir()
+        || root.canonicalize()?.parent() != Some(parent.as_path())
+    {
+        return Err(std::io::Error::other(
+            "migration directory must be a real directory inside the session, not a symlink",
+        ));
+    }
     // This is a session's repository, which need not have twapp's .gitignore.
-    super::fsutil::write_atomic(&root.join(".gitignore"), "*\n")?;
+    // Never replace a checkout-supplied file or follow an ignore-file symlink.
+    let ignore = root.join(".gitignore");
+    match private_file(&ignore) {
+        Ok(mut file) => file.write_all(b"*\n")?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !std::fs::symlink_metadata(&ignore)?.file_type().is_file()
+                || std::fs::read_to_string(&ignore)? != "*\n"
+            {
+                return Err(std::io::Error::other(
+                    "migration ignore file must be a regular file containing only *",
+                ));
+            }
+        }
+        Err(error) => return Err(error),
+    }
     Ok(root)
 }
 
@@ -480,6 +507,34 @@ mod tests {
             .status()
             .unwrap()
             .success());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn migration_paths_cannot_redirect_writes_outside_the_session() {
+        let (dir, _, _) = setup();
+        let other = dir.join("outside");
+        std::fs::create_dir_all(&other).unwrap();
+        let ignore = other.join(".gitignore");
+        std::fs::write(&ignore, "original\n").unwrap();
+        let root = dir.join(".twapp-migration");
+        std::os::unix::fs::symlink(&other, &root).unwrap();
+        assert!(save_fork_context(&dir, AgentProvider::Claude, "briefing")
+            .unwrap_err()
+            .contains("symlink"));
+        assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "original\n");
+        assert!(!other.join("fork.json").exists());
+        std::fs::remove_file(&root).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(&ignore, root.join(".gitignore")).unwrap();
+        assert!(save_fork_context(&dir, AgentProvider::Claude, "briefing").is_err());
+        assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "original\n");
+        std::fs::remove_file(root.join(".gitignore")).unwrap();
+        std::fs::write(root.join(".gitignore"), "custom\n").unwrap();
+        assert!(save_fork_context(&dir, AgentProvider::Claude, "briefing").is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.join(".gitignore")).unwrap(),
+            "custom\n"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
