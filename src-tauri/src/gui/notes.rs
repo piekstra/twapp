@@ -10,8 +10,7 @@ fn resolve_notes_path(directory: &str) -> PathBuf {
     if name.is_empty() || name == "twapp" {
         base.join(".twapp-notes.json")
     } else {
-        let safe_name = name.replace('/', "-").replace(' ', "-");
-        base.join(format!(".twapp-notes-{}.json", safe_name))
+        crate::cli::notes::path_for_name(base, &name)
     }
 }
 

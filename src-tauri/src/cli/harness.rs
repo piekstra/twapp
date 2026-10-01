@@ -356,7 +356,8 @@ fn load_note_context(work_dir: &std::path::Path) -> Vec<String> {
     let mut notes = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with(".twapp-notes") || !name.ends_with(".json") {
+        if !name.starts_with(".twapp-notes") || !name.ends_with(".json")
+            || !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
         let Ok(content) = std::fs::read_to_string(entry.path()) else {

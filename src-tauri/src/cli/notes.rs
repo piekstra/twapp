@@ -32,12 +32,32 @@ fn resolve_notes_path(work_dir: &Path) -> PathBuf {
             .to_string_lossy()
             .to_string()
     };
+    path_for_name(work_dir, &name)
+}
+
+pub fn path_for_name(work_dir: &Path, name: &str) -> PathBuf {
     let safe_name = name.replace(' ', "-").replace('/', "-");
     if safe_name == "twapp" {
         work_dir.join(".twapp-notes.json")
     } else {
         work_dir.join(format!(".twapp-notes-{}.json", safe_name))
     }
+}
+
+/// Inherit only this session's active notes, under the fork's own name.
+pub fn inherit_for_fork(parent: &Path, destination: &Path, name: &str) -> Result<(), String> {
+    let source = resolve_notes_path(parent);
+    let metadata = match std::fs::symlink_metadata(&source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err("Cannot inherit notes: the source must be a regular file, not a symlink".into());
+    }
+    let content = std::fs::read_to_string(source).map_err(|error| error.to_string())?;
+    let notes: Vec<Note> = serde_json::from_str(&content).map_err(|error| error.to_string())?;
+    save_notes(&path_for_name(destination, name), &notes)
 }
 
 /// The notes kept for the session in `work_dir`.
@@ -166,5 +186,53 @@ fn resolve_dir(dir: Option<&str>) -> PathBuf {
         p.canonicalize().unwrap_or(p)
     } else {
         std::env::current_dir().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod fork_tests {
+    use super::*;
+
+    #[test]
+    fn inherited_notes_are_visible_under_default_and_custom_fork_names() {
+        let root = std::env::temp_dir().join(format!("twapp-notes-fork-{}", uuid::Uuid::new_v4()));
+        let parent = root.join("parent");
+        std::fs::create_dir_all(&parent).unwrap();
+        let data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        super::super::session::write_session(&parent, &data).unwrap();
+        assert_eq!(cmd_note_add("Keep the original available", Some(parent.to_str().unwrap())), 0);
+        // Notes belonging to another named session are not inherited.
+        std::fs::write(parent.join(".twapp-notes-unrelated.json"), "[]").unwrap();
+        for name in ["Original session fork", "Continuation"] {
+            let destination = root.join(name);
+            std::fs::create_dir_all(&destination).unwrap();
+            inherit_for_fork(&parent, &destination, name).unwrap();
+            let mut fork = data.clone();
+            fork.name = name.into();
+            super::super::session::write_session(&destination, &fork).unwrap();
+            assert_eq!(load_for(&destination)[0].text, "Keep the original available");
+            let gui_notes = crate::gui::notes::load_notes(destination.to_string_lossy().into_owned()).unwrap();
+            assert_eq!(gui_notes[0]["text"], "Keep the original available");
+            assert!(!destination.join(".twapp-notes-unrelated.json").exists());
+        }
+        assert_eq!(load_for(&parent).len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_symlink_cannot_inherit_another_sessions_notes() {
+        let root = std::env::temp_dir().join(format!("twapp-notes-symlink-{}", uuid::Uuid::new_v4()));
+        let parent = root.join("parent");
+        let destination = root.join("fork");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        let data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        super::super::session::write_session(&parent, &data).unwrap();
+        let other = root.join("other.json");
+        std::fs::write(&other, "[]").unwrap();
+        std::os::unix::fs::symlink(other, resolve_notes_path(&parent)).unwrap();
+        assert!(inherit_for_fork(&parent, &destination, "fork").unwrap_err().contains("symlink"));
+        assert!(!path_for_name(&destination, "fork").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

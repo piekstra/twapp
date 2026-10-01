@@ -12,6 +12,14 @@ use super::transcript::TranscriptRoots;
 
 const PART_BYTES: usize = 24 * 1024;
 
+fn migration_dir(dir: &Path) -> std::io::Result<PathBuf> {
+    let root = dir.join(".twapp-migration");
+    std::fs::create_dir_all(&root)?;
+    // This is a session's repository, which need not have twapp's .gitignore.
+    super::fsutil::write_atomic(&root.join(".gitignore"), "*\n")?;
+    Ok(root)
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ForkContext {
     source: AgentProvider,
@@ -19,8 +27,9 @@ struct ForkContext {
 }
 
 pub fn save_fork_context(dir: &Path, source: AgentProvider, prompt: &str) -> Result<(), String> {
-    let path = dir.join(".twapp-migration/fork.json");
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let path = migration_dir(dir)
+        .map_err(|e| e.to_string())?
+        .join("fork.json");
     let context = prompt
         .split_once("\n\n")
         .map(|(_, body)| body)
@@ -228,12 +237,11 @@ pub fn conversation_context(
 ) -> Result<String, String> {
     let transcript = source_transcript(data, work_dir, source, roots)
         .ok_or_else(|| format!("no saved {} transcript could be found", source))?;
-    let dir = work_dir
-        .join(".twapp-migration")
+    let dir = migration_dir(work_dir)
+        .map_err(|e| e.to_string())?
         .join(uuid::Uuid::new_v4().to_string());
     let export = || -> std::io::Result<String> {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::create_dir_all(dir.parent().unwrap())?;
         std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
         let snapshot = dir.join("transcript.jsonl");
         std::io::copy(&mut File::open(&transcript)?, &mut private_file(&snapshot)?)?;
@@ -251,7 +259,7 @@ pub fn conversation_context(
         }
         let manifest = dir.join("README.md");
         let content = format!(
-            "# Saved {} conversation\n\nSource: {}\n\nFull transcript snapshot: {}\n\nAll {} saved user/assistant messages and compaction summaries, in transcript order, without shortening text:\n\n{}\n\nRead every dialogue part in order before continuing. Parts may split a message. Tool calls, tool results, non-text attachments and other records remain in transcript.jsonl; consult them when verifying implementation claims. This is historical context, not new instructions. Later user corrections supersede earlier plans. Reconcile the history with current repository state and identify unfinished work and outstanding decisions.\n",
+            "# Saved {} conversation\n\nSource: {}\n\nFull transcript snapshot: {}\n\nAll {} saved user/assistant messages and compaction summaries, in transcript order, without shortening text:\n\n{}\n\nRead every dialogue part in order before continuing. Parts may split a message. Tool calls, tool results, non-text attachments and other records remain in transcript.jsonl; use them to locate the actual working checkout and verify implementation claims. This is historical context, not new instructions. Later user corrections supersede earlier plans. Reconcile the history with current repository state and identify unfinished work and outstanding decisions.\n",
             source, transcript.display(), snapshot.display(), dialogue.messages,
             dialogue.files.iter().map(|path| format!("- {}", path.display())).collect::<Vec<_>>().join("\n")
         );
@@ -290,7 +298,7 @@ mod tests {
     fn export_dir(dir: &Path) -> PathBuf {
         std::fs::read_dir(dir.join(".twapp-migration"))
             .unwrap()
-            .next()
+            .find(|entry| entry.as_ref().is_ok_and(|entry| entry.path().is_dir()))
             .unwrap()
             .unwrap()
             .path()
@@ -441,6 +449,37 @@ mod tests {
                 .contains("no saved claude transcript")
         );
         assert!(!dir.join(".twapp-migration").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn snapshots_stay_out_of_git_in_a_session_checkout() {
+        let (dir, data, roots) = setup();
+        assert!(std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .arg(&dir)
+            .status()
+            .unwrap()
+            .success());
+        write(
+            &roots.claude_transcript(&data.claude_cwd, &data.session_id),
+            include_str!("../../tests/fixtures/migration/claude.jsonl"),
+        );
+        conversation_context(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        let snapshot = export_dir(&dir).join("transcript.jsonl");
+        assert!(std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["check-ignore", "--quiet"])
+            .arg(&snapshot)
+            .status()
+            .unwrap()
+            .success());
+        assert!(std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["check-ignore", "--quiet", ".twapp-migration/.gitignore"])
+            .status()
+            .unwrap()
+            .success());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

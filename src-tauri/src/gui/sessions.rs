@@ -1387,13 +1387,9 @@ pub async fn fork_session(
             }
             ticket_key_for_session = parent_session.ticket_key.clone();
         }
-        for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())?.flatten() {
-            let name = entry.file_name();
-            let text = name.to_string_lossy();
-            if text.starts_with(".twapp-notes") && text.ends_with(".json") && entry.path().is_file() {
-                std::fs::copy(entry.path(), destination.join(name)).map_err(|e| e.to_string())?;
-            }
-        }
+        crate::cli::notes::inherit_for_fork(
+            std::path::Path::new(&directory), destination, &window_name,
+        )?;
     }
 
     let old_session_id = parent_session.display_session_id(provider);
