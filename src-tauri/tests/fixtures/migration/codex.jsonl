@@ -1,0 +1,10 @@
+{"type":"session_meta","payload":{"id":"codex-456","cwd":"/work/source","timestamp":"2026-09-01T10:00:00Z"}}
+{"type":"response_item","timestamp":"2026-09-01T10:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep the original session available when switching harnesses."}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Keep the original session available when switching harnesses."}}
+{"type":"response_item","timestamp":"2026-09-01T10:01:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will create a separate copy."}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"I will create a separate copy."}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git status --short\"}","call_id":"call-1"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"M src/example.rs"}}
+{"type":"compacted","payload":{"message":"A copy is being prepared."}}
+{"type":"response_item","timestamp":"2026-09-01T10:03:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Correction: carry all earlier decisions, including this one."},{"type":"input_text","text":"Do not replace the original conversation."}]}}
+{"type":"response_item","timestamp":"2026-09-01T10:04:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The patch is local. Live migration still needs verification."}]}}

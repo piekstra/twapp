@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "original_request": { "type": "string" },
+    "user_correction": { "type": "string" },
+    "final_assistant_status": { "type": "string" }
+  },
+  "required": ["original_request", "user_correction", "final_assistant_status"],
+  "additionalProperties": false
+}

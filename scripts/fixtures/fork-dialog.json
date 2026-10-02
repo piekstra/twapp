@@ -1,0 +1,76 @@
+{
+  "sessions": [
+    {
+      "key": "/work/source",
+      "name": "Source conversation",
+      "provider": "claude",
+      "color": "#ffe0e0",
+      "session_id": "source-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "running": false
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-10-01T12:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": []
+    },
+    {
+      "key": "/work/other",
+      "name": "Other conversation",
+      "provider": "codex",
+      "color": "#ffe0e0",
+      "session_id": "other-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Codex",
+          "running": false
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-10-01T12:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": []
+    }
+  ],
+  "selected": "/work/source",
+  "host_error": null
+}
