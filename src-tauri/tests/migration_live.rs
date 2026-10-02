@@ -36,9 +36,19 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
     std::fs::write(&path, history).unwrap();
     let before = serde_json::to_value(&parent).unwrap();
     let (receiver, _) = fork_into_provider(&parent, &dir, &intermediate, target, &roots).unwrap();
-    let (_, launch) =
+    let (mut retry, _) =
         fork_into_provider(&receiver, &intermediate, &destination, target, &roots).unwrap();
     std::fs::remove_dir_all(&intermediate).unwrap();
+    let (metadata_path, metadata): (PathBuf, &[u8]) = if target == AgentProvider::Claude {
+        (roots.claude_transcript(&retry.claude_cwd, &retry.session_id), include_bytes!("fixtures/migration/metadata-only-claude.jsonl"))
+    } else {
+        retry.codex_session_id = Some("codex-unwritten".into());
+        (dir.join("sessions/rollout-codex-unwritten.jsonl"), include_bytes!("fixtures/migration/metadata-only-codex.jsonl"))
+    };
+    std::fs::create_dir_all(metadata_path.parent().unwrap()).unwrap();
+    std::fs::write(&metadata_path, metadata).unwrap();
+    let launch = twapp_lib::cli::harness::prepare_launch(&mut retry, &destination, &roots);
+    assert!(!launch.command.contains("--resume") && !launch.command.contains("codex resume"));
     // The live test uses each harness's noninteractive entry point; the
     // briefing itself is exactly the one built for its interactive launch.
     let prompt = if let Some(prefill) = launch.prefill {

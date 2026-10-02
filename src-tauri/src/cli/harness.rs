@@ -81,10 +81,29 @@ pub fn prepare_launch(
     }
     let provider = session_data.last_provider();
     session_data.provider = Some(provider);
-    let fresh = provider == AgentProvider::Claude && !locate_claude_conversation(session_data, work_dir, roots);
+    let claude_resumable = provider == AgentProvider::Claude
+        && locate_claude_conversation(session_data, work_dir, roots);
+    let saved_recovery = super::migration::load_fork_context(work_dir);
+    let recovering_empty_receiver = matches!(provider, AgentProvider::Claude | AgentProvider::Codex)
+        && session_data.native_session_id(provider).is_some()
+        && !matches!(saved_recovery, Ok(None))
+        && !super::migration::has_readable_native_history(session_data, work_dir, provider, roots);
+    let fresh = recovering_empty_receiver
+        || (provider == AgentProvider::Claude && !claude_resumable);
 
     let migration_prompt = migration_prompt(session_data, work_dir, provider, roots, fresh);
-    let launch = if fresh {
+    if recovering_empty_receiver {
+        match provider {
+            AgentProvider::Claude if claude_resumable => session_data.session_id = uuid::Uuid::new_v4().to_string(),
+            AgentProvider::Claude => {},
+            AgentProvider::Codex => {
+                session_data.codex_session_id = None;
+                session_data.codex_cwd = Some(work_dir.to_string_lossy().into_owned());
+            }
+            AgentProvider::Antigravity => unreachable!(),
+        }
+    }
+    let launch = if fresh && provider == AgentProvider::Claude {
         start_claude_conversation(session_data, work_dir, migration_prompt.as_deref())
     } else {
         build_provider_command(provider, session_data, work_dir, migration_prompt.as_deref())
@@ -457,6 +476,10 @@ mod tests {
         let mut data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
         data.session_id.clear();
         data.provider = Some(AgentProvider::Codex);
+        data.codex_session_id = Some("codex-unwritten".into());
+        let metadata_path = dir.join("sessions/rollout-codex-unwritten.jsonl");
+        std::fs::create_dir_all(metadata_path.parent().unwrap()).unwrap();
+        std::fs::write(metadata_path, include_bytes!("../../tests/fixtures/migration/metadata-only-codex.jsonl")).unwrap();
         super::super::migration::save_fork_context(
             &dir,
             &super::super::migration::ForkContext::new(
@@ -470,6 +493,7 @@ mod tests {
         let launch = prepare_launch(&mut data, &dir, &roots);
         assert!(launch.command.contains("Saved fork conversation history is unavailable"));
         assert!(launch.command.contains("Report this gap"));
+        assert!(!launch.command.contains("codex resume"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -713,7 +737,10 @@ mod tests {
         let mut retry = fork;
         let resumed = prepare_launch(&mut retry, &dir, &roots);
         assert!(resumed.command.contains("Saved source conversation:"));
-        retry.set_provider_session(AgentProvider::Codex, "new-codex".into(), dir.to_string_lossy().into_owned());
+        retry.set_provider_session(AgentProvider::Codex, "codex-456".into(), dir.to_string_lossy().into_owned());
+        let target_transcript = dir.join("sessions/rollout-codex-456.jsonl");
+        std::fs::create_dir_all(target_transcript.parent().unwrap()).unwrap();
+        std::fs::write(target_transcript, include_bytes!("../../tests/fixtures/migration/codex.jsonl")).unwrap();
         assert!(!prepare_launch(&mut retry, &dir, &roots).command.contains("Saved source conversation:"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

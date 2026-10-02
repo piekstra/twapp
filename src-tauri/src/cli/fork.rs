@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_only_receivers_keep_saved_history_when_forked_in_both_harnesses() {
+    fn metadata_only_receivers_keep_saved_history_when_retried_and_forked_in_both_harnesses() {
         verify_recovery_copies(true);
     }
 
@@ -432,6 +432,24 @@ mod tests {
                 assert!(!super::super::migration::has_readable_native_history(
                     &receiver, &first, target, &roots
                 ));
+                let mut retry = receiver.clone();
+                let launch = super::super::harness::prepare_launch(&mut retry, &first, &roots);
+                assert!(launch.command.contains("Saved source conversation:"));
+                assert!(!launch.command.contains("--resume") && !launch.command.contains("codex resume"));
+                if target == AgentProvider::Claude { assert_ne!(retry.session_id, receiver.session_id); }
+                else { assert!(retry.codex_session_id.is_none()); }
+                // Once the new receiver has readable dialogue, retries stop injecting the briefing.
+                let (established, bytes): (PathBuf, &[u8]) = if target == AgentProvider::Claude {
+                    (roots.claude_transcript(&retry.claude_cwd, &retry.session_id), include_bytes!("../../tests/fixtures/migration/claude.jsonl"))
+                } else {
+                    retry.codex_session_id = Some("codex-456".into());
+                    (root.join("sessions/rollout-codex-456.jsonl"), include_bytes!("../../tests/fixtures/migration/codex.jsonl"))
+                };
+                std::fs::create_dir_all(established.parent().unwrap()).unwrap();
+                std::fs::write(established, bytes).unwrap();
+                let resumed = super::super::harness::prepare_launch(&mut retry, &first, &roots);
+                assert!(!resumed.command.contains("Saved source conversation:"));
+                assert!(resumed.command.contains(if target == AgentProvider::Claude { "claude --resume" } else { "codex resume" }));
             }
             let (_, second_args) = prepare_fork_session(
                 first.to_string_lossy().into_owned(),
