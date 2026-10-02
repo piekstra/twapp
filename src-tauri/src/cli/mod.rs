@@ -952,10 +952,13 @@ fn cmd_resume(fork: bool, fork_provider: Option<AgentProvider>) -> i32 {
     };
 
     if let Some(provider) = fork_provider {
-        return match tauri::async_runtime::block_on(crate::gui::sessions::fork_session(
+        return match tauri::async_runtime::block_on(crate::gui::sessions::prepare_fork_session(
             work_dir.to_string_lossy().into_owned(), None, None, Some(provider),
         )) {
-            Ok(name) => { println!("Opened {}", name); 0 }
+            Ok((name, args)) => match hub_link::open_in_hub(&args) {
+                Ok(()) => { println!("Opened {}", name); 0 }
+                Err(error) => { eprintln!("Error: {}", error); 1 }
+            },
             Err(error) => { eprintln!("Error: {}", error); 1 }
         };
     }

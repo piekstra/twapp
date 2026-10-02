@@ -1290,6 +1290,17 @@ pub async fn fork_session(
     name: Option<String>,
     provider: Option<AgentProvider>,
 ) -> Result<String, String> {
+    let (window_name, app_args) = prepare_fork_session(directory, ticket_key, name, provider).await?;
+    open_in_hub(&app_args)?;
+    Ok(window_name)
+}
+
+pub(crate) async fn prepare_fork_session(
+    directory: String,
+    ticket_key: Option<String>,
+    name: Option<String>,
+    provider: Option<AgentProvider>,
+) -> Result<(String, Vec<String>), String> {
     let parent_session = crate::cli::session::read_session(std::path::Path::new(&directory))?;
     let source = parent_session.last_provider();
     let provider = provider.unwrap_or(source);
@@ -1530,8 +1541,7 @@ pub async fn fork_session(
         app_args.push("--chrome".to_string());
     }
 
-    open_in_hub(&app_args)?;
-    Ok(window_name)
+    Ok((window_name, app_args))
 }
 
 fn sanitize_dir_name(name: &str) -> String {

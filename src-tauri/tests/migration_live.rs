@@ -45,6 +45,7 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
     };
     let prompt = format!("{}\n\nFor this isolated verification, stop after recovery. Return JSON with keys original_request, user_correction, final_assistant_status. Each value must quote the corresponding saved message verbatim, including the full user correction. Do not change any files or continue the historical task.", prompt);
     let result_file: PathBuf = destination.join("recovery.json");
+    let schema = include_str!("fixtures/migration/recovery-schema.json");
     let output = match target {
         AgentProvider::Codex => Command::new("codex")
             .args([
@@ -68,6 +69,10 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
                 "--permission-mode",
                 "dontAsk",
                 "--no-session-persistence",
+                "--output-format",
+                "json",
+                "--json-schema",
+                schema,
             ])
             .arg(&prompt)
             .current_dir(&destination)
@@ -94,8 +99,24 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    let recovery: serde_json::Value = serde_json::from_str(answer)
-        .expect("receiving harness must return its recovered conversation as JSON");
+    let recovery: serde_json::Value = serde_json::from_str(answer).unwrap_or_else(|error| {
+        panic!(
+            "{} receiver returned invalid JSON: {}; answer={}",
+            target, error, answer
+        )
+    });
+    let recovery = if target == AgentProvider::Claude {
+        assert_eq!(
+            recovery["is_error"], false,
+            "Claude receiver failed: {}",
+            recovery
+        );
+        recovery
+            .get("structured_output")
+            .expect("Claude must return schema-validated recovery")
+    } else {
+        &recovery
+    };
     assert_eq!(
         recovery["original_request"],
         "Keep the original session available when switching harnesses."

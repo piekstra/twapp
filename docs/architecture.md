@@ -348,6 +348,24 @@ conversation handles from its parent, so switching the copy's harness later
 cannot resume the parent's conversation. No source-harness request is needed,
 so usage exhaustion does not prevent a copy from being made.
 
+Fork preparation is shared by CLI and GUI callers. The GUI opens the prepared
+arguments in its in-process hub; the CLI sends them to the native window over
+`hub.sock`, since a CLI process has no in-process GUI hub.
+
+Opt-in verification uses synthetic conversation fixtures:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --test migration_live -- --ignored
+cargo test --manifest-path src-tauri/Cargo.toml --test migration_cli -- --ignored
+```
+
+The receiver checks use real Claude and Codex authentication and consume usage.
+Claude's schema-validated result is checked independently of explanatory prose.
+The CLI check requires an installed, running native twapp window. It opens a
+separate Claude fork, verifies its terminal, inherited notes and ticket, and
+unchanged source metadata and transcript, then closes only that test session.
+It does not click the GUI Fork dialog or verify interactive approval prompts.
+
 ## Archive
 
 Claude deletes transcripts after its cleanup period (`cleanupPeriodDays`,
