@@ -6,7 +6,7 @@ use crate::cli::harness::{prepare_launch, Conversation};
 use crate::cli::transcript::{extract_jsonl_metadata, TranscriptRoots};
 use crate::cli::session::{
     count_codex_conversation_messages, find_antigravity_session_for_cwd,
-    find_latest_codex_session_for_cwd, shell_escape_single, AgentProvider, SessionData,
+    find_latest_codex_session_for_cwd, AgentProvider, SessionData,
 };
 use crate::cli::session_attribution;
 
@@ -1288,230 +1288,23 @@ pub async fn fork_session(
     directory: String,
     ticket_key: Option<String>,
     name: Option<String>,
+    provider: Option<AgentProvider>,
 ) -> Result<String, String> {
-    let parent_session = crate::cli::session::read_session(std::path::Path::new(&directory))?;
-    let provider = parent_session.last_provider();
-    if provider == AgentProvider::Antigravity {
-        return Err(
-            "Antigravity forks must be created inside the harness with /fork".to_string(),
-        );
-    }
-    let original_cwd = directory.clone();
-    let mut work_dir = original_cwd.clone();
-    let mut window_name = std::path::Path::new(&work_dir)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("twapp")
-        .to_string();
-    let mut ticket_file: Option<String> = None;
-    let mut ticket_key_for_session: Option<String> = None;
-
-    // Custom name takes priority over directory-derived name (ticket overrides both)
-    if let Some(ref n) = name {
-        let filtered: String = n
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_')
-            .collect();
-        window_name = filtered.split_whitespace().collect::<Vec<_>>().join("-");
-    }
-
-    // If ticket provided, fetch and set up directory
-    if let Some(ref key) = ticket_key {
-        let requested = key.clone();
-        let ticket = super::tickets::fetch_blocking(move || {
-            crate::cli::ticket::fetch_ticket(&requested, false)
-        })
-        .await?;
-        let ticket_key_str = ticket.key.as_str();
-        window_name = crate::cli::format_session_name(ticket_key_str, &ticket.title);
-        ticket_key_for_session = Some(ticket_key_str.to_string());
-
-        // Create work directory under parent of current cwd
-        let parent = std::path::Path::new(&work_dir)
-            .parent()
-            .unwrap_or(std::path::Path::new(&work_dir));
-        let dir_name = ticket_key_str.replace(['/', '#'], "-");
-        // Never write over a session that already lives in the ticket's
-        // directory (the parent itself, or an earlier fork for this ticket).
-        let mut new_dir = parent.join(&dir_name);
-        let mut n = 2;
-        while new_dir.join(".twapp-session.json").exists() {
-            new_dir = parent.join(format!("{}-fork-{}", dir_name, n));
-            n += 1;
-        }
-        std::fs::create_dir_all(&new_dir)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
-
-        let tf = new_dir.join(".twapp-ticket.json");
-        std::fs::write(&tf, serde_json::to_string_pretty(&ticket).unwrap())
-            .map_err(|e| format!("Failed to write ticket file: {}", e))?;
-
-        work_dir = new_dir.to_string_lossy().to_string();
-        ticket_file = Some(tf.to_string_lossy().to_string());
-    }
-
-    // The window hosts one session per directory, so a fork without a ticket
-    // gets a sibling directory of its own.
-    if ticket_key.is_none() {
-        let original = std::path::Path::new(&original_cwd);
-        let parent = original.parent().unwrap_or(original);
-        let base = sanitize_dir_name(&window_name);
-        let mut candidate = parent.join(format!("{}-fork", base));
-        let mut n = 2;
-        while candidate.exists() {
-            candidate = parent.join(format!("{}-fork-{}", base, n));
-            n += 1;
-        }
-        std::fs::create_dir_all(&candidate)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
-        work_dir = candidate.to_string_lossy().to_string();
-        if name.is_none() {
-            window_name = format!("{} fork", parent_session.name);
-        }
-    }
-
-    // Pick random color
-    let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
-
-    let old_session_id = parent_session.display_session_id(provider);
-    let chrome = parent_session.use_chrome.unwrap_or(false);
-    let chrome_flag = if chrome { " --chrome" } else { "" };
-
-    let capture_started_at = if provider == AgentProvider::Codex {
-        Some(chrono::Utc::now().to_rfc3339())
-    } else {
-        None
+    let ticket = match ticket_key {
+        Some(key) => Some(
+            super::tickets::fetch_blocking(move || crate::cli::ticket::fetch_ticket(&key, false)).await?,
+        ),
+        None => None,
     };
-
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let (command, session_id_for_app, mut session_data) = if provider == AgentProvider::Codex {
-        let command = match &old_session_id {
-            Some(old_id) => format!(
-                "codex fork {} -C '{}'",
-                old_id,
-                shell_escape_single(&work_dir)
-            ),
-            None => format!("codex -C '{}'", shell_escape_single(&work_dir)),
-        };
-        (
-            command,
-            None,
-            SessionData {
-                session_id: String::new(),
-                name: window_name.clone(),
-                color: color.to_string(),
-                ticket_key: ticket_key_for_session.clone(),
-                claude_cwd: work_dir.clone(),
-                created: created_at.clone(),
-                last_resumed: None,
-                provider: Some(AgentProvider::Codex),
-                codex_session_id: None,
-                codex_cwd: Some(work_dir.clone()),
-                antigravity_session_id: None,
-                antigravity_cwd: None,
-                migration_source_provider: None,
-                forked_from: old_session_id.clone(),
-                imported: None,
-                imported_from: None,
-                use_chrome: None,
-                override_terminal_theme: None,
-            },
-        )
-    } else {
-        let new_id = uuid::Uuid::new_v4().to_string();
-        let command = match &old_session_id {
-            Some(old_id) => {
-                let cd_prefix = if work_dir != original_cwd {
-                    format!("cd '{}' && ", original_cwd.replace('\'', "'\\''"))
-                } else {
-                    String::new()
-                };
-                format!(
-                    "{}claude --resume {} --fork-session --session-id {}{}",
-                    cd_prefix, old_id, new_id, chrome_flag
-                )
-            }
-            None => format!("claude --session-id {}{}", new_id, chrome_flag),
-        };
-        let claude_cwd = if old_session_id.is_some() {
-            &original_cwd
-        } else {
-            &work_dir
-        };
-        (
-            command,
-            Some(new_id.clone()),
-            SessionData {
-                session_id: new_id,
-                name: window_name.clone(),
-                color: color.to_string(),
-                ticket_key: ticket_key_for_session.clone(),
-                claude_cwd: claude_cwd.to_string(),
-                created: created_at.clone(),
-                last_resumed: None,
-                provider: Some(AgentProvider::Claude),
-                codex_session_id: None,
-                codex_cwd: None,
-                antigravity_session_id: None,
-                antigravity_cwd: None,
-                migration_source_provider: None,
-                forked_from: old_session_id.clone(),
-                imported: None,
-                imported_from: None,
-                use_chrome: None,
-                override_terminal_theme: None,
-            },
-        )
-    };
-
-    if chrome {
-        session_data.use_chrome = Some(true);
-    }
-    crate::cli::session::write_session(std::path::Path::new(&work_dir), &session_data)?;
-
-    let mut app_args = vec![
-        "--name".to_string(),
-        window_name.clone(),
-        "--color".to_string(),
-        color.to_string(),
-        "--cwd".to_string(),
-        work_dir,
-        "--command".to_string(),
-        command,
-        "--provider".to_string(),
-        provider.to_string(),
-    ];
-    if let Some(session_id_for_app) = session_id_for_app {
-        app_args.push("--session-id".to_string());
-        app_args.push(session_id_for_app);
-    }
-    if let Some(capture_started_at) = capture_started_at {
-        app_args.push("--capture-started-at".to_string());
-        app_args.push(capture_started_at);
-    }
-    if let Some(ref tf) = ticket_file {
-        app_args.push("--ticket".to_string());
-        app_args.push(tf.clone());
-    }
-    if chrome {
-        app_args.push("--chrome".to_string());
-    }
-
+    let (window_name, app_args) = crate::cli::fork::prepare_fork_session(
+        directory,
+        ticket,
+        name,
+        provider,
+        &TranscriptRoots::from_home(),
+    )?;
     open_in_hub(&app_args)?;
     Ok(window_name)
-}
-
-fn sanitize_dir_name(name: &str) -> String {
-    let safe: String = name
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
-    let safe = safe.trim_matches('-').to_string();
-    if safe.is_empty() {
-        "session".to_string()
-    } else {
-        safe
-    }
 }
 
 #[cfg(test)]

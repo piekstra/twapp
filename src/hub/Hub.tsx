@@ -10,7 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import "../App.css";
 import "./hub.css";
 import { getDarkModeAccentColor } from "../color";
-import type { ThemeMode } from "../types";
+import type { AgentProvider, GlobalConfig, ThemeMode } from "../types";
 import { getDarkTheme, getLightTheme } from "../types";
 import { isNewerVersion } from "../utils/version";
 import FilePreviewOverlay, { type FilePreviewHandle } from "../components/FilePreview/FilePreviewOverlay";
@@ -74,6 +74,8 @@ export default function Hub() {
   const [forkOpen, setForkOpen] = useState(false);
   const [forkTicket, setForkTicket] = useState("");
   const [forkName, setForkName] = useState("");
+  const [forkProvider, setForkProvider] = useState<AgentProvider | null>(null);
+  const [forkProviders, setForkProviders] = useState<AgentProvider[]>([]);
   const [forkError, setForkError] = useState<string | null>(null);
   const [forking, setForking] = useState(false);
   const [confirmClose, setConfirmClose] = useState<SessionView | null>(null);
@@ -371,6 +373,34 @@ export default function Hub() {
     [manager],
   );
 
+  useEffect(() => {
+    if (!forkOpen) return;
+    let cancelled = false;
+    invoke<GlobalConfig>("get_global_config").then((config) => {
+      if (!cancelled) setForkProviders(config.agent_providers);
+    }).catch(() => {
+      if (!cancelled) setForkProviders([]);
+    });
+    return () => { cancelled = true; };
+  }, [forkOpen]);
+
+  const resetFork = useCallback(() => {
+    setForkTicket("");
+    setForkName("");
+    setForkProvider(null);
+    setForkError(null);
+  }, []);
+
+  const openFork = useCallback(() => {
+    resetFork();
+    setForkOpen(true);
+  }, [resetFork]);
+
+  const closeFork = useCallback(() => {
+    resetFork();
+    setForkOpen(false);
+  }, [resetFork]);
+
   const fork = async () => {
     if (!current) return;
     setForking(true);
@@ -380,10 +410,9 @@ export default function Hub() {
         directory: current.key,
         ticketKey: forkTicket.trim() || null,
         name: forkName.trim() || null,
+        provider: forkProvider,
       });
-      setForkOpen(false);
-      setForkTicket("");
-      setForkName("");
+      closeFork();
     } catch (e) {
       setForkError(String(e));
     } finally {
@@ -443,7 +472,7 @@ export default function Hub() {
       { id: "all", label: "All sessions", run: () => openLibrary("sessions") },
       ...(current
         ? [
-            { id: "fork", label: `Fork ${current.name}`, hint: "⌘⇧N", run: () => setForkOpen(true) },
+            { id: "fork", label: `Fork ${current.name}`, hint: "⌘⇧N", run: openFork },
             { id: "restart", label: `Restart ${current.name}`, run: () => restart() },
             { id: "close", label: `Close ${current.name}`, run: () => setConfirmClose(current) },
             { id: "summarize", label: `Summarize ${current.name}`, run: () => hubApi.summarize(current.key) },
@@ -472,7 +501,7 @@ export default function Hub() {
         },
       },
     ],
-    [previous, goBack, current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild, updateInfo, checkForUpdate],
+    [previous, goBack, current, openLibrary, restart, newTab, nextAttention, layout, toggleSidebar, toggleRail, setMode, rebuild, updateInfo, checkForUpdate, openFork],
   );
 
   // --- Keyboard --------------------------------------------------------------
@@ -558,7 +587,7 @@ export default function Hub() {
       }
       if ((key === "N" || (key === "n" && e.shiftKey)) && current) {
         e.preventDefault();
-        setForkOpen(true);
+        openFork();
         return;
       }
       if (key === "t" && !e.shiftKey && current && !overview) {
@@ -590,7 +619,7 @@ export default function Hub() {
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, goBack, toggleSidebar, toggleRail, layout.mode, layout.collapsedLanes, layout.switcherCollapsedLanes, openLibrary, newTab, closeTab]);
+  }, [sessions, selected, current, activeTab, overview, manager, selectSession, nextAttention, goBack, toggleSidebar, toggleRail, layout.mode, layout.collapsedLanes, layout.switcherCollapsedLanes, openLibrary, newTab, closeTab, openFork]);
 
   // --- Render ----------------------------------------------------------------
   const releaseNotesComponents = markdownComponents((path) => previewRef.current?.open(path, null));
@@ -710,7 +739,7 @@ export default function Hub() {
       now={now}
       onPreview={(path) => previewRef.current?.open(path, current.key)}
       onRestart={restart}
-      onFork={() => setForkOpen(true)}
+      onFork={openFork}
       onCloseSession={() => setConfirmClose(current)}
       onCollapse={toggleSidebar}
       onSetLane={(lane) => setLane(current.key, lane)}
@@ -1056,17 +1085,32 @@ export default function Hub() {
       )}
 
       {forkOpen && current && (
-        <div className="config-overlay" onClick={() => setForkOpen(false)}>
+        <div className="config-overlay" onClick={closeFork}>
           <div className="config-panel fork-panel" onClick={(e) => e.stopPropagation()}>
             <div className="config-header">
               <span className="config-title">Fork {current.name}</span>
-              <button className="config-close" onClick={() => setForkOpen(false)}>&times;</button>
+              <button className="config-close" onClick={closeFork}>&times;</button>
             </div>
             <div className="config-body">
               <p className="fork-explanation">
                 Starts a new session with this conversation's context. With a ticket it gets the ticket's directory;
-                otherwise a sibling directory next to this one.
+                otherwise a sibling directory next to this one. The original session stays available.
               </p>
+              <label>
+                Harness
+                <select
+                  className="fork-input"
+                  value={forkProvider ?? current.provider}
+                  onChange={(e) => {
+                    const provider = forkProviders.find((p) => p === e.target.value);
+                    setForkProvider(provider ?? null);
+                  }}
+                >
+                  {Array.from(new Set([current.provider, ...forkProviders])).map((provider) => (
+                    <option key={provider} value={provider}>{provider}</option>
+                  ))}
+                </select>
+              </label>
               <input
                 className="fork-input"
                 placeholder="Ticket, e.g. ABC-123"
@@ -1088,9 +1132,9 @@ export default function Hub() {
               />
               {forkError && <div className="fork-error">{forkError}</div>}
               <div className="fork-actions">
-                <button className="fork-cancel" onClick={() => setForkOpen(false)}>Cancel</button>
+                <button className="fork-cancel" onClick={closeFork}>Cancel</button>
                 <button className="fork-submit" onClick={fork} disabled={forking}>
-                  {forking ? "Forking..." : "Fork"}
+                  {forking ? "Forking..." : forkProvider && forkProvider !== current.provider ? "Fork and convert" : "Fork"}
                 </button>
               </div>
             </div>

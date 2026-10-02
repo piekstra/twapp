@@ -5,9 +5,11 @@ pub mod blockers;
 pub mod yaks;
 pub mod config;
 pub mod fsutil;
+pub mod fork;
 pub mod harness;
 pub mod hub_link;
 pub mod models;
+pub mod migration;
 pub mod notes;
 pub mod permissions;
 pub mod retired;
@@ -63,11 +65,14 @@ pub enum Commands {
         background: bool,
     },
     /// Resume session in current directory
-    #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one")]
+    #[command(after_help = "Examples:\n  twapp resume              Continue where you left off\n  twapp resume --fork       New session with context from current one\n  twapp resume --fork --provider codex  Copy into another harness")]
     Resume {
         /// Fork into a new session (keeps context, new session ID)
         #[arg(long)]
         fork: bool,
+        /// Fork into this harness, leaving the original session available
+        #[arg(long, requires = "fork")]
+        provider: Option<AgentProvider>,
     },
     /// Show the sessions open in the twapp window and what each is doing
     Status {
@@ -497,7 +502,7 @@ pub fn run(cmd: Commands) -> i32 {
             chrome,
             background,
         ),
-        Commands::Resume { fork } => cmd_resume(fork),
+        Commands::Resume { fork, provider } => cmd_resume(fork, provider),
         Commands::Status { json } => cmd_status(json),
         Commands::Sessions { path } => cmd_sessions(path),
         Commands::Ticket { command } => match command {
@@ -931,7 +936,7 @@ fn cmd_work(
     0
 }
 
-fn cmd_resume(fork: bool) -> i32 {
+fn cmd_resume(fork: bool, fork_provider: Option<AgentProvider>) -> i32 {
     // Check twapp-gui app bundle exists
     if let Err(e) = app_bundle::check_gui_installed() {
         eprintln!("{}", e);
@@ -946,6 +951,18 @@ fn cmd_resume(fork: bool) -> i32 {
             return 1;
         }
     };
+
+    if let Some(provider) = fork_provider {
+        return match fork::prepare_fork_session(
+            work_dir.to_string_lossy().into_owned(), None, None, Some(provider), &transcript::TranscriptRoots::from_home(),
+        ) {
+            Ok((name, args)) => match hub_link::open_in_hub(&args) {
+                Ok(()) => { println!("Opened {}", name); 0 }
+                Err(error) => { eprintln!("Error: {}", error); 1 }
+            },
+            Err(error) => { eprintln!("Error: {}", error); 1 }
+        };
+    }
 
     // The window hosts one session per directory. Forking in place while that
     // directory's session is running would leave the running terminal on the
@@ -976,17 +993,7 @@ fn cmd_resume(fork: bool) -> i32 {
 
     let window_name = session_data.name.clone();
     let provider = session_data.last_provider();
-    let migration_prompt = session_data
-        .migration_source(provider)
-        .map(|source| {
-            harness::build_migration_prompt(
-                &session_data,
-                &work_dir,
-                source,
-                provider,
-                &transcript::TranscriptRoots::from_home(),
-            )
-        });
+    let roots = transcript::TranscriptRoots::from_home();
     let color = if session_data.color.is_empty() {
         theme::random_color().to_string()
     } else {
@@ -1023,12 +1030,7 @@ fn cmd_resume(fork: bool) -> i32 {
                 format!("codex -C '{}'", shell_escape_single(&work_dir.to_string_lossy()))
             }
         } else {
-            harness::build_provider_command(
-                provider,
-                &session_data,
-                &work_dir,
-                migration_prompt.as_deref(),
-            )
+            prepare_cli_resume(&mut session_data, &work_dir, &roots)
             .command
         };
         session_data.provider = Some(AgentProvider::Codex);
@@ -1065,12 +1067,7 @@ fn cmd_resume(fork: bool) -> i32 {
         } else {
             None
         };
-        let launch = harness::build_provider_command(
-            provider,
-            &session_data,
-            &work_dir,
-            migration_prompt.as_deref(),
-        );
+        let launch = prepare_cli_resume(&mut session_data, &work_dir, &roots);
         let command = launch.command;
         session_data.provider = Some(AgentProvider::Antigravity);
         session_data.antigravity_cwd = Some(work_dir.to_string_lossy().to_string());
@@ -1142,12 +1139,7 @@ fn cmd_resume(fork: bool) -> i32 {
         .native_session_id(AgentProvider::Claude)
         .is_none()
     {
-        let launch = harness::build_provider_command(
-            provider,
-            &session_data,
-            &work_dir,
-            migration_prompt.as_deref(),
-        );
+        let launch = prepare_cli_resume(&mut session_data, &work_dir, &roots);
         let command = launch.command;
         let new_id = launch.conversation.known_id().map(str::to_string);
         if let Some(minted) = launch.conversation.id_to_record() {
@@ -1220,12 +1212,7 @@ fn cmd_resume(fork: bool) -> i32 {
             }
         }
         session_id = session_data.session_id.clone();
-        let command = harness::build_provider_command(
-            provider,
-            &session_data,
-            &work_dir,
-            migration_prompt.as_deref(),
-        )
+        let command = prepare_cli_resume(&mut session_data, &work_dir, &roots)
         .command;
         session_data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
         if let Err(e) = session::write_session(&work_dir, &session_data) {
@@ -1245,6 +1232,16 @@ fn cmd_resume(fork: bool) -> i32 {
             None,
         )
     }
+}
+
+fn prepare_cli_resume(
+    data: &mut session::SessionData,
+    work_dir: &std::path::Path,
+    roots: &transcript::TranscriptRoots,
+) -> harness::ProviderLaunch {
+    let launch = harness::prepare_launch(data, work_dir, roots);
+    data.last_resumed = Some(chrono::Utc::now().to_rfc3339());
+    launch
 }
 
 fn short_id(id: &str) -> String {
@@ -2557,5 +2554,41 @@ mod provider_selection_tests {
         let error = resolve_new_session_provider(&[CLAUDE, CODEX], None, false).unwrap_err();
         assert!(error.contains("--provider"), "{}", error);
         assert!(error.contains("claude, codex"), "{}", error);
+    }
+}
+
+#[cfg(test)]
+mod resume_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn cli_retry_starts_an_unwritten_claude_fork_with_its_saved_history() {
+        let dir = std::env::temp_dir().join(format!("twapp-cli-retry-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let roots = transcript::TranscriptRoots {
+            claude_projects: dir.join("projects"),
+            codex_history: dir.join("history.jsonl"),
+        };
+        let mut parent: session::SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        parent.provider = Some(AgentProvider::Codex);
+        parent.codex_session_id = Some("codex-456".into());
+        let source = dir.join("sessions/rollout-codex-456.jsonl");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(source, include_str!("../../tests/fixtures/migration/codex.jsonl")).unwrap();
+        let (mut fork, _) = harness::fork_into_provider(&parent, &dir, &dir, AgentProvider::Claude, &roots).unwrap();
+        let id = fork.session_id.clone();
+        let retry = prepare_cli_resume(&mut fork, &dir, &roots);
+        assert!(retry.command.starts_with(&format!("claude --session-id {}", id)));
+        assert!(retry.command.contains("Saved source conversation:"));
+        assert!(fork.last_resumed.is_some());
+        session::write_session(&dir, &fork).unwrap();
+        assert_eq!(session::read_session(&dir).unwrap().session_id, id);
+        let transcript = roots.claude_transcript(&fork.claude_cwd, &id);
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(transcript, include_str!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
+        let resumed = prepare_cli_resume(&mut fork, &dir, &roots);
+        assert!(resumed.command.starts_with(&format!("claude --resume {}", id)));
+        assert!(!resumed.command.contains("Saved source conversation:"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

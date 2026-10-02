@@ -10,8 +10,7 @@ fn resolve_notes_path(directory: &str) -> PathBuf {
     if name.is_empty() || name == "twapp" {
         base.join(".twapp-notes.json")
     } else {
-        let safe_name = name.replace('/', "-").replace(' ', "-");
-        base.join(format!(".twapp-notes-{}.json", safe_name))
+        crate::cli::notes::path_for_name(base, &name)
     }
 }
 
@@ -29,6 +28,6 @@ pub fn load_notes(directory: String) -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn save_notes(directory: String, notes: serde_json::Value) -> Result<(), String> {
     let path = resolve_notes_path(&directory);
-    crate::cli::fsutil::write_atomic(&path, serde_json::to_string_pretty(&notes).unwrap())
+    crate::cli::fsutil::write_atomic_private(&path, serde_json::to_string_pretty(&notes).unwrap())
         .map_err(|e| e.to_string())
 }

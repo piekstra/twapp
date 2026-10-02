@@ -4579,6 +4579,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "dirs",
+ "libc",
  "log",
  "parking_lot",
  "plist",
