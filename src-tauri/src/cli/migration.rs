@@ -223,13 +223,17 @@ fn source_transcript_with_ancestry(
         })
 }
 
-pub fn has_native_history(
+pub fn has_readable_native_history(
     data: &SessionData,
     dir: &Path,
     source: AgentProvider,
     roots: &TranscriptRoots,
 ) -> bool {
-    source_transcript_with_ancestry(data, dir, source, roots, false).is_some()
+    source_transcript_with_ancestry(data, dir, source, roots, false)
+        .and_then(|path| path.canonicalize().ok())
+        .is_some_and(|path| {
+            visit_dialogue(&path, source, |_, _, _| Ok(())).is_ok_and(|messages| messages > 0)
+        })
 }
 
 fn private_file(path: &Path) -> std::io::Result<File> {
@@ -309,14 +313,39 @@ fn export_dialogue(
     source: AgentProvider,
     out: &mut Dialogue,
 ) -> std::io::Result<()> {
+    visit_dialogue(snapshot, source, |role, timestamp, text| {
+        out.message(role, timestamp, text)
+    })?;
+    out.flush()
+}
+
+fn visit_dialogue(
+    snapshot: &Path,
+    source: AgentProvider,
+    mut on_message: impl FnMut(&str, &str, &str) -> std::io::Result<()>,
+) -> std::io::Result<usize> {
     // Codex emits adjacent event and response records for the same message.
     // Only collapse such pairs; older event-only exchanges must remain intact.
     let mut previous: Option<(String, String, String)> = None;
-    for line in BufReader::new(File::open(snapshot)?).lines() {
+    let mut messages = 0;
+    for (index, line) in BufReader::new(super::fsutil::open_regular_file(snapshot)?)
+        .lines()
+        .enumerate()
+    {
         let line = line?;
-        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+        if line.trim().is_empty() {
             continue;
-        };
+        }
+        let v: Value = serde_json::from_str(&line).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "transcript record at line {} is malformed: {}",
+                    index + 1,
+                    error
+                ),
+            )
+        })?;
         let timestamp = v["timestamp"].as_str().unwrap_or("");
         let kind = v["type"].as_str().unwrap_or("");
         let message = match source {
@@ -361,11 +390,12 @@ fn export_dialogue(
                 previous = None;
                 continue;
             }
-            out.message(role, timestamp, &text)?;
+            on_message(role, timestamp, &text)?;
+            messages += 1;
             previous = Some((kind.to_string(), role.to_string(), text));
         }
     }
-    out.flush()
+    Ok(messages)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -692,6 +722,29 @@ mod tests {
             .copy_history(&dir, &destination)
             .unwrap_err()
             .contains("legacy"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_records_report_the_line_instead_of_claiming_complete_history() {
+        let (dir, data, roots) = setup();
+        let transcript = roots.claude_transcript(&data.claude_cwd, &data.session_id);
+        let bytes = include_bytes!("../../tests/fixtures/migration/truncated-claude.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, bytes).unwrap();
+        let history = export_history(&data, &dir, AgentProvider::Claude, &roots);
+        let error = history.as_ref().unwrap_err();
+        assert!(error.contains("line 3 is malformed"), "{}", error);
+        let saved = ForkContext::new(AgentProvider::Claude, "Recover the task".into(), &history);
+        let prompt = saved.prompt(AgentProvider::Codex);
+        assert!(prompt.contains("Source conversation history is unavailable"));
+        assert!(prompt.contains("line 3 is malformed"));
+        assert!(!prompt.contains("Saved source conversation:"));
+        assert_eq!(std::fs::read(&transcript).unwrap(), bytes);
+        assert!(std::fs::read_dir(dir.join(".twapp-migration"))
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry.file_type().unwrap().is_dir()));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

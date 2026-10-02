@@ -19,13 +19,13 @@ pub fn prepare_fork_session(
         return Err("Antigravity forks must be created inside the harness with /fork".to_string());
     }
     let recovery = provider == source
-        && !super::migration::has_native_history(
+        && super::migration::load_fork_context(std::path::Path::new(&directory))?.is_some()
+        && !super::migration::has_readable_native_history(
             &parent_session,
             std::path::Path::new(&directory),
             source,
             roots,
-        )
-        && super::migration::load_fork_context(std::path::Path::new(&directory))?.is_some();
+        );
     let fresh_with_context = provider != source || recovery;
     let original_cwd = directory.clone();
     let mut work_dir = original_cwd.clone();
@@ -329,6 +329,15 @@ mod tests {
 
     #[test]
     fn unwritten_receivers_fork_fresh_in_both_harnesses_and_own_their_history() {
+        verify_recovery_copies(false);
+    }
+
+    #[test]
+    fn metadata_only_receivers_keep_saved_history_when_forked_in_both_harnesses() {
+        verify_recovery_copies(true);
+    }
+
+    fn verify_recovery_copies(metadata_only: bool) {
         for source in [AgentProvider::Claude, AgentProvider::Codex] {
             let target = if source == AgentProvider::Claude {
                 AgentProvider::Codex
@@ -339,9 +348,10 @@ mod tests {
                 std::env::temp_dir().join(format!("twapp-portable-{}", uuid::Uuid::new_v4()));
             let parent = root.join("source");
             std::fs::create_dir_all(&parent).unwrap();
-            let mut data: SessionData =
-                serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json"))
-                    .unwrap();
+            let mut data: SessionData = serde_json::from_str(include_str!(
+                "../../tests/fixtures/migration/session.json"
+            ))
+            .unwrap();
             data.provider = Some(source);
             data.claude_cwd = parent.to_string_lossy().into_owned();
             if source == AgentProvider::Codex {
@@ -382,7 +392,8 @@ mod tests {
                 &roots,
             )
             .unwrap();
-            let normal_command = &normal[normal.iter().position(|s| s == "--command").unwrap() + 1];
+            let normal_command =
+                &normal[normal.iter().position(|s| s == "--command").unwrap() + 1];
             assert!(normal_command.contains(if source == AgentProvider::Claude {
                 "--fork-session"
             } else {
@@ -397,7 +408,31 @@ mod tests {
             )
             .unwrap();
             let first = destination(&first_args).to_path_buf();
-            let receiver = crate::cli::session::read_session(&first).unwrap();
+            let mut receiver = crate::cli::session::read_session(&first).unwrap();
+            if metadata_only {
+                let (path, bytes): (PathBuf, &[u8]) = if target == AgentProvider::Claude {
+                    (
+                        roots.claude_transcript(&receiver.claude_cwd, &receiver.session_id),
+                        include_bytes!(
+                            "../../tests/fixtures/migration/metadata-only-claude.jsonl"
+                        ),
+                    )
+                } else {
+                    receiver.codex_session_id = Some("codex-unwritten".into());
+                    crate::cli::session::write_session(&first, &receiver).unwrap();
+                    (
+                        root.join("sessions/rollout-codex-unwritten.jsonl"),
+                        include_bytes!(
+                            "../../tests/fixtures/migration/metadata-only-codex.jsonl"
+                        ),
+                    )
+                };
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, bytes).unwrap();
+                assert!(!super::super::migration::has_readable_native_history(
+                    &receiver, &first, target, &roots
+                ));
+            }
             let (_, second_args) = prepare_fork_session(
                 first.to_string_lossy().into_owned(),
                 None,
