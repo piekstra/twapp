@@ -10,7 +10,9 @@ use twapp_lib::cli::transcript::TranscriptRoots;
 fn verify_receiver(source: AgentProvider, target: AgentProvider) {
     let dir = std::env::temp_dir().join(format!("twapp-live-migration-{}", uuid::Uuid::new_v4()));
     let destination = dir.join("copy");
+    let intermediate = dir.join("unwritten-receiver");
     std::fs::create_dir_all(&destination).unwrap();
+    std::fs::create_dir_all(&intermediate).unwrap();
     let roots = TranscriptRoots {
         claude_projects: dir.join("projects"),
         codex_history: dir.join("history.jsonl"),
@@ -33,7 +35,10 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, history).unwrap();
     let before = serde_json::to_value(&parent).unwrap();
-    let (_, launch) = fork_into_provider(&parent, &dir, &destination, target, &roots).unwrap();
+    let (receiver, _) = fork_into_provider(&parent, &dir, &intermediate, target, &roots).unwrap();
+    let (_, launch) =
+        fork_into_provider(&receiver, &intermediate, &destination, target, &roots).unwrap();
+    std::fs::remove_dir_all(&intermediate).unwrap();
     // The live test uses each harness's noninteractive entry point; the
     // briefing itself is exactly the one built for its interactive launch.
     let prompt = if let Some(prefill) = launch.prefill {

@@ -251,7 +251,10 @@ fn migration_prompt(
         if history.is_ok() {
             return Some(build_migration_prompt(data, dir, source, target, &history));
         }
-        return Some(recovery_briefing(data, dir, dir, source, &history).prompt(target));
+        return Some(match recovery_briefing(data, dir, dir, source, &history) {
+            Ok(saved) => saved.prompt(target),
+            Err(error) => format!("Saved fork conversation history is unavailable: {}. Report this gap before continuing work that depends on earlier user decisions.", error),
+        });
     }
     if data.native_session_id(target).is_none() || fresh {
         return match super::migration::load_fork_context(dir) {
@@ -268,21 +271,28 @@ fn recovery_briefing(
     work_dir: &Path,
     source: AgentProvider,
     history: &Result<super::migration::ExportedHistory, String>,
-) -> super::migration::ForkContext {
+) -> Result<super::migration::ForkContext, String> {
     if let Err(error) = history {
         match super::migration::load_fork_context(source_dir) {
             Ok(Some(mut saved)) => {
                 saved.context.push_str(&format!("\n\nIntermediate {} conversation history is unavailable: {}. Recover from the saved source briefing above and report any intervening history you could not recover.", source, error));
-                return saved;
+                saved.copy_history(source_dir, work_dir)?;
+                return Ok(saved);
             }
-            Err(saved_error) => return super::migration::ForkContext {
-                source,
-                context: migration_body(data, work_dir, source, &Err(format!("{}; saved recovery briefing is also unavailable: {}", error, saved_error))),
-            },
-            Ok(None) => {},
+            Err(saved_error) => {
+                return Err(format!(
+                    "{}; saved recovery briefing is also unavailable: {}",
+                    error, saved_error
+                ))
+            }
+            Ok(None) => {}
         }
     }
-    super::migration::ForkContext { source, context: migration_body(data, work_dir, source, history) }
+    Ok(super::migration::ForkContext::new(
+        source,
+        migration_body(data, source_dir, work_dir, source),
+        history,
+    ))
 }
 
 pub fn build_migration_prompt(
@@ -292,14 +302,19 @@ pub fn build_migration_prompt(
     target: AgentProvider,
     history: &Result<super::migration::ExportedHistory, String>,
 ) -> String {
-    super::migration::format_prompt(source, target, &migration_body(session_data, work_dir, source, history))
+    super::migration::ForkContext::new(
+        source,
+        migration_body(session_data, work_dir, work_dir, source),
+        history,
+    )
+    .prompt(target)
 }
 
 fn migration_body(
     session_data: &SessionData,
+    source_dir: &Path,
     work_dir: &Path,
     source: AgentProvider,
-    history: &Result<super::migration::ExportedHistory, String>,
 ) -> String {
     let mut sections = Vec::new();
 
@@ -314,18 +329,11 @@ fn migration_body(
 
     sections.push(format!(
         "Source session working directory: {}",
-        session_data.native_cwd(source, work_dir)
+        session_data.native_cwd(source, source_dir)
     ));
     if let Some(id) = session_data.native_session_id(source) {
         sections.push(format!("Source {} conversation: {}", source, id));
     }
-    sections.push(match history {
-        Ok(history) => history.context(),
-        Err(error) => format!(
-            "Source conversation history is unavailable: {}. Do not assume the repository or notes capture the user's earlier decisions. Report this gap before continuing work that depends on that history.",
-            error
-        ),
-    });
 
     sections.push(
         "Before acting, inspect the repo status, existing diffs, session notes, and linked ticket so you can recover state cleanly."
@@ -345,14 +353,19 @@ pub fn fork_into_provider(
     roots: &TranscriptRoots,
 ) -> Result<(SessionData, ProviderLaunch), String> {
     let source = parent.last_provider();
-    let history = super::migration::export_history(parent, work_dir, source, roots);
-    let saved = recovery_briefing(parent, source_dir, work_dir, source, &history);
+    let history =
+        super::migration::export_history_into(parent, source_dir, work_dir, source, roots);
+    let saved = recovery_briefing(parent, source_dir, work_dir, source, &history)?;
     let prompt = saved.prompt(target);
-    super::migration::save_fork_context(work_dir, saved.source, &saved.context)?;
+    super::migration::save_fork_context(work_dir, &saved)?;
     let mut data = parent.fork_without_conversations(work_dir, target);
     let launch = build_provider_command(target, &data, work_dir, Some(&prompt));
     if let Some(id) = launch.conversation.id_to_record() {
-        data.set_provider_session(target, id.to_string(), work_dir.to_string_lossy().into_owned());
+        data.set_provider_session(
+            target,
+            id.to_string(),
+            work_dir.to_string_lossy().into_owned(),
+        );
     }
     Ok((data, launch))
 }
@@ -444,7 +457,15 @@ mod tests {
         let mut data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
         data.session_id.clear();
         data.provider = Some(AgentProvider::Codex);
-        super::super::migration::save_fork_context(&dir, AgentProvider::Claude, "saved history").unwrap();
+        super::super::migration::save_fork_context(
+            &dir,
+            &super::super::migration::ForkContext::new(
+                AgentProvider::Claude,
+                "saved history".into(),
+                &Err("not saved".into()),
+            ),
+        )
+        .unwrap();
         std::fs::write(dir.join(".twapp-migration/fork.json"), "{broken").unwrap();
         let launch = prepare_launch(&mut data, &dir, &roots);
         assert!(launch.command.contains("Saved fork conversation history is unavailable"));

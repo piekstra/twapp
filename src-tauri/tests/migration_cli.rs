@@ -101,7 +101,11 @@ fn cli_fork_and_convert_opens_a_separate_claude_session_in_the_native_window() {
         "Keep the original conversation available."
     );
     let context = std::fs::read_to_string(destination.join(".twapp-migration/fork.json")).unwrap();
-    assert!(context.contains("Saved source conversation:"));
+    let prompt = twapp_lib::cli::migration::load_fork_context(&destination)
+        .unwrap()
+        .unwrap()
+        .prompt(AgentProvider::Claude);
+    assert!(prompt.contains("Saved source conversation:"));
     assert!(!context.contains("history is unavailable"));
     let snapshot = std::fs::read_dir(destination.join(".twapp-migration"))
         .unwrap()

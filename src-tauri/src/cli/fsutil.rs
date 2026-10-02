@@ -23,21 +23,26 @@ pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<
 }
 
 /// Read an ordinary file without following a substituted symlink or blocking on a FIFO.
-pub fn read_regular_file(path: &Path) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
+pub fn open_regular_file(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     if !std::fs::symlink_metadata(path)?.file_type().is_file() {
         return Err(std::io::Error::other(
             "source must be a regular file, not a symlink",
         ));
     }
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::other("source must be a regular file"));
     }
+    Ok(file)
+}
+
+pub fn read_regular_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = open_regular_file(path)?;
     let mut content = Vec::new();
     file.read_to_end(&mut content)?;
     Ok(content)

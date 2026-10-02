@@ -18,6 +18,15 @@ pub fn prepare_fork_session(
     if provider == source && source == AgentProvider::Antigravity {
         return Err("Antigravity forks must be created inside the harness with /fork".to_string());
     }
+    let recovery = provider == source
+        && !super::migration::has_native_history(
+            &parent_session,
+            std::path::Path::new(&directory),
+            source,
+            roots,
+        )
+        && super::migration::load_fork_context(std::path::Path::new(&directory))?.is_some();
+    let fresh_with_context = provider != source || recovery;
     let original_cwd = directory.clone();
     let mut work_dir = original_cwd.clone();
     let mut window_name = std::path::Path::new(&work_dir)
@@ -52,15 +61,29 @@ pub fn prepare_fork_session(
         // directory (the parent itself, or an earlier fork for this ticket).
         let mut new_dir = parent.join(&dir_name);
         let mut n = 2;
-        while new_dir.join(".twapp-session.json").exists() {
-            new_dir = parent.join(format!("{}-fork-{}", dir_name, n));
-            n += 1;
+        loop {
+            match std::fs::create_dir(&new_dir) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    new_dir = parent.join(format!("{}-fork-{}", dir_name, n));
+                    n += 1;
+                }
+                Err(error) => return Err(format!("Failed to create directory: {}", error)),
+            }
         }
-        std::fs::create_dir_all(&new_dir)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
 
         let tf = new_dir.join(".twapp-ticket.json");
-        std::fs::write(&tf, serde_json::to_string_pretty(&ticket).unwrap())
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tf)
+            .and_then(|mut file| {
+                file.write_all(serde_json::to_string_pretty(&ticket).unwrap().as_bytes())
+            })
             .map_err(|e| format!("Failed to write ticket file: {}", e))?;
 
         work_dir = new_dir.to_string_lossy().to_string();
@@ -75,12 +98,16 @@ pub fn prepare_fork_session(
         let base = sanitize_dir_name(&window_name);
         let mut candidate = parent.join(format!("{}-fork", base));
         let mut n = 2;
-        while candidate.exists() {
-            candidate = parent.join(format!("{}-fork-{}", base, n));
-            n += 1;
+        loop {
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    candidate = parent.join(format!("{}-fork-{}", base, n));
+                    n += 1;
+                }
+                Err(error) => return Err(format!("Failed to create directory: {}", error)),
+            }
         }
-        std::fs::create_dir_all(&candidate)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
         work_dir = candidate.to_string_lossy().to_string();
         if name.is_none() {
             window_name = format!("{} fork", parent_session.name);
@@ -90,7 +117,7 @@ pub fn prepare_fork_session(
     // Pick random color
     let color = THEME_COLORS[rand::rng().random_range(0..THEME_COLORS.len())];
 
-    if provider != source {
+    if fresh_with_context {
         // The copy continues the parent's task unless a different ticket was chosen.
         let destination = std::path::Path::new(&work_dir);
         if ticket_file.is_none() {
@@ -135,7 +162,7 @@ pub fn prepare_fork_session(
 
     let created_at = chrono::Utc::now().to_rfc3339();
     let mut prefill = None;
-    let (command, session_id_for_app, mut session_data) = if provider != source {
+    let (command, session_id_for_app, mut session_data) = if fresh_with_context {
         let (mut data, launch) = crate::cli::harness::fork_into_provider(
             &parent_session,
             std::path::Path::new(&directory),
@@ -298,6 +325,192 @@ mod tests {
 
     fn destination(args: &[String]) -> &Path {
         Path::new(&args[args.iter().position(|s| s == "--cwd").unwrap() + 1])
+    }
+
+    #[test]
+    fn unwritten_receivers_fork_fresh_in_both_harnesses_and_own_their_history() {
+        for source in [AgentProvider::Claude, AgentProvider::Codex] {
+            let target = if source == AgentProvider::Claude {
+                AgentProvider::Codex
+            } else {
+                AgentProvider::Claude
+            };
+            let root =
+                std::env::temp_dir().join(format!("twapp-portable-{}", uuid::Uuid::new_v4()));
+            let parent = root.join("source");
+            std::fs::create_dir_all(&parent).unwrap();
+            let mut data: SessionData =
+                serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json"))
+                    .unwrap();
+            data.provider = Some(source);
+            data.claude_cwd = parent.to_string_lossy().into_owned();
+            if source == AgentProvider::Codex {
+                data.session_id.clear();
+                data.codex_session_id = Some("codex-456".into());
+                data.codex_cwd = Some(parent.to_string_lossy().into_owned());
+            }
+            crate::cli::session::write_session(&parent, &data).unwrap();
+            std::fs::write(
+                crate::cli::notes::path_for_name(&parent, &data.name),
+                include_bytes!("../../tests/fixtures/migration/notes.json"),
+            )
+            .unwrap();
+            let roots = TranscriptRoots {
+                claude_projects: root.join("projects"),
+                codex_history: root.join("history.jsonl"),
+            };
+            let (transcript, bytes): (PathBuf, &[u8]) = if source == AgentProvider::Claude {
+                (
+                    roots.claude_transcript(&data.claude_cwd, &data.session_id),
+                    include_bytes!("../../tests/fixtures/migration/claude.jsonl"),
+                )
+            } else {
+                (
+                    root.join("sessions/rollout-codex-456.jsonl"),
+                    include_bytes!("../../tests/fixtures/migration/codex.jsonl"),
+                )
+            };
+            std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+            std::fs::write(&transcript, bytes).unwrap();
+            let original = std::fs::read(parent.join(".twapp-session.json")).unwrap();
+            // Available native history still uses the existing native fork command.
+            let (_, normal) = prepare_fork_session(
+                parent.to_string_lossy().into_owned(),
+                None,
+                None,
+                Some(source),
+                &roots,
+            )
+            .unwrap();
+            let normal_command = &normal[normal.iter().position(|s| s == "--command").unwrap() + 1];
+            assert!(normal_command.contains(if source == AgentProvider::Claude {
+                "--fork-session"
+            } else {
+                "codex fork"
+            }));
+            let (_, first_args) = prepare_fork_session(
+                parent.to_string_lossy().into_owned(),
+                None,
+                None,
+                Some(target),
+                &roots,
+            )
+            .unwrap();
+            let first = destination(&first_args).to_path_buf();
+            let receiver = crate::cli::session::read_session(&first).unwrap();
+            let (_, second_args) = prepare_fork_session(
+                first.to_string_lossy().into_owned(),
+                None,
+                None,
+                Some(target),
+                &roots,
+            )
+            .unwrap();
+            let second = destination(&second_args).to_path_buf();
+            let child = crate::cli::session::read_session(&second).unwrap();
+            let command =
+                &second_args[second_args.iter().position(|s| s == "--command").unwrap() + 1];
+            assert!(!command.contains("--resume") && !command.contains("codex fork"));
+            if target == AgentProvider::Claude {
+                assert_ne!(receiver.session_id, child.session_id);
+            } else {
+                assert!(child.codex_session_id.is_none());
+            }
+            // A cross-harness recovery copy must own its files too.
+            let (_, third_args) = prepare_fork_session(
+                first.to_string_lossy().into_owned(),
+                None,
+                None,
+                Some(source),
+                &roots,
+            )
+            .unwrap();
+            let third = destination(&third_args).to_path_buf();
+            std::fs::remove_dir_all(&first).unwrap();
+            for copy in [&second, &third] {
+                let saved = super::super::migration::load_fork_context(copy)
+                    .unwrap()
+                    .unwrap();
+                let prompt = saved.prompt(target);
+                assert!(prompt.contains("Saved source conversation:"));
+                assert!(!prompt.contains(&format!("{}/.twapp-migration", first.display())));
+                assert_eq!(crate::cli::notes::load_for(copy).len(), 1);
+                let exports: Vec<_> = std::fs::read_dir(copy.join(".twapp-migration"))
+                    .unwrap()
+                    .flatten()
+                    .filter(|e| e.file_type().unwrap().is_dir())
+                    .collect();
+                assert_eq!(exports.len(), 1);
+                let export = exports[0].path();
+                assert_eq!(
+                    std::fs::read(export.join("transcript.jsonl")).unwrap(),
+                    bytes
+                );
+                let manifest = std::fs::read_to_string(export.join("README.md")).unwrap();
+                for reference in manifest.lines().filter_map(|line| line.strip_prefix("- ")) {
+                    assert!(
+                        Path::new(reference).starts_with(copy.canonicalize().unwrap())
+                            && Path::new(reference).is_file(),
+                        "{}",
+                        reference
+                    );
+                }
+            }
+            assert_eq!(
+                std::fs::read(parent.join(".twapp-session.json")).unwrap(),
+                original
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn ticket_forks_skip_existing_directories_and_symlinks_without_writing_them() {
+        let root =
+            std::env::temp_dir().join(format!("twapp-ticket-collision-{}", uuid::Uuid::new_v4()));
+        let parent = root.join("source");
+        std::fs::create_dir_all(&parent).unwrap();
+        let data: SessionData =
+            serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json"))
+                .unwrap();
+        crate::cli::session::write_session(&parent, &data).unwrap();
+        let original = std::fs::read(parent.join(".twapp-session.json")).unwrap();
+        let ticket: crate::cli::ticket::TicketInfo =
+            serde_json::from_str(include_str!("../../tests/fixtures/migration/ticket.json"))
+                .unwrap();
+        let name = ticket.key.replace(['/', '#'], "-");
+        let occupied = root.join(&name);
+        std::fs::create_dir(&occupied).unwrap();
+        std::os::unix::fs::symlink(
+            parent.join(".twapp-session.json"),
+            occupied.join(".twapp-ticket.json"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&parent, root.join(format!("{}-fork-2", name))).unwrap();
+        let roots = TranscriptRoots {
+            claude_projects: root.join("projects"),
+            codex_history: root.join("history.jsonl"),
+        };
+        let (_, args) = prepare_fork_session(
+            parent.to_string_lossy().into_owned(),
+            Some(ticket),
+            None,
+            Some(AgentProvider::Codex),
+            &roots,
+        )
+        .unwrap();
+        assert_eq!(destination(&args), root.join(format!("{}-fork-3", name)));
+        assert_eq!(
+            std::fs::read(parent.join(".twapp-session.json")).unwrap(),
+            original
+        );
+        assert!(
+            std::fs::symlink_metadata(occupied.join(".twapp-ticket.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
