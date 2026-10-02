@@ -39,7 +39,7 @@ try {
         },
       };
     }, { theme, width, snapshot });
-    await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1437');
+    await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1420');
     const dialog = page.locator('.fork-panel');
     const ticket = dialog.getByPlaceholder('Ticket, e.g. ABC-123');
     const name = dialog.getByPlaceholder('Name, e.g. refactor auth');

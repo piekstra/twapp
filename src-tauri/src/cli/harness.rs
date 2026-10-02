@@ -248,15 +248,41 @@ fn migration_prompt(
 ) -> Option<String> {
     if let Some(source) = data.migration_source(target) {
         let history = super::migration::export_history(data, dir, source, roots);
-        return Some(build_migration_prompt(data, dir, source, target, &history));
+        if history.is_ok() {
+            return Some(build_migration_prompt(data, dir, source, target, &history));
+        }
+        return Some(recovery_briefing(data, dir, dir, source, &history).prompt(target));
     }
     if data.native_session_id(target).is_none() || fresh {
-        return match super::migration::load_fork_context(dir, target) {
-            Ok(prompt) => prompt,
+        return match super::migration::load_fork_context(dir) {
+            Ok(briefing) => briefing.map(|saved| saved.prompt(target)),
             Err(error) => Some(format!("Saved fork conversation history is unavailable: {}. Report this gap before continuing work that depends on earlier user decisions.", error)),
         };
     }
     None
+}
+
+fn recovery_briefing(
+    data: &SessionData,
+    source_dir: &Path,
+    work_dir: &Path,
+    source: AgentProvider,
+    history: &Result<super::migration::ExportedHistory, String>,
+) -> super::migration::ForkContext {
+    if let Err(error) = history {
+        match super::migration::load_fork_context(source_dir) {
+            Ok(Some(mut saved)) => {
+                saved.context.push_str(&format!("\n\nIntermediate {} conversation history is unavailable: {}. Recover from the saved source briefing above and report any intervening history you could not recover.", source, error));
+                return saved;
+            }
+            Err(saved_error) => return super::migration::ForkContext {
+                source,
+                context: migration_body(data, work_dir, source, &Err(format!("{}; saved recovery briefing is also unavailable: {}", error, saved_error))),
+            },
+            Ok(None) => {},
+        }
+    }
+    super::migration::ForkContext { source, context: migration_body(data, work_dir, source, history) }
 }
 
 pub fn build_migration_prompt(
@@ -313,15 +339,16 @@ fn migration_body(
 /// native conversation handles to it. Switching back must never resume the parent.
 pub fn fork_into_provider(
     parent: &SessionData,
+    source_dir: &Path,
     work_dir: &Path,
     target: AgentProvider,
     roots: &TranscriptRoots,
 ) -> Result<(SessionData, ProviderLaunch), String> {
     let source = parent.last_provider();
     let history = super::migration::export_history(parent, work_dir, source, roots);
-    let body = migration_body(parent, work_dir, source, &history);
-    let prompt = super::migration::format_prompt(source, target, &body);
-    super::migration::save_fork_context(work_dir, source, &body)?;
+    let saved = recovery_briefing(parent, source_dir, work_dir, source, &history);
+    let prompt = saved.prompt(target);
+    super::migration::save_fork_context(work_dir, saved.source, &saved.context)?;
     let mut data = parent.fork_without_conversations(work_dir, target);
     let launch = build_provider_command(target, &data, work_dir, Some(&prompt));
     if let Some(id) = launch.conversation.id_to_record() {
@@ -332,8 +359,8 @@ pub fn fork_into_provider(
 
 fn load_ticket_context(work_dir: &std::path::Path) -> Option<String> {
     let ticket_path = work_dir.join(".twapp-ticket.json");
-    let content = std::fs::read_to_string(ticket_path).ok()?;
-    let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let content = super::fsutil::read_regular_file(&ticket_path).ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&content).ok()?;
     let key = value.get("key").and_then(|v| v.as_str()).unwrap_or("");
     let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("");
     let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("");
@@ -358,10 +385,10 @@ fn load_note_context(work_dir: &std::path::Path) -> Vec<String> {
             || !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+        let Ok(content) = super::fsutil::read_regular_file(&entry.path()) else {
             continue;
         };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&content) else {
             continue;
         };
         let Some(items) = value.as_array() else {
@@ -652,7 +679,7 @@ mod tests {
         // The parent's existing target conversation belongs to the parent, too.
         parent.codex_session_id = Some("old-codex".into());
         let before = serde_json::to_value(&parent).unwrap();
-        let (fork, launch) = fork_into_provider(&parent, &dir, AgentProvider::Codex, &roots).unwrap();
+        let (fork, launch) = fork_into_provider(&parent, &dir, &dir, AgentProvider::Codex, &roots).unwrap();
         assert_eq!(serde_json::to_value(&parent).unwrap(), before);
         assert_eq!(fork.session_id, "");
         assert_eq!(fork.codex_session_id, None);
@@ -671,6 +698,38 @@ mod tests {
     }
 
     #[test]
+    fn changing_harness_after_an_unwritten_claude_fork_keeps_the_saved_codex_history() {
+        let dir = work_dir();
+        let roots = roots_in(&dir);
+        let mut parent = claude_session();
+        parent.provider = Some(AgentProvider::Codex);
+        parent.codex_session_id = Some("codex-456".into());
+        let source = dir.join("sessions/2026/09/01/rollout-test-codex-456.jsonl");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(source, include_str!("../../tests/fixtures/migration/codex.jsonl")).unwrap();
+        let (mut copy, _) = fork_into_provider(&parent, &dir, &dir, AgentProvider::Claude, &roots).unwrap();
+        let second_dir = dir.join("second-fork");
+        std::fs::create_dir(&second_dir).unwrap();
+        let (_, next_launch) = fork_into_provider(&copy, &dir, &second_dir, AgentProvider::Codex, &roots).unwrap();
+        assert!(next_launch.command.contains("Saved source conversation:"));
+        assert!(next_launch.command.contains("Intermediate claude conversation history is unavailable"));
+        assert!(!next_launch.command.contains("codex resume"));
+        copy.select_provider(AgentProvider::Codex);
+        let launch = prepare_launch(&mut copy, &dir, &roots);
+        assert!(launch.command.contains("Saved source conversation:"));
+        assert!(launch.command.contains("Read this manifest"));
+        assert!(launch.command.contains("Intermediate claude conversation history is unavailable"));
+        assert!(!launch.command.contains("codex resume"));
+        let written = roots.claude_transcript(&copy.claude_cwd, &copy.session_id);
+        std::fs::create_dir_all(written.parent().unwrap()).unwrap();
+        std::fs::write(written, include_str!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
+        let current = prepare_launch(&mut copy, &dir, &roots);
+        assert!(current.command.contains("migrating from claude to codex"));
+        assert!(!current.command.contains("Intermediate claude conversation history is unavailable"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn codex_to_claude_fork_uses_a_new_claude_id_and_the_full_codex_history() {
         let dir = work_dir();
         let roots = roots_in(&dir);
@@ -680,7 +739,7 @@ mod tests {
         let source = dir.join("sessions/2026/09/01/rollout-test-codex-456.jsonl");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(&source, include_str!("../../tests/fixtures/migration/codex.jsonl")).unwrap();
-        let (fork, launch) = fork_into_provider(&parent, &dir, AgentProvider::Claude, &roots).unwrap();
+        let (fork, launch) = fork_into_provider(&parent, &dir, &dir, AgentProvider::Claude, &roots).unwrap();
         assert_ne!(fork.session_id, parent.session_id);
         assert_eq!(fork.codex_session_id, None);
         assert_eq!(fork.forked_from.as_deref(), Some("codex-456"));

@@ -2575,7 +2575,7 @@ mod resume_recovery_tests {
         let source = dir.join("sessions/rollout-codex-456.jsonl");
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::write(source, include_str!("../../tests/fixtures/migration/codex.jsonl")).unwrap();
-        let (mut fork, _) = harness::fork_into_provider(&parent, &dir, AgentProvider::Claude, &roots).unwrap();
+        let (mut fork, _) = harness::fork_into_provider(&parent, &dir, &dir, AgentProvider::Claude, &roots).unwrap();
         let id = fork.session_id.clone();
         let retry = prepare_cli_resume(&mut fork, &dir, &roots);
         assert!(retry.command.starts_with(&format!("claude --session-id {}", id)));

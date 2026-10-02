@@ -33,7 +33,7 @@ fn verify_receiver(source: AgentProvider, target: AgentProvider) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, history).unwrap();
     let before = serde_json::to_value(&parent).unwrap();
-    let (_, launch) = fork_into_provider(&parent, &destination, target, &roots).unwrap();
+    let (_, launch) = fork_into_provider(&parent, &dir, &destination, target, &roots).unwrap();
     // The live test uses each harness's noninteractive entry point; the
     // briefing itself is exactly the one built for its interactive launch.
     let prompt = if let Some(prefill) = launch.prefill {

@@ -55,8 +55,8 @@ pub fn inherit_for_fork(parent: &Path, destination: &Path, name: &str) -> Result
     if !metadata.file_type().is_file() {
         return Err("Cannot inherit notes: the source must be a regular file, not a symlink".into());
     }
-    let content = std::fs::read_to_string(source).map_err(|error| error.to_string())?;
-    let notes: Vec<Note> = serde_json::from_str(&content).map_err(|error| error.to_string())?;
+    let content = super::fsutil::read_regular_file(&source).map_err(|error| error.to_string())?;
+    let notes: Vec<Note> = serde_json::from_slice(&content).map_err(|error| error.to_string())?;
     save_notes(&path_for_name(destination, name), &notes)
 }
 

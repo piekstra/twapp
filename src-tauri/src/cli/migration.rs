@@ -47,10 +47,16 @@ fn migration_dir(dir: &Path) -> std::io::Result<PathBuf> {
     Ok(root)
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ForkContext {
-    source: AgentProvider,
-    context: String,
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ForkContext {
+    pub source: AgentProvider,
+    pub context: String,
+}
+
+impl ForkContext {
+    pub fn prompt(&self, target: AgentProvider) -> String {
+        format_prompt(self.source, target, &self.context)
+    }
 }
 
 pub fn format_prompt(source: AgentProvider, target: AgentProvider, body: &str) -> String {
@@ -71,7 +77,7 @@ pub fn save_fork_context(dir: &Path, source: AgentProvider, body: &str) -> Resul
         .map_err(|e| format!("could not save the fork's recovery briefing: {}", e))
 }
 
-pub fn load_fork_context(dir: &Path, target: AgentProvider) -> Result<Option<String>, String> {
+pub fn load_fork_context(dir: &Path) -> Result<Option<ForkContext>, String> {
     let root = dir.join(".twapp-migration");
     match std::fs::symlink_metadata(&root) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -90,10 +96,11 @@ pub fn load_fork_context(dir: &Path, target: AgentProvider) -> Result<Option<Str
     if !metadata.file_type().is_file() {
         return Err("saved recovery briefing must be a regular file".into());
     }
-    let saved: ForkContext =
-        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("could not read the saved recovery briefing: {}", e))?;
-    Ok(Some(format_prompt(saved.source, target, &saved.context)))
+    let saved: ForkContext = serde_json::from_slice(
+        &super::fsutil::read_regular_file(&path).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("could not read the saved recovery briefing: {}", e))?;
+    Ok(Some(saved))
 }
 
 fn source_transcript(
@@ -534,25 +541,24 @@ mod tests {
     #[test]
     fn saved_briefing_preserves_body_and_reports_corruption() {
         let (dir, _, _) = setup();
-        assert!(load_fork_context(&dir, AgentProvider::Claude)
-            .unwrap()
-            .is_none());
+        assert!(load_fork_context(&dir).unwrap().is_none());
         let body = "First paragraph.\n\nLater user correction.\n\nFinal status.";
         save_fork_context(&dir, AgentProvider::Codex, body).unwrap();
         assert_eq!(
-            load_fork_context(&dir, AgentProvider::Claude)
+            load_fork_context(&dir)
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .prompt(AgentProvider::Claude),
             format_prompt(AgentProvider::Codex, AgentProvider::Claude, body)
         );
         let path = dir.join(".twapp-migration/fork.json");
         std::fs::write(&path, "{broken").unwrap();
-        assert!(load_fork_context(&dir, AgentProvider::Claude)
+        assert!(load_fork_context(&dir)
             .unwrap_err()
             .contains("could not read"));
         std::fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(dir.join("missing.json"), &path).unwrap();
-        assert!(load_fork_context(&dir, AgentProvider::Claude)
+        assert!(load_fork_context(&dir)
             .unwrap_err()
             .contains("regular file"));
         std::fs::remove_dir_all(dir).unwrap();

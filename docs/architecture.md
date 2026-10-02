@@ -329,7 +329,10 @@ non-text records. Snapshot files are private to the user and ignored by git.
 Pending launch retries reuse a complete export of the same source path, provider, size and modification
 time. If the transcript changes, a new immutable export preserves the previous
 snapshot for conversations that already reference it. Corrupt saved fork briefings
-are reported as recovery gaps rather than silently discarded.
+are reported as recovery gaps rather than silently discarded. When a receiver
+has not written readable history, switching or forking the copy to another harness
+falls back to its saved source briefing and reports the unavailable intermediate
+history. A readable intermediate transcript takes precedence over that fallback.
 
 The receiving harness is instructed to read the manifest and every dialogue
 part before acting, reconcile earlier corrections and decisions with the

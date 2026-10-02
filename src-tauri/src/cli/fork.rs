@@ -95,9 +95,22 @@ pub fn prepare_fork_session(
         let destination = std::path::Path::new(&work_dir);
         if ticket_file.is_none() {
             let inherited = std::path::Path::new(&directory).join(".twapp-ticket.json");
-            if inherited.is_file() {
+            let content = match super::fsutil::read_regular_file(&inherited) {
+                Ok(content) => Some(content),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(format!("Cannot inherit ticket: {}", error)),
+            };
+            if let Some(content) = content {
+                use std::io::Write;
+                use std::os::unix::fs::OpenOptionsExt;
                 let target = destination.join(".twapp-ticket.json");
-                std::fs::copy(inherited, &target).map_err(|e| e.to_string())?;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&target)
+                    .and_then(|mut file| file.write_all(&content))
+                    .map_err(|e| e.to_string())?;
                 ticket_file = Some(target.to_string_lossy().into_owned());
             }
             ticket_key_for_session = parent_session.ticket_key.clone();
@@ -125,6 +138,7 @@ pub fn prepare_fork_session(
     let (command, session_id_for_app, mut session_data) = if provider != source {
         let (mut data, launch) = crate::cli::harness::fork_into_provider(
             &parent_session,
+            std::path::Path::new(&directory),
             std::path::Path::new(&work_dir),
             provider,
             roots,
@@ -284,6 +298,42 @@ mod tests {
 
     fn destination(args: &[String]) -> &Path {
         Path::new(&args[args.iter().position(|s| s == "--cwd").unwrap() + 1])
+    }
+
+    #[test]
+    fn a_source_ticket_symlink_cannot_copy_an_unrelated_file_into_a_fork() {
+        let root = std::env::temp_dir().join(format!("twapp-fork-ticket-{}", uuid::Uuid::new_v4()));
+        let parent = root.join("source");
+        std::fs::create_dir_all(&parent).unwrap();
+        let data: SessionData =
+            serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json"))
+                .unwrap();
+        crate::cli::session::write_session(&parent, &data).unwrap();
+        let unrelated = root.join("unrelated.json");
+        let bytes = include_bytes!("../../tests/fixtures/migration/ticket.json");
+        std::fs::write(&unrelated, bytes).unwrap();
+        std::os::unix::fs::symlink(&unrelated, parent.join(".twapp-ticket.json")).unwrap();
+        let roots = TranscriptRoots {
+            claude_projects: root.join("projects"),
+            codex_history: root.join("history.jsonl"),
+        };
+        let error = prepare_fork_session(
+            parent.to_string_lossy().into_owned(),
+            None,
+            None,
+            Some(AgentProvider::Codex),
+            &roots,
+        )
+        .unwrap_err();
+        assert!(error.contains("Cannot inherit ticket") && error.contains("symlink"));
+        assert_eq!(std::fs::read(unrelated).unwrap(), bytes);
+        for entry in std::fs::read_dir(&root).unwrap().flatten() {
+            if entry.path() != parent && entry.file_type().unwrap().is_dir() {
+                assert!(!entry.path().join(".twapp-ticket.json").exists());
+                assert!(!entry.path().join(".twapp-session.json").exists());
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
