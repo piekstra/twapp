@@ -78,7 +78,7 @@ fn load_notes(path: &Path) -> Vec<Note> {
 fn save_notes(path: &Path, notes: &[Note]) -> Result<(), String> {
     let json =
         serde_json::to_string_pretty(notes).map_err(|e| format!("Failed to serialize: {}", e))?;
-    super::fsutil::write_atomic(path, json).map_err(|e| format!("Failed to write: {}", e))
+    super::fsutil::write_atomic_private(path, json).map_err(|e| format!("Failed to write: {}", e))
 }
 
 pub fn cmd_note_add(text: &str, dir: Option<&str>) -> i32 {
@@ -213,6 +213,13 @@ mod fork_tests {
             assert_eq!(load_for(&destination)[0].text, "Keep the original available");
             let gui_notes = crate::gui::notes::load_notes(destination.to_string_lossy().into_owned()).unwrap();
             assert_eq!(gui_notes[0]["text"], "Keep the original available");
+            use std::os::unix::fs::PermissionsExt;
+            let notes_path = path_for_name(&destination, name);
+            assert_eq!(std::fs::metadata(&notes_path).unwrap().permissions().mode() & 0o777, 0o600);
+            crate::gui::notes::save_notes(destination.to_string_lossy().into_owned(), gui_notes).unwrap();
+            assert_eq!(std::fs::metadata(&notes_path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(cmd_note_add("Continue the copy", Some(destination.to_str().unwrap())), 0);
+            assert_eq!(std::fs::metadata(&notes_path).unwrap().permissions().mode() & 0o777, 0o600);
             assert!(!destination.join(".twapp-notes-unrelated.json").exists());
         }
         assert_eq!(load_for(&parent).len(), 1);
