@@ -83,7 +83,7 @@ pub fn prepare_launch(
     session_data.provider = Some(provider);
     let fresh = provider == AgentProvider::Claude && !locate_claude_conversation(session_data, work_dir, roots);
 
-    let migration_prompt = migration_prompt(session_data, work_dir, provider, roots);
+    let migration_prompt = migration_prompt(session_data, work_dir, provider, roots, fresh);
     let launch = if fresh {
         start_claude_conversation(session_data, work_dir, migration_prompt.as_deref())
     } else {
@@ -239,21 +239,24 @@ pub fn build_provider_command(
     }
 }
 
-pub fn migration_prompt(
+fn migration_prompt(
     data: &SessionData,
     dir: &Path,
     target: AgentProvider,
     roots: &TranscriptRoots,
+    fresh: bool,
 ) -> Option<String> {
-    data.migration_source(target).map(|source| build_migration_prompt(data, dir, source, target, roots))
-        .or_else(|| {
-            let missing = data.native_session_id(target).is_none() ||
-                (target == AgentProvider::Claude && data.native_session_id(target).is_some_and(|id| {
-                    !roots.claude_transcript(&data.native_cwd(target, dir), id).is_file() &&
-                    roots.find_claude_transcript(id).is_none()
-                }));
-            missing.then(|| super::migration::load_fork_context(dir, target)).flatten()
-        })
+    if let Some(source) = data.migration_source(target) {
+        let history = super::migration::export_history(data, dir, source, roots);
+        return Some(build_migration_prompt(data, dir, source, target, &history));
+    }
+    if data.native_session_id(target).is_none() || fresh {
+        return match super::migration::load_fork_context(dir, target) {
+            Ok(prompt) => prompt,
+            Err(error) => Some(format!("Saved fork conversation history is unavailable: {}. Report this gap before continuing work that depends on earlier user decisions.", error)),
+        };
+    }
+    None
 }
 
 pub fn build_migration_prompt(
@@ -261,12 +264,18 @@ pub fn build_migration_prompt(
     work_dir: &std::path::Path,
     source: AgentProvider,
     target: AgentProvider,
-    roots: &TranscriptRoots,
+    history: &Result<super::migration::ExportedHistory, String>,
 ) -> String {
-    let mut sections = vec![format!(
-        "This twapp session is migrating from {} to {}. Continue the same task from the current repository state.",
-        source, target
-    )];
+    super::migration::format_prompt(source, target, &migration_body(session_data, work_dir, source, history))
+}
+
+fn migration_body(
+    session_data: &SessionData,
+    work_dir: &Path,
+    source: AgentProvider,
+    history: &Result<super::migration::ExportedHistory, String>,
+) -> String {
+    let mut sections = Vec::new();
 
     if let Some(ticket) = load_ticket_context(work_dir) {
         sections.push(ticket);
@@ -284,8 +293,8 @@ pub fn build_migration_prompt(
     if let Some(id) = session_data.native_session_id(source) {
         sections.push(format!("Source {} conversation: {}", source, id));
     }
-    sections.push(match super::migration::conversation_context(session_data, work_dir, source, roots) {
-        Ok(context) => context,
+    sections.push(match history {
+        Ok(history) => history.context(),
         Err(error) => format!(
             "Source conversation history is unavailable: {}. Do not assume the repository or notes capture the user's earlier decisions. Report this gap before continuing work that depends on that history.",
             error
@@ -309,22 +318,11 @@ pub fn fork_into_provider(
     roots: &TranscriptRoots,
 ) -> Result<(SessionData, ProviderLaunch), String> {
     let source = parent.last_provider();
-    let prompt = build_migration_prompt(parent, work_dir, source, target, roots);
-    super::migration::save_fork_context(work_dir, source, &prompt)?;
-    let mut data = parent.clone();
-    data.session_id.clear();
-    data.codex_session_id = None;
-    data.antigravity_session_id = None;
-    data.claude_cwd = work_dir.to_string_lossy().into_owned();
-    data.codex_cwd = None;
-    data.antigravity_cwd = None;
-    data.provider = Some(target);
-    data.migration_source_provider = None;
-    data.forked_from = parent.native_session_id(source).map(str::to_string);
-    data.imported = None;
-    data.imported_from = None;
-    data.last_resumed = None;
-    data.created = chrono::Utc::now().to_rfc3339();
+    let history = super::migration::export_history(parent, work_dir, source, roots);
+    let body = migration_body(parent, work_dir, source, &history);
+    let prompt = super::migration::format_prompt(source, target, &body);
+    super::migration::save_fork_context(work_dir, source, &body)?;
+    let mut data = parent.fork_without_conversations(work_dir, target);
     let launch = build_provider_command(target, &data, work_dir, Some(&prompt));
     if let Some(id) = launch.conversation.id_to_record() {
         data.set_provider_session(target, id.to_string(), work_dir.to_string_lossy().into_owned());
@@ -410,6 +408,21 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("twapp-migration-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn retry_reports_a_corrupt_saved_fork_briefing_instead_of_silently_dropping_it() {
+        let dir = work_dir();
+        let roots = roots_in(&dir);
+        let mut data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        data.session_id.clear();
+        data.provider = Some(AgentProvider::Codex);
+        super::super::migration::save_fork_context(&dir, AgentProvider::Claude, "saved history").unwrap();
+        std::fs::write(dir.join(".twapp-migration/fork.json"), "{broken").unwrap();
+        let launch = prepare_launch(&mut data, &dir, &roots);
+        assert!(launch.command.contains("Saved fork conversation history is unavailable"));
+        assert!(launch.command.contains("Report this gap"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -590,7 +603,7 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
-            &roots_in(&dir),
+            &Err("no saved antigravity transcript could be found".into()),
         );
 
         assert!(prompt.contains("migrating from antigravity to claude"), "{}", prompt);
@@ -619,7 +632,7 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
-            &roots_in(&dir),
+            &Err("no saved antigravity transcript could be found".into()),
         );
 
         assert!(prompt.contains("Ticket: ABC-1 Wire the thing [In Progress]"), "{}", prompt);
@@ -691,7 +704,7 @@ mod tests {
             &dir,
             AgentProvider::Antigravity,
             AgentProvider::Claude,
-            &roots_in(&dir),
+            &Err("no saved antigravity transcript could be found".into()),
         );
 
         assert!(!prompt.contains("Ticket:"), "{}", prompt);

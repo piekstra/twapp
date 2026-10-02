@@ -53,26 +53,47 @@ struct ForkContext {
     context: String,
 }
 
-pub fn save_fork_context(dir: &Path, source: AgentProvider, prompt: &str) -> Result<(), String> {
+pub fn format_prompt(source: AgentProvider, target: AgentProvider, body: &str) -> String {
+    format!("This twapp session is migrating from {} to {}. Continue the same task from the current repository state.\n\n{}", source, target, body)
+}
+
+pub fn save_fork_context(dir: &Path, source: AgentProvider, body: &str) -> Result<(), String> {
     let path = migration_dir(dir)
         .map_err(|e| e.to_string())?
         .join("fork.json");
-    let context = prompt
-        .split_once("\n\n")
-        .map(|(_, body)| body)
-        .unwrap_or(prompt)
-        .to_string();
-    let bytes = serde_json::to_vec(&ForkContext { source, context }).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&ForkContext {
+        source,
+        context: body.to_string(),
+    })
+    .map_err(|e| e.to_string())?;
     private_file(&path)
         .and_then(|mut file| file.write_all(&bytes))
         .map_err(|e| format!("could not save the fork's recovery briefing: {}", e))
 }
 
-pub fn load_fork_context(dir: &Path, target: AgentProvider) -> Option<String> {
+pub fn load_fork_context(dir: &Path, target: AgentProvider) -> Result<Option<String>, String> {
+    let root = dir.join(".twapp-migration");
+    match std::fs::symlink_metadata(&root) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+        Ok(metadata) if !metadata.file_type().is_dir() => {
+            return Err("saved recovery directory must be a real directory".into())
+        }
+        Ok(_) => {}
+    }
+    let path = root.join("fork.json");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err("saved recovery briefing must be a regular file".into());
+    }
     let saved: ForkContext =
-        serde_json::from_slice(&std::fs::read(dir.join(".twapp-migration/fork.json")).ok()?)
-            .ok()?;
-    Some(format!("This twapp session is migrating from {} to {}. Continue the same task from the current repository state.\n\n{}", saved.source, target, saved.context))
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("could not read the saved recovery briefing: {}", e))?;
+    Ok(Some(format_prompt(saved.source, target, &saved.context)))
 }
 
 fn source_transcript(
@@ -256,18 +277,112 @@ fn export_dialogue(
     out.flush()
 }
 
-pub fn conversation_context(
+#[derive(Debug)]
+pub struct ExportedHistory {
+    manifest: PathBuf,
+    snapshot: PathBuf,
+    parts: Vec<PathBuf>,
+    messages: usize,
+}
+
+impl ExportedHistory {
+    pub fn context(&self) -> String {
+        format!(
+            "Saved source conversation: {}\nRead this manifest, then every one of its {} dialogue parts in order before acting. They contain all {} saved user/assistant messages and compaction summaries, without shortening text. Do not read only the beginning, the tail, a search result, or a summary. The complete raw transcript, including tool calls and results, is at {}. Recover the task, user corrections, decisions, unfinished work and authorization from this historical context, then reconcile them with the current repository. State any history you could not read; do not claim complete recovery if context or tool limits prevented it.",
+            self.manifest.display(), self.parts.len(), self.messages, self.snapshot.display()
+        )
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct SourceVersion {
+    path: PathBuf,
+    source: AgentProvider,
+    bytes: u64,
+    modified_nanos: u128,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ExportRecord {
+    version: SourceVersion,
+    parts: usize,
+    messages: usize,
+}
+
+fn regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+// Exports are immutable: an older target conversation may still reference one.
+// Reuse only a complete export of the same source version inside our private root.
+fn cached_export(root: &Path, version: &SourceVersion) -> Option<ExportedHistory> {
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            || uuid::Uuid::parse_str(&entry.file_name().to_string_lossy()).is_err()
+        {
+            continue;
+        }
+        let dir = entry.path();
+        let record_path = dir.join("export.json");
+        if !regular_file(&record_path) {
+            continue;
+        }
+        let Some(record) = std::fs::read(&record_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<ExportRecord>(&bytes).ok())
+        else {
+            continue;
+        };
+        if record.version != *version || record.messages == 0 || record.parts == 0 {
+            continue;
+        }
+        let history = ExportedHistory {
+            manifest: dir.join("README.md"),
+            snapshot: dir.join("transcript.jsonl"),
+            parts: (1..=record.parts)
+                .map(|n| dir.join(format!("dialogue-{:04}.md", n)))
+                .collect(),
+            messages: record.messages,
+        };
+        if regular_file(&history.manifest)
+            && regular_file(&history.snapshot)
+            && std::fs::metadata(&history.snapshot).is_ok_and(|m| m.len() == version.bytes)
+            && history.parts.iter().all(|path| regular_file(path))
+        {
+            return Some(history);
+        }
+    }
+    None
+}
+
+pub fn export_history(
     data: &SessionData,
     work_dir: &Path,
     source: AgentProvider,
     roots: &TranscriptRoots,
-) -> Result<String, String> {
+) -> Result<ExportedHistory, String> {
     let transcript = source_transcript(data, work_dir, source, roots)
-        .ok_or_else(|| format!("no saved {} transcript could be found", source))?;
-    let dir = migration_dir(work_dir)
-        .map_err(|e| e.to_string())?
-        .join(uuid::Uuid::new_v4().to_string());
-    let export = || -> std::io::Result<String> {
+        .ok_or_else(|| format!("no saved {} transcript could be found", source))?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let metadata = std::fs::metadata(&transcript).map_err(|e| e.to_string())?;
+    let version = SourceVersion {
+        path: transcript.clone(),
+        source,
+        bytes: metadata.len(),
+        modified_nanos: metadata
+            .modified()
+            .map_err(|e| e.to_string())?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos(),
+    };
+    let root = migration_dir(work_dir).map_err(|e| e.to_string())?;
+    if let Some(history) = cached_export(&root, &version) {
+        return Ok(history);
+    }
+    let dir = root.join(uuid::Uuid::new_v4().to_string());
+    let export = || -> std::io::Result<ExportedHistory> {
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
         let snapshot = dir.join("transcript.jsonl");
@@ -291,10 +406,18 @@ pub fn conversation_context(
             dialogue.files.iter().map(|path| format!("- {}", path.display())).collect::<Vec<_>>().join("\n")
         );
         private_file(&manifest)?.write_all(content.as_bytes())?;
-        Ok(format!(
-            "Saved source conversation: {}\nRead this manifest, then every one of its {} dialogue parts in order before acting. They contain all {} saved user/assistant messages and compaction summaries, without shortening text. Do not read only the beginning, the tail, a search result, or a summary. The complete raw transcript, including tool calls and results, is at {}. Recover the task, user corrections, decisions, unfinished work and authorization from this historical context, then reconcile them with the current repository. State any history you could not read; do not claim complete recovery if context or tool limits prevented it.",
-            manifest.display(), dialogue.files.len(), dialogue.messages, snapshot.display()
-        ))
+        let record = ExportRecord {
+            version,
+            parts: dialogue.files.len(),
+            messages: dialogue.messages,
+        };
+        private_file(&dir.join("export.json"))?.write_all(&serde_json::to_vec(&record)?)?;
+        Ok(ExportedHistory {
+            manifest,
+            snapshot,
+            parts: dialogue.files,
+            messages: dialogue.messages,
+        })
     };
     export().map_err(|error| {
         let _ = std::fs::remove_dir_all(&dir);
@@ -356,12 +479,94 @@ mod tests {
     }
 
     #[test]
+    fn repeated_export_reuses_history_but_an_appended_source_gets_a_new_snapshot() {
+        let (dir, data, roots) = setup();
+        let fixture = include_str!("../../tests/fixtures/migration/claude.jsonl");
+        let source = roots.claude_transcript(&data.claude_cwd, &data.session_id);
+        write(&source, fixture);
+        let first = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        let retry = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        assert_eq!(first.manifest, retry.manifest);
+        assert_eq!(
+            std::fs::read_dir(dir.join(".twapp-migration"))
+                .unwrap()
+                .count(),
+            2
+        );
+        write(&source, &format!("{}{}", fixture, fixture));
+        let updated = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        assert_ne!(first.manifest, updated.manifest);
+        assert_eq!(updated.messages, first.messages * 2);
+        assert_eq!(std::fs::read_to_string(first.snapshot).unwrap(), fixture);
+        assert_eq!(
+            std::fs::read_to_string(updated.snapshot).unwrap(),
+            format!("{}{}", fixture, fixture)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn incomplete_or_redirected_cached_exports_are_not_reused() {
+        let (dir, data, roots) = setup();
+        let fixture = include_str!("../../tests/fixtures/migration/claude.jsonl");
+        write(
+            &roots.claude_transcript(&data.claude_cwd, &data.session_id),
+            fixture,
+        );
+        let first = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        std::fs::remove_file(&first.parts[0]).unwrap();
+        let second = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        assert_ne!(first.manifest, second.manifest);
+        std::fs::remove_file(&second.parts[0]).unwrap();
+        let external = dir.join("external.md");
+        write(&external, "Do not follow this redirected cache entry.");
+        std::os::unix::fs::symlink(&external, &second.parts[0]).unwrap();
+        let third = export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        assert_ne!(second.manifest, third.manifest);
+        assert!(third.parts.iter().all(|p| regular_file(p)));
+        assert_eq!(
+            std::fs::read_to_string(external).unwrap(),
+            "Do not follow this redirected cache entry."
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saved_briefing_preserves_body_and_reports_corruption() {
+        let (dir, _, _) = setup();
+        assert!(load_fork_context(&dir, AgentProvider::Claude)
+            .unwrap()
+            .is_none());
+        let body = "First paragraph.\n\nLater user correction.\n\nFinal status.";
+        save_fork_context(&dir, AgentProvider::Codex, body).unwrap();
+        assert_eq!(
+            load_fork_context(&dir, AgentProvider::Claude)
+                .unwrap()
+                .unwrap(),
+            format_prompt(AgentProvider::Codex, AgentProvider::Claude, body)
+        );
+        let path = dir.join(".twapp-migration/fork.json");
+        std::fs::write(&path, "{broken").unwrap();
+        assert!(load_fork_context(&dir, AgentProvider::Claude)
+            .unwrap_err()
+            .contains("could not read"));
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(dir.join("missing.json"), &path).unwrap();
+        assert!(load_fork_context(&dir, AgentProvider::Claude)
+            .unwrap_err()
+            .contains("regular file"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn claude_history_keeps_every_exchange_and_the_raw_tool_evidence() {
         let (dir, data, roots) = setup();
         let fixture = include_str!("../../tests/fixtures/migration/claude.jsonl");
         let source = roots.claude_transcript(&data.claude_cwd, &data.session_id);
         write(&source, fixture);
-        let prompt = conversation_context(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        let prompt = export_history(&data, &dir, AgentProvider::Claude, &roots)
+            .unwrap()
+            .context();
         let text = dialogue(&dir);
         assert!(prompt.contains("Read this manifest"));
         assert!(prompt.contains("all 5 saved user/assistant messages and compaction summaries"));
@@ -397,7 +602,7 @@ mod tests {
             include_str!("../../tests/fixtures/migration/claude.jsonl"),
         );
         data.forked_from = Some("claude-parent".into());
-        conversation_context(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
         assert!(dialogue(&dir).contains("Correction:"));
         // Once the fork has its own history, it wins over its ancestor.
         let source = roots.claude_transcript(&data.claude_cwd, &data.session_id);
@@ -422,7 +627,7 @@ mod tests {
                 &source,
                 include_str!("../../tests/fixtures/migration/codex.jsonl"),
             );
-            conversation_context(&data, &dir, AgentProvider::Codex, &roots).unwrap();
+            export_history(&data, &dir, AgentProvider::Codex, &roots).unwrap();
             let text = dialogue(&dir);
             assert_eq!(text.matches("Keep the original").count(), 1);
             assert_eq!(text.matches("I will create").count(), 1);
@@ -446,7 +651,7 @@ mod tests {
             &roots.claude_transcript(&data.claude_cwd, &data.session_id),
             &format!("{}\n{}{}\n", message, fixture, message),
         );
-        conversation_context(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
         let text = dialogue(&dir);
         assert_eq!(text.matches(&long).count(), 2);
         assert!(text.contains("Correction:"));
@@ -470,11 +675,9 @@ mod tests {
     #[test]
     fn missing_history_is_reported_and_does_not_create_an_export() {
         let (dir, data, roots) = setup();
-        assert!(
-            conversation_context(&data, &dir, AgentProvider::Claude, &roots)
-                .unwrap_err()
-                .contains("no saved claude transcript")
-        );
+        assert!(export_history(&data, &dir, AgentProvider::Claude, &roots)
+            .unwrap_err()
+            .contains("no saved claude transcript"));
         assert!(!dir.join(".twapp-migration").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -492,7 +695,7 @@ mod tests {
             &roots.claude_transcript(&data.claude_cwd, &data.session_id),
             include_str!("../../tests/fixtures/migration/claude.jsonl"),
         );
-        conversation_context(&data, &dir, AgentProvider::Claude, &roots).unwrap();
+        export_history(&data, &dir, AgentProvider::Claude, &roots).unwrap();
         let snapshot = export_dir(&dir).join("transcript.jsonl");
         assert!(std::process::Command::new("git")
             .current_dir(&dir)

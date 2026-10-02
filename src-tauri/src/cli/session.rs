@@ -96,6 +96,30 @@ pub struct SessionData {
 }
 
 impl SessionData {
+    /// A cross-harness fork inherits preferences, but owns new conversation handles.
+    pub fn fork_without_conversations(&self, work_dir: &Path, target: AgentProvider) -> Self {
+        Self {
+            session_id: String::new(),
+            name: self.name.clone(),
+            color: self.color.clone(),
+            ticket_key: self.ticket_key.clone(),
+            claude_cwd: work_dir.to_string_lossy().into_owned(),
+            created: chrono::Utc::now().to_rfc3339(),
+            last_resumed: None,
+            provider: Some(target),
+            codex_session_id: None,
+            codex_cwd: None,
+            antigravity_session_id: None,
+            antigravity_cwd: None,
+            migration_source_provider: None,
+            forked_from: self.native_session_id(self.last_provider()).map(str::to_string),
+            imported: None,
+            imported_from: None,
+            use_chrome: self.use_chrome,
+            override_terminal_theme: self.override_terminal_theme,
+        }
+    }
+
     pub fn last_provider(&self) -> AgentProvider {
         self.provider.unwrap_or_else(|| {
             if self.session_id.is_empty() && self.codex_session_id.is_some() {

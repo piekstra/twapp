@@ -319,13 +319,17 @@ day has no prompts or replies from it.
 ## Harness migration
 
 `cli::harness::build_migration_prompt` is shared by the launcher, restarts and
-CLI resume. It asks `cli::migration` to locate the source conversation, copy
-the entire saved JSONL transcript into the destination's `.twapp-migration/`
-directory, and export every saved user/assistant text message and compaction
+CLI resume and formats an explicitly prepared export. `cli::migration::export_history`
+locates the source conversation, copies the entire saved JSONL transcript into the destination's `.twapp-migration/`
+directory, and exports every saved user/assistant text message and compaction
 summary in transcript order. Dialogue parts are at most 24 KiB, splitting
 long messages at UTF-8 boundaries without shortening their text. A manifest
 lists every part and the raw snapshot that retains tool calls, results and
 non-text records. Snapshot files are private to the user and ignored by git.
+Pending launch retries reuse a complete export of the same source path, provider, size and modification
+time. If the transcript changes, a new immutable export preserves the previous
+snapshot for conversations that already reference it. Corrupt saved fork briefings
+are reported as recovery gaps rather than silently discarded.
 
 The receiving harness is instructed to read the manifest and every dialogue
 part before acting, reconcile earlier corrections and decisions with the
@@ -348,7 +352,9 @@ conversation handles from its parent, so switching the copy's harness later
 cannot resume the parent's conversation. No source-harness request is needed,
 so usage exhaustion does not prevent a copy from being made.
 
-Fork preparation is shared by CLI and GUI callers. The GUI opens the prepared
+Synchronous `cli::fork::prepare_fork_session` is shared by CLI and GUI callers
+and accepts transcript roots and an optional resolved ticket. The GUI resolves
+a requested ticket before preparation. The GUI opens the prepared
 arguments in its in-process hub; the CLI sends them to the native window over
 `hub.sock`, since a CLI process has no in-process GUI hub.
 
@@ -365,6 +371,22 @@ The CLI check requires an installed, running native twapp window. It opens a
 separate Claude fork, verifies its terminal, inherited notes and ticket, and
 unchanged source metadata and transcript, then closes only that test session.
 It does not click the GUI Fork dialog or verify interactive approval prompts.
+
+The fork dialog can also be checked headlessly with a mocked Tauri boundary:
+
+```sh
+# With Playwright available in node's module search path:
+npm run dev -- --host 127.0.0.1
+node scripts/verify-fork-dialog.mjs
+```
+
+`TWAPP_URL` overrides the Vite URL; `PLAYWRIGHT_MODULE` accepts an installed
+Playwright module path. The check covers both themes and three sidebar widths,
+conversion arguments, cancellation through each close control, reopening after
+switching source sessions, and clean inputs after success. It writes screenshots
+and results to `TWAPP_ARTIFACT_DIR` or a temporary directory. This checks rendered
+UI behavior; it does not drive the native window's Fork button.
+
 
 ## Archive
 
