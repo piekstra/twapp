@@ -72,6 +72,12 @@ npm test
 cd src-tauri && cargo test && cargo clippy --all-targets
 ```
 
+### Icon packaging
+
+After regenerating icons, run `python3 scripts/order-icon.py`. Keep the largest
+PNG representation first in `src-tauri/icons/icon.icns`: some consumers take the
+first available image. Preserve all smaller representations for macOS.
+
 ### Versioning
 
 CI derives the version from `version.txt` (major.minor) plus the run number, injects it into the build files without committing, builds, tags, and creates a GitHub release. Bump minor or major by editing `version.txt`.
