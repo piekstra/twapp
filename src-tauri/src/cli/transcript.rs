@@ -54,28 +54,6 @@ impl TranscriptRoots {
     }
 }
 
-#[cfg(test)]
-mod location_tests {
-    use super::*;
-
-    #[test]
-    fn history_lookup_prefers_the_configured_project_then_falls_back_by_id() {
-        let root = std::env::temp_dir().join(format!("twapp-cwd-lookup-{}", uuid::Uuid::new_v4()));
-        let roots = TranscriptRoots { claude_projects: root.join("projects"), codex_history: root.join("history.jsonl") };
-        let old = roots.claude_transcript("/work/old", "claude-123");
-        let edited = roots.claude_transcript("/work/edited", "claude-123");
-        for path in [&old, &edited] {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, include_bytes!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
-        }
-        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(edited.clone()));
-        std::fs::remove_file(&edited).unwrap();
-        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(old));
-        assert_eq!(roots.resolve_claude_transcript("/work/edited", "absent"), None);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
 pub fn extract_jsonl_metadata(
     path: &std::path::Path,
 ) -> (
@@ -214,4 +192,26 @@ pub fn extract_jsonl_metadata(
         git_branch,
         message_count,
     )
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn history_lookup_prefers_the_configured_project_then_falls_back_by_id() {
+        let root = std::env::temp_dir().join(format!("twapp-cwd-lookup-{}", uuid::Uuid::new_v4()));
+        let roots = TranscriptRoots { claude_projects: root.join("projects"), codex_history: root.join("history.jsonl") };
+        let old = roots.claude_transcript("/work/old", "claude-123");
+        let edited = roots.claude_transcript("/work/edited", "claude-123");
+        for path in [&old, &edited] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, include_bytes!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
+        }
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(edited.clone()));
+        std::fs::remove_file(&edited).unwrap();
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(old));
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "absent"), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
