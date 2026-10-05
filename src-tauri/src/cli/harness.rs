@@ -124,29 +124,20 @@ pub fn prepare_launch(
     launch
 }
 
-/// Whether the session's Claude conversation can be resumed, pointing the
-/// session at the directory its transcript is under when that moved.
+/// Whether the session's Claude conversation can be resumed.
 ///
-/// `claude --resume` only finds a conversation from the directory it ran in,
-/// and Claude deletes transcripts after its cleanup period; a conversation
+/// Claude finds a conversation by ID across projects. Its transcript location
+/// must not override the configured resume cwd. Claude deletes transcripts
+/// after its cleanup period; a conversation
 /// minted but never sent a message has no transcript yet. `false` means there
 /// is nothing to resume. A session with no conversation id at all counts as
 /// resumable here; the regular launch mints one.
-fn locate_claude_conversation(session_data: &mut SessionData, work_dir: &Path, roots: &TranscriptRoots) -> bool {
+fn locate_claude_conversation(session_data: &SessionData, work_dir: &Path, roots: &TranscriptRoots) -> bool {
     let Some(id) = session_data.native_session_id(AgentProvider::Claude).map(str::to_string) else {
         return true;
     };
     let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
-    if roots.claude_transcript(&cwd, &id).is_file() {
-        return true;
-    }
-    match roots.find_claude_cwd(&id) {
-        Some(found) => {
-            session_data.claude_cwd = found;
-            true
-        }
-        None => false,
-    }
+    roots.resolve_claude_transcript(&cwd, &id).is_some()
 }
 
 /// A new Claude conversation under the session's recorded id, in the session
@@ -187,8 +178,7 @@ pub fn build_provider_command(
     match provider {
         AgentProvider::Claude => {
             if let Some(current_id) = session_data.native_session_id(AgentProvider::Claude) {
-                // Claude scopes a conversation to the directory it started in,
-                // so a session created elsewhere has to be resumed from there.
+                // Resume from the configured cwd; Claude finds history by ID.
                 let cwd = session_data.native_cwd(AgentProvider::Claude, work_dir);
                 let cd_prefix = if cwd != work_dir_str {
                     format!("cd '{}' && ", shell_escape_single(&cwd))
