@@ -85,6 +85,7 @@ CI derives the version from `version.txt` (major.minor) plus the run number, inj
 ## Key Patterns
 
 - **Session identity**: the canonical session directory path is the key everywhere (`hub::session_key`). Commands take `directory`; nothing reads a per-process session.
+- **Session names**: preserve spaces in display names. Sanitize filesystem directory and notes filenames separately; never write a directory slug back as the user-entered name.
 - **Opening sessions**: every path (CLI, new session, fork, resume, palette) builds GUI launch arguments and calls `Hub::open_argv`. Arguments with a command start the PTY at once; restored sessions start when selected.
 - **Terminal output**: ptyd output reaches the frontend through one Tauri `Channel` per tab as raw bytes; the backend also feeds the main tab's bytes to the status tracker. A terminal that attaches to a running PTY gets a replay, then a one-column resize so the harness redraws.
 - **Status and summaries**: `Hub::poll_once` runs every two seconds. Transitions into `your_turn`, `needs_approval` or `errored` request a summary; the summarizer debounces and caches.
