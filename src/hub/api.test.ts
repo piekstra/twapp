@@ -82,15 +82,16 @@ describe("fuzzyScore", () => {
 });
 
 describe("lanes", () => {
-  it("orders sessions priority, background, blocked, keeping the order within each", () => {
+  it("orders sessions priority, background, blocked, parked, keeping the order within each", () => {
     const list = [
       session({ key: "b1", lane: "blocked" }),
+      session({ key: "r1", lane: "parked" }),
       session({ key: "g1" }),
       session({ key: "p1", lane: "priority" }),
       session({ key: "g2" }),
       session({ key: "p2", lane: "priority" }),
     ];
-    expect(byLane(list).map((s) => s.key)).toEqual(["p1", "p2", "g1", "g2", "b1"]);
+    expect(byLane(list).map((s) => s.key)).toEqual(["p1", "p2", "g1", "g2", "b1", "r1"]);
   });
 
   it("shows how long a session has been blocked and when it was last checked", () => {

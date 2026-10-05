@@ -642,6 +642,7 @@ export default function Hub() {
   const withLane = (s: SessionView, lane: Lane): SessionView => {
     if ((s.lane ?? "background") === lane) return s;
     const at = new Date().toISOString();
+    if (lane === "parked") return { ...s, lane, blocked_since: null, checked_at: null, attention: false };
     return lane === "blocked"
       ? { ...s, lane, blocked_since: at, checked_at: at, attention: s.attention && s.status.state === "needs_approval" }
       : { ...s, lane, blocked_since: null, checked_at: null };

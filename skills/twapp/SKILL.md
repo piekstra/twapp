@@ -68,7 +68,7 @@ Keep them current:
 
 ## The window's view
 
-`twapp status` lists the window's sessions by lane (priority, background, blocked) with state and summary; `--json` for the full record. The lanes are the user's: change one with `twapp lane <lane>` only when the user asks.
+`twapp status` lists the window's sessions by lane (priority, background, blocked, parked) with state and summary; `--json` for the full record. Parked keeps sessions available outside the current work queue without stopping their terminals. The lanes are the user's: change one with `twapp lane <lane>` only when the user asks.
 
 ## The work journal
 

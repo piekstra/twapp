@@ -154,7 +154,7 @@ The dock icon shows how many sessions need you and bounces once when a session s
 | `⌘,` | Settings |
 | `⌘=` / `⌘-` / `⌘⇧0` | Zoom in, out, reset |
 
-The session list has three lanes: **Priority**, **Background** and **Blocked**. Drag a row within a lane to reorder it or onto another lane to move it; right-click a row, or use the lane control under the session's name, to move it without dragging. Your order is kept between launches. A new session opened with a command starts in Priority; a restored or adopted one starts in Background.
+The session list has four lanes: **Priority** for current focus, **Background** for next work, **Blocked** for work waiting on another party, and **Parked** for sessions kept for later. Drag a row within a lane to reorder it or onto another lane to move it; right-click a row, or use the lane control under the session's name, to move it without dragging. Your order is kept between launches. A new session opened with a command starts in Priority; a restored or adopted one starts in Background. Parked starts folded and stays out of attention navigation, badges, window attention requests and triage. Parking keeps terminals running and preserves the conversation and files; move it back to another lane when you want to work on it.
 
 Blocked is for a session you are keeping open while you wait on someone else. It does not count toward the sessions that need you or the dock badge, except when its harness asks for a permission, and its row shows how long it has been blocked and when you last checked on it. Sending the session a message restarts the "checked" clock; the session stays blocked until you move it.
 
@@ -275,7 +275,7 @@ Settings (`⌘,`) edits the same file, and also manages default Claude permissio
 | `twapp status [--json]` | Show the open sessions by lane, their state, blocked time and name suggestions |
 | `twapp sessions` | List every session on disk |
 | `twapp rename <name>`, `twapp rename --suggested` | Rename the session in the current directory, or take the window's suggestion |
-| `twapp lane [priority\|background\|blocked]` | Show or set the session's lane |
+| `twapp lane [priority\|background\|blocked\|parked]` | Show or set the session's lane |
 | `twapp close` | Stop the session and remove it from the window; its files stay |
 | `twapp blocker add\|list\|show\|note\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |

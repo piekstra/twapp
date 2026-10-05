@@ -36,21 +36,22 @@ export default function Overview({
   const [triage, setTriage] = useState<Triage | null>(null);
   const [showYaks, setShowYaks] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
-  // Per-viewer folding: lanes folded in the overview (Blocked starts folded)
-  // and whether the full Waiting on list is open.
+  // Preserve existing folds while introducing Parked as a folded lane.
   const [folded, setFoldedState] = useState<string[]>(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("twapp-overview-folded") ?? "null");
-      return Array.isArray(saved) ? saved : ["blocked"];
+      const saved = JSON.parse(localStorage.getItem("twapp-overview-folded-v2") ?? "null");
+      if (Array.isArray(saved)) return saved;
+      const old = JSON.parse(localStorage.getItem("twapp-overview-folded") ?? "null");
+      return Array.isArray(old) ? [...new Set([...old, "parked"])] : ["blocked", "parked"];
     } catch {
-      return ["blocked"];
+      return ["blocked", "parked"];
     }
   });
   const toggleFold = (id: string) =>
     setFoldedState((prev) => {
       const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
       try {
-        localStorage.setItem("twapp-overview-folded", JSON.stringify(next));
+        localStorage.setItem("twapp-overview-folded-v2", JSON.stringify(next));
       } catch {
         // Folding still works for this visit.
       }

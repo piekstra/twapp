@@ -191,7 +191,7 @@ pub enum Commands {
         #[arg(long, conflicts_with = "name")]
         suggested: bool,
     },
-    /// Show or set the session's lane in the window: priority, background or blocked
+    /// Show or set the session's lane in the window: priority, background, blocked or parked
     #[command(after_help = "Examples:\n  twapp lane                 Show this session's lane\n  twapp lane blocked         Mark it blocked (waiting on someone else)\n  twapp lane priority --dir ~/work/ABC-12")]
     Lane {
         lane: Option<LaneArg>,
@@ -1469,7 +1469,7 @@ fn cmd_status(json: bool) -> i32 {
         return 0;
     }
     let lane_of = |s: &serde_json::Value| s.get("lane").and_then(|v| v.as_str()).unwrap_or("background").to_string();
-    for lane in ["priority", "background", "blocked"] {
+    for lane in ["priority", "background", "blocked", "parked"] {
         let in_lane: Vec<_> = sessions.iter().filter(|s| lane_of(s) == lane).collect();
         if in_lane.is_empty() {
             continue;
@@ -1808,6 +1808,7 @@ pub enum LaneArg {
     Priority,
     Background,
     Blocked,
+    Parked,
 }
 
 impl From<LaneArg> for crate::gui::hub::Lane {
@@ -1816,6 +1817,7 @@ impl From<LaneArg> for crate::gui::hub::Lane {
             LaneArg::Priority => Self::Priority,
             LaneArg::Background => Self::Background,
             LaneArg::Blocked => Self::Blocked,
+            LaneArg::Parked => Self::Parked,
         }
     }
 }

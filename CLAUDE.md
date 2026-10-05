@@ -12,7 +12,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp decision|action|followup add|list|answer|done|drop|remove`: what the session needs from the user (a decision, an action only they can take) and work noticed outside its scope; the window lists them under For you, per session and across sessions, and pastes an answer given there into the session.
 - `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`). The window also links the ticket the session's summaries find it working under, and never replaces one linked by hand.
 - `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
-- `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
+- `twapp lane [priority|background|blocked|parked]`: show or set the session's lane (`--dir` for another session). Parked keeps sessions available outside the work queue without stopping terminals.
 - `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp archive [--note <why>]`, `twapp unarchive`: close a session and keep a copy of its conversation in `.twapp-archive/`, restored on the next launch when the harness no longer has it. An archived session cannot be deleted.
