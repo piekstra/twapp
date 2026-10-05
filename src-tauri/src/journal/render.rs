@@ -9,10 +9,31 @@ use super::digest::Digest;
 use super::period::PeriodRecord;
 use super::store::DayRecord;
 
-fn digest_markdown(out: &mut String, digest: &Digest) {
+#[derive(Clone, Copy)]
+pub enum SummaryStyle {
+    Bullets,
+    Paragraph,
+    Both,
+}
+
+fn digest_markdown(out: &mut String, digest: &Digest, style: SummaryStyle) {
     let _ = writeln!(out, "{}\n", digest.headline);
-    if !digest.overview.is_empty() {
+    if matches!(style, SummaryStyle::Bullets | SummaryStyle::Both) {
+        let mut compact = digest.clone();
+        compact.ensure_bullets();
+        for bullet in &compact.bullets {
+            let _ = writeln!(out, "- {}", bullet);
+        }
+        out.push('\n');
+    }
+    if !digest.overview.is_empty() && matches!(style, SummaryStyle::Paragraph | SummaryStyle::Both) {
+        if matches!(style, SummaryStyle::Both) {
+            out.push_str("## Paragraph\n\n");
+        }
         let _ = writeln!(out, "{}\n", digest.overview);
+    }
+    if matches!(style, SummaryStyle::Bullets) {
+        return;
     }
     for effort in &digest.efforts {
         let _ = writeln!(out, "## {}\n", effort.name);
@@ -36,6 +57,10 @@ fn short_day(rfc3339: &str) -> String {
 }
 
 pub fn day_markdown(record: &DayRecord) -> String {
+    day_markdown_with_style(record, SummaryStyle::Both)
+}
+
+pub fn day_markdown_with_style(record: &DayRecord, style: SummaryStyle) -> String {
     let mut out = String::new();
     let title = record
         .day
@@ -47,7 +72,7 @@ pub fn day_markdown(record: &DayRecord) -> String {
         out.push_str("_The day was still in progress when this entry was written._\n\n");
     }
     match &record.digest {
-        Some(digest) => digest_markdown(&mut out, digest),
+        Some(digest) => digest_markdown(&mut out, digest, style),
         None => {
             if let Some(error) = &record.error {
                 let _ = writeln!(out, "_No written summary: {}._\n", error.trim_end_matches('.'));
@@ -55,6 +80,9 @@ pub fn day_markdown(record: &DayRecord) -> String {
         }
     }
 
+    if matches!(style, SummaryStyle::Bullets) && record.digest.is_some() {
+        return out;
+    }
     let facts = &record.facts;
     if !facts.blockers.is_empty() {
         out.push_str("## Blockers\n\n");
@@ -162,18 +190,25 @@ pub fn day_markdown(record: &DayRecord) -> String {
 }
 
 pub fn period_markdown(record: &PeriodRecord) -> String {
+    period_markdown_with_style(record, SummaryStyle::Both)
+}
+
+pub fn period_markdown_with_style(record: &PeriodRecord, style: SummaryStyle) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# {}\n", record.label);
     if !record.complete {
         out.push_str("_The period was still in progress when this summary was written._\n\n");
     }
     match &record.digest {
-        Some(digest) => digest_markdown(&mut out, digest),
+        Some(digest) => digest_markdown(&mut out, digest, style),
         None => {
             if let Some(error) = &record.error {
                 let _ = writeln!(out, "_No written summary: {}._\n", error.trim_end_matches('.'));
             }
         }
+    }
+    if matches!(style, SummaryStyle::Bullets) && record.digest.is_some() {
+        return out;
     }
     if !record.entries.is_empty() {
         out.push_str("## Entries\n\n");

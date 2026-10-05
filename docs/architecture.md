@@ -240,7 +240,7 @@ under `~/.local/share/twapp/journal/`.
   writing an entry again keeps sessions an earlier write recorded, so an entry
   outlives a deleted session.
 - **Digest.** One headless harness call per entry turns the facts into a
-  headline, an overview, and the day's efforts with what was done and where
+  headline, a paragraph overview, at most five concise summary bullets, and the day's efforts with what was done and where
   each stands. Blockers, tangents and the session list are shown from the
   facts, not the digest. Journal calls go through the usage ledger as kind
   `journal` but are not refused by `summaries.daily_limit`, and have a longer
@@ -254,12 +254,19 @@ under `~/.local/share/twapp/journal/`.
   from its months', into `periods/<id>.json` (`2026-W39`, `2026-09`, `2026`).
   A past day with activity and no entry gets one first. A period is written
   again when the digests it covers changed.
+  Summary bullets are presentation and do not affect the period's input hash;
+  its legacy field order is preserved so adding the bullet view does not rewrite
+  cached summaries. Older entries derive bullets from saved effort status/outcomes
+  on read without rewriting their files or calling a model.
 - **Files.** `days/<day>.json` and `periods/<id>.json` hold the facts and
   digest; the `.md` beside each is the same entry for reading, which is what
   an agent reads to look back over a stretch of work.
 - **Surfaces.** The Journal tab in the overview (`hub/Journal.tsx`,
   `hub_journal_days`, `hub_journal_day`, `hub_journal_period`) and
-  `twapp journal [day|period]` (`--list`, `--json`, `--path`, `--regenerate`).
+  `twapp journal [day|period]` (`--list`, `--json`, `--path`, `--regenerate`, `--paragraph`).
+  Both show bullets by default and retain the paragraph alternative. The UI keeps
+  detailed efforts and recorded activity expandable in bullet mode. Newly written
+  Markdown files contain both summary forms and the full details.
 
 ## Decisions, actions and follow-ups
 

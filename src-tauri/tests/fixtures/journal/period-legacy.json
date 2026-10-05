@@ -1,0 +1,43 @@
+{
+  "id": "2026-W40",
+  "kind": "week",
+  "label": "Week of Sep 28, 2026",
+  "from": "2026-09-28",
+  "to": "2026-10-04",
+  "generated_at": "2026-10-05T10:00:00Z",
+  "complete": true,
+  "entries": [
+    {
+      "id": "2026-09-28",
+      "label": "Mon Sep 28",
+      "headline": "Import fixes prepared; rollout still pending"
+    }
+  ],
+  "digest": {
+    "headline": "Import fixes prepared; rollout still pending",
+    "overview": "Fixed duplicate imports and restored the missing preview. Tests passed, and both changes await review. Nothing was deployed.",
+    "efforts": [
+      {
+        "name": "Import reliability",
+        "sessions": [
+          "Import fixes"
+        ],
+        "done": [
+          "Fixed duplicate imports"
+        ],
+        "state": "Review pending; not deployed"
+      },
+      {
+        "name": "Preview",
+        "sessions": [
+          "Preview repair"
+        ],
+        "done": [
+          "Restored the missing preview"
+        ],
+        "state": "Ready for review"
+      }
+    ]
+  },
+  "inputs_hash": ""
+}

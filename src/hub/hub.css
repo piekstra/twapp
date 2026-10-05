@@ -3589,6 +3589,7 @@ kbd {
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+  container-type: inline-size;
 }
 
 .journal-columns {
@@ -3703,6 +3704,39 @@ kbd {
   line-height: 1.55;
   color: var(--text-2);
   margin: 0;
+}
+
+.journal-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.journal .yak-report-head {
+  flex-wrap: wrap;
+}
+
+.journal-bullets {
+  margin: 12px 0 20px;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.journal-bullets li + li {
+  margin-top: 6px;
+}
+
+.journal-details {
+  margin-top: 16px;
+}
+
+.journal-details > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 12px;
+  margin-bottom: 12px;
 }
 
 .journal-efforts {
@@ -3864,6 +3898,16 @@ kbd {
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+@container (max-width: 700px) {
+  .journal-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .journal-days {
+    position: static;
+    max-height: 180px;
+  }
 }
 
 @media (max-width: 760px) {

@@ -75,6 +75,7 @@ Keep them current:
 twapp writes one journal entry per work day across all of the user's sessions: a headline, an overview, each effort with what was done and where it stands, and the day's blockers, tangents and sessions. When the user asks what they worked on over a stretch of time (a standup, a weekly update, a performance review), read the journal instead of reconstructing it from transcripts:
 
 - `twapp journal` prints the last finished work day; `twapp journal <YYYY-MM-DD|yesterday|today>` a given day.
+- Summaries show concise bullets by default. Add `--paragraph` to read the paragraph overview. Both forms remain in newly written Markdown entries; changing the view does not regenerate a summary.
 - `twapp journal week|month|year`, `last-week|last-month|last-year`, or an id (`2026-W38`, `2026-09`, `2026`) prints a period summary, written from the days' entries (and a year from its months') when it is missing or out of date.
 - `twapp journal --list` lists the days with entries; `--path` prints the Markdown file of an entry, or the journal directory with no day. The entries are Markdown files under `~/.local/share/twapp/journal/days/` and `periods/`; read them directly to cover a long stretch.
 

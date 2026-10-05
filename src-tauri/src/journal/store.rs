@@ -127,7 +127,11 @@ pub fn hash_of(value: &impl Serialize) -> String {
 
 pub fn load_day(root: &Path, day: NaiveDate) -> Option<DayRecord> {
     let content = std::fs::read_to_string(day_path(root, day, "json")).ok()?;
-    serde_json::from_str(&content).ok()
+    let mut record: DayRecord = serde_json::from_str(&content).ok()?;
+    if let Some(digest) = &mut record.digest {
+        digest.ensure_bullets();
+    }
+    Some(record)
 }
 
 pub fn save_day(root: &Path, record: &DayRecord) -> Result<(), String> {

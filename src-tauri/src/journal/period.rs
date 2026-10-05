@@ -134,7 +134,31 @@ pub fn period_markdown_path(root: &Path, id: &str) -> PathBuf {
 }
 
 pub fn load_period(root: &Path, id: &str) -> Option<PeriodRecord> {
-    serde_json::from_str(&std::fs::read_to_string(period_path(root, id, "json")).ok()?).ok()
+    let mut record: PeriodRecord = serde_json::from_str(&std::fs::read_to_string(period_path(root, id, "json")).ok()?).ok()?;
+    if let Some(digest) = &mut record.digest {
+        digest.ensure_bullets();
+    }
+    Some(record)
+}
+
+fn inputs_hash(inputs: &[PeriodInput]) -> String {
+    // Presentation alone must not invalidate a cached period or trigger model usage.
+    #[derive(Serialize)]
+    struct CacheDigest<'a> {
+        headline: &'a str,
+        overview: &'a str,
+        efforts: &'a [super::digest::EffortDigest],
+    }
+    #[derive(Serialize)]
+    struct CacheInput<'a> {
+        label: &'a str,
+        digest: CacheDigest<'a>,
+    }
+    let entries: Vec<_> = inputs.iter().map(|input| CacheInput {
+        label: &input.label,
+        digest: CacheDigest { headline: &input.digest.headline, overview: &input.digest.overview, efforts: &input.digest.efforts },
+    }).collect();
+    store::hash_of(&entries)
 }
 
 fn save_period(root: &Path, record: &PeriodRecord) -> Result<(), String> {
@@ -185,7 +209,7 @@ pub fn build_period(ctx: &Context, period: &Period, runner: Option<&dyn Runner>,
     }
 
     let inputs: Vec<PeriodInput> = children.iter().map(|(e, d)| PeriodInput { label: e.label.clone(), digest: d }).collect();
-    let inputs_hash = store::hash_of(&inputs);
+    let inputs_hash = inputs_hash(&inputs);
     let complete = period.to < today;
     let existing = load_period(&ctx.root, &period.id);
     if let Some(record) = &existing {

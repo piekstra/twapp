@@ -1,0 +1,77 @@
+{
+  "day": "2026-09-28",
+  "generated_at": "2026-09-29T10:00:00Z",
+  "complete": true,
+  "facts": {
+    "day": "2026-09-28",
+    "sessions": [
+      {
+        "key": "/work/import",
+        "name": "Import fixes",
+        "headlines": [
+          "Fixed duplicate imports; review pending"
+        ],
+        "prompts": [
+          "Fix duplicate imports"
+        ],
+        "replies": [
+          "Fixed duplicate imports. Tests passed; review pending. Not deployed."
+        ],
+        "notes": []
+      },
+      {
+        "key": "/work/preview",
+        "name": "Preview repair",
+        "headlines": [
+          "Restored preview; ready for review"
+        ],
+        "prompts": [
+          "Restore the missing preview"
+        ],
+        "replies": [
+          "Restored the preview. Tests passed; ready for review."
+        ],
+        "notes": []
+      }
+    ],
+    "blockers": [],
+    "yaks": [],
+    "stat": {
+      "summaries": 2,
+      "bytes": 100,
+      "tangent_bytes": 0,
+      "tangent_summaries": 0
+    }
+  },
+  "digest": {
+    "headline": "Import fixes prepared; rollout still pending",
+    "overview": "Fixed duplicate imports and restored the missing preview. Tests passed, and both changes await review. Nothing was deployed.",
+    "efforts": [
+      {
+        "name": "Import reliability",
+        "sessions": [
+          "Import fixes"
+        ],
+        "done": [
+          "Fixed duplicate imports"
+        ],
+        "state": "Review pending; not deployed"
+      },
+      {
+        "name": "Preview",
+        "sessions": [
+          "Preview repair"
+        ],
+        "done": [
+          "Restored the missing preview"
+        ],
+        "state": "Ready for review"
+      }
+    ],
+    "bullets": [
+      "Fixed duplicate imports; review pending, not deployed.",
+      "Restored the preview; ready for review."
+    ]
+  },
+  "facts_hash": "saved-facts"
+}

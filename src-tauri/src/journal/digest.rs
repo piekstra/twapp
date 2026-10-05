@@ -16,8 +16,34 @@ pub struct Digest {
     /// One sentence.
     pub headline: String,
     pub overview: String,
+    /// A compact alternative to the paragraph overview.
+    #[serde(default)]
+    pub bullets: Vec<String>,
     #[serde(default)]
     pub efforts: Vec<EffortDigest>,
+}
+
+impl Digest {
+    /// Older saved entries remain usable without a model rewrite.
+    pub fn ensure_bullets(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.bullets = self.bullets.iter().map(|b| clean_text(b, 140))
+            .filter(|b| !b.is_empty() && seen.insert(b.clone())).take(5).collect();
+        if self.bullets.is_empty() {
+            self.bullets = self.efforts.iter().filter_map(|e| {
+                let outcome = e.done.first().map(String::as_str);
+                let text = match (e.state.as_deref(), outcome) {
+                    (Some(state), Some(done)) => format!("{}: {}; {}", e.name, state, done),
+                    (Some(text), None) | (None, Some(text)) => format!("{}: {}", e.name, text),
+                    (None, None) => return None,
+                };
+                Some(clean_text(&text, 140))
+            }).take(5).collect();
+            if self.bullets.is_empty() && !self.headline.is_empty() {
+                self.bullets.push(clean_text(&self.headline, 140));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -63,7 +89,11 @@ end. Order efforts by weight over the period. The headline is one sentence under
 the overview is 3 to 6 sentences on what the period accomplished, what carried over, and patterns \
 such as recurring blockers or tangents. ";
 
-const REPLY: &str = " Reply with only a JSON object: {\"headline\": \"...\", \"overview\": \"...\", \
+const REPLY: &str = " Also write bullets: 3 to 5 concise bullets summarizing the main outcomes and \
+current status, each under 140 characters. Use fewer if the facts support fewer. One concrete \
+outcome per bullet; keep qualifiers such as pending review or not deployed. Avoid repeating \
+the same outcome or listing routine implementation steps. Keep the paragraph overview as well. \
+Reply with only a JSON object: {\"headline\": \"...\", \"overview\": \"...\", \"bullets\": [\"...\"], \
 \"efforts\": [{\"name\": \"<effort, at most 60 characters>\", \"sessions\": [\"<session name>\"], \
 \"done\": [\"...\"], \"state\": \"...\"}]}.";
 
@@ -144,7 +174,11 @@ fn parse(text: &str) -> Result<Digest, String> {
             })
         })
         .collect();
-    Ok(Digest { headline, overview: text_of(&value["overview"], 1500), efforts })
+    let bullets = value["bullets"].as_array().into_iter().flatten()
+        .map(|b| text_of(b, 140)).filter(|b| !b.is_empty()).collect();
+    let mut digest = Digest { headline, overview: text_of(&value["overview"], 1500), bullets, efforts };
+    digest.ensure_bullets();
+    Ok(digest)
 }
 
 #[cfg(test)]
@@ -170,5 +204,21 @@ mod tests {
         assert_eq!(digest.efforts[0].done, vec!["Opened PR 12"]);
         assert_eq!(digest.efforts[0].state, None);
         assert!(day_digest(&DayFacts::default(), &Canned("{}")).is_err());
+    }
+
+    #[test]
+    fn both_prompts_produce_bounded_bullets_and_keep_the_paragraph() {
+        let output = include_str!("../../tests/fixtures/journal/digest-model.json");
+        let day = day_digest(&DayFacts::default(), &Canned(output)).unwrap();
+        let period = period_digest(&[PeriodInput { label: "Day".into(), digest: &day }], &Canned(output)).unwrap();
+        assert_eq!(day, period);
+        assert_eq!(day.bullets.len(), 2);
+        assert!(day.bullets[0].contains("not deployed"));
+        assert!(day.overview.contains("Nothing was deployed"));
+        assert_eq!(day.efforts.len(), 2);
+        let malformed = day_digest(&DayFacts::default(), &Canned(include_str!("../../tests/fixtures/journal/digest-malformed-bullets.json"))).unwrap();
+        assert_eq!(malformed.bullets.len(), 5);
+        assert!(malformed.bullets.iter().all(|b| b.chars().count() <= 140 && !b.is_empty()));
+        assert_eq!(malformed.bullets.iter().filter(|b| b.as_str() == "Fixed duplicate imports.").count(), 1);
     }
 }
