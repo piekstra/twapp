@@ -43,21 +43,14 @@ impl TranscriptRoots {
             .find(|path| path.is_file())
     }
 
-    /// The directory a Claude conversation ran in, found by looking for its
-    /// transcript under every project, for a session whose recorded directory
-    /// is not where the conversation lives. `None` when no transcript exists.
-    pub fn find_claude_cwd(&self, session_id: &str) -> Option<String> {
-        let path = self.find_claude_transcript(session_id)?;
-        use std::io::BufRead;
-        let file = std::fs::File::open(path).ok()?;
-        std::io::BufReader::new(file)
-            .lines()
-            .map_while(Result::ok)
-            .take(50)
-            .find_map(|line| {
-                let value: serde_json::Value = serde_json::from_str(&line).ok()?;
-                value.get("cwd")?.as_str().map(str::to_string)
-            })
+    /// Locate history without treating its storage directory as the launch cwd.
+    pub fn resolve_claude_transcript(&self, cwd: &str, session_id: &str) -> Option<PathBuf> {
+        let direct = self.claude_transcript(cwd, session_id);
+        if direct.is_file() {
+            Some(direct)
+        } else {
+            self.find_claude_transcript(session_id)
+        }
     }
 }
 
@@ -199,4 +192,26 @@ pub fn extract_jsonl_metadata(
         git_branch,
         message_count,
     )
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn history_lookup_prefers_the_configured_project_then_falls_back_by_id() {
+        let root = std::env::temp_dir().join(format!("twapp-cwd-lookup-{}", uuid::Uuid::new_v4()));
+        let roots = TranscriptRoots { claude_projects: root.join("projects"), codex_history: root.join("history.jsonl") };
+        let old = roots.claude_transcript("/work/old", "claude-123");
+        let edited = roots.claude_transcript("/work/edited", "claude-123");
+        for path in [&old, &edited] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, include_bytes!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
+        }
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(edited.clone()));
+        std::fs::remove_file(&edited).unwrap();
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "claude-123"), Some(old));
+        assert_eq!(roots.resolve_claude_transcript("/work/edited", "absent"), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -18,12 +18,11 @@ pub fn session_running(directory: &std::path::Path) -> bool {
 }
 
 pub fn count_conversation_messages(session_id: &str, claude_cwd: &str) -> Option<u32> {
-    let home = dirs::home_dir()?;
-    let encoded = claude_cwd.replace('/', "-");
-    let jsonl_path = home
-        .join(".claude/projects")
-        .join(&encoded)
-        .join(format!("{}.jsonl", session_id));
+    count_conversation_messages_in(session_id, claude_cwd, &TranscriptRoots::from_home())
+}
+
+fn count_conversation_messages_in(session_id: &str, claude_cwd: &str, roots: &TranscriptRoots) -> Option<u32> {
+    let jsonl_path = roots.resolve_claude_transcript(claude_cwd, session_id)?;
 
     crate::cli::session::cached_file_count(&jsonl_path, "", || {
         use std::io::BufRead;
@@ -525,13 +524,10 @@ pub async fn preflight_delete_session(directory: String) -> Result<DeletePreflig
 
     // Conversation size
     let conversation_size_bytes = {
-        let home = dirs::home_dir().unwrap_or_default();
-        let encoded = session_data.claude_cwd.replace('/', "-");
-        let jsonl_path = home
-            .join(".claude/projects")
-            .join(&encoded)
-            .join(format!("{}.jsonl", session_data.session_id));
-        std::fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0)
+        TranscriptRoots::from_home()
+            .resolve_claude_transcript(&session_data.claude_cwd, &session_data.session_id)
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map(|m| m.len()).unwrap_or(0)
     };
 
     let last_active = session_data
@@ -774,12 +770,11 @@ pub fn delete_session_files(directory: &str, delete_everything: bool) -> Result<
 
     // 1. Delete conversation JSONL
     let home = dirs::home_dir().unwrap_or_default();
-    let encoded = session_data.claude_cwd.replace('/', "-");
-    let jsonl_path = home
-        .join(".claude/projects")
-        .join(&encoded)
-        .join(format!("{}.jsonl", session_data.session_id));
-    let _ = std::fs::remove_file(&jsonl_path);
+    if let Some(path) = TranscriptRoots::from_home()
+        .resolve_claude_transcript(&session_data.claude_cwd, &session_data.session_id)
+    {
+        let _ = std::fs::remove_file(path);
+    }
 
     // 2. Remove project entry from ~/.claude.json
     let claude_json = home.join(".claude.json");
@@ -1476,22 +1471,25 @@ mod resume_command_tests {
     }
 
     #[test]
-    fn a_conversation_recorded_under_the_wrong_directory_resumes_where_it_ran() {
+    fn a_restart_preserves_the_edited_cwd_when_history_is_in_another_project() {
         let dir = session_dir();
-        write(
-            &dir,
-            &format!(
-                r#"{{"session_id":"claude-123","name":"demo","color":"","ticket_key":null,
-                     "claude_cwd":"{}","created":"2026-01-01T00:00:00Z","last_resumed":null,
-                     "provider":"claude"}}"#,
-                dir.to_string_lossy()
-            ),
-        );
+        let mut data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        data.claude_cwd = "/tmp/edited ' workspace".into();
+        crate::cli::session::write_session(&dir, &data).unwrap();
 
-        let roots = roots_with(&[("/tmp/where-it-ran", "claude-123")]);
+        let roots = roots_with(&[]);
+        let path = roots.claude_transcript("/work/source", &data.session_id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, include_bytes!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
         let resumed = resume_command_in(&dir.to_string_lossy(), &roots).unwrap();
 
-        assert_eq!(resumed.command, "cd '/tmp/where-it-ran' && claude --resume claude-123");
+        assert_eq!(resumed.command, "cd '/tmp/edited '\\'' workspace' && claude --resume claude-123");
+        let after = crate::cli::session::read_session(&dir).unwrap();
+        assert_eq!(after.claude_cwd, data.claude_cwd);
+        assert_eq!(after.session_id, data.session_id);
+        assert!(count_conversation_messages_in(&after.session_id, &after.claude_cwd, &roots).unwrap() > 0);
+        assert_eq!(roots.resolve_claude_transcript(&after.claude_cwd, &after.session_id), Some(path));
+        let _ = std::fs::remove_dir_all(roots.claude_projects.parent().unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
