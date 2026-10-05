@@ -13,6 +13,7 @@ import {
 } from "./api";
 
 type Scope = "day" | "week" | "month" | "year";
+type SummaryFormat = "bullets" | "paragraph";
 const SCOPES: { id: Scope; label: string }[] = [
   { id: "day", label: "Day" },
   { id: "week", label: "Week" },
@@ -58,35 +59,47 @@ function CopyPath({ path }: { path: string | null }) {
   );
 }
 
-function Digest({ digest, sessionKey, onSelect }: { digest: JournalDigest; sessionKey: (name: string) => string | undefined; onSelect: (key: string) => void }) {
+function Digest({ digest, format, sessionKey, onSelect }: { digest: JournalDigest; format: SummaryFormat; sessionKey: (name: string) => string | undefined; onSelect: (key: string) => void }) {
   return (
     <>
       <h2 className="journal-headline"><Linkify text={digest.headline} /></h2>
-      {digest.overview && <p className="journal-overview"><Linkify text={digest.overview} /></p>}
-      <div className="journal-efforts">
-        {digest.efforts.map((e) => (
-          <section key={e.name} className="journal-effort">
-            <div className="journal-effort-head">
-              <span className="journal-effort-name">{e.name}</span>
-              {e.sessions.map((s) => {
-                const key = sessionKey(s);
-                return key ? (
-                  <button key={s} className="journal-session-chip" onClick={() => onSelect(key)} title="Open this session">{s}</button>
-                ) : (
-                  <span key={s} className="journal-session-chip static">{s}</span>
-                );
-              })}
-            </div>
-            {e.done.length > 0 && (
-              <ul className="journal-done">
-                {e.done.map((d, i) => <li key={i}><Linkify text={d} /></li>)}
-              </ul>
-            )}
-            {e.state && <div className="journal-state"><span>Where it stands</span> <Linkify text={e.state} /></div>}
-          </section>
-        ))}
-      </div>
+      {format === "paragraph" ? (
+        digest.overview && <p className="journal-overview"><Linkify text={digest.overview} /></p>
+      ) : (
+        <ul className="journal-bullets">{digest.bullets.map((bullet) => <li key={bullet}><Linkify text={bullet} /></li>)}</ul>
+      )}
+      {format === "bullets" ? (
+        <details className="journal-details"><summary>By effort</summary><Efforts digest={digest} sessionKey={sessionKey} onSelect={onSelect} /></details>
+      ) : <Efforts digest={digest} sessionKey={sessionKey} onSelect={onSelect} />}
     </>
+  );
+}
+
+function Efforts({ digest, sessionKey, onSelect }: { digest: JournalDigest; sessionKey: (name: string) => string | undefined; onSelect: (key: string) => void }) {
+  return (
+    <div className="journal-efforts">
+      {digest.efforts.map((e) => (
+        <section key={e.name} className="journal-effort">
+          <div className="journal-effort-head">
+            <span className="journal-effort-name">{e.name}</span>
+            {e.sessions.map((s) => {
+              const key = sessionKey(s);
+              return key ? (
+                <button key={s} className="journal-session-chip" onClick={() => onSelect(key)} title="Open this session">{s}</button>
+              ) : (
+                <span key={s} className="journal-session-chip static">{s}</span>
+              );
+            })}
+          </div>
+          {e.done.length > 0 && (
+            <ul className="journal-done">
+              {e.done.map((d, i) => <li key={i}><Linkify text={d} /></li>)}
+            </ul>
+          )}
+          {e.state && <div className="journal-state"><span>Where it stands</span> <Linkify text={e.state} /></div>}
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -191,7 +204,7 @@ function useWriter() {
   return { writing, run };
 }
 
-function DayView({ initial, onSelect }: { initial: string | null; onSelect: (key: string) => void }) {
+function DayView({ initial, format, onSelect }: { initial: string | null; format: SummaryFormat; onSelect: (key: string) => void }) {
   const [days, setDays] = useState<JournalDayRow[] | null>(null);
   const [selected, setSelected] = useState<string | null>(initial);
   const [entry, setEntry] = useState<JournalDay | null>(null);
@@ -281,7 +294,7 @@ function DayView({ initial, onSelect }: { initial: string | null; onSelect: (key
         )}
         {error && <div className="triage-error">{error}</div>}
         {record?.digest ? (
-          <Digest digest={record.digest} sessionKey={sessionKey} onSelect={onSelect} />
+          <Digest digest={record.digest} format={format} sessionKey={sessionKey} onSelect={onSelect} />
         ) : record && writing !== selected ? (
           <p className="journal-muted">
             {isToday
@@ -290,16 +303,19 @@ function DayView({ initial, onSelect }: { initial: string | null; onSelect: (key
           </p>
         ) : null}
         {writing === selected && !record?.digest && <p className="journal-muted">Writing the entry from the day's sessions...</p>}
-        {record && <Facts facts={record.facts} onSelect={onSelect} />}
+        {record && (format === "bullets" && record.digest ? (
+          <details className="journal-details"><summary>Recorded activity</summary><Facts facts={record.facts} onSelect={onSelect} /></details>
+        ) : <Facts facts={record.facts} onSelect={onSelect} />)}
         {selected && entry && !record && <p className="journal-muted">Nothing recorded on this day.</p>}
       </article>
     </div>
   );
 }
 
-function PeriodView({ scope, initialId, onOpenDay, onOpenMonth }: {
+function PeriodView({ scope, initialId, format, onOpenDay, onOpenMonth }: {
   scope: Exclude<Scope, "day">;
   initialId: string | null;
+  format: SummaryFormat;
   onOpenDay: (day: string) => void;
   onOpenMonth: (id: string) => void;
 }) {
@@ -353,7 +369,7 @@ function PeriodView({ scope, initialId, onOpenDay, onOpenMonth }: {
           Writing the summary{scope === "year" ? " from each month, and each month from its days" : " from its days"}...
         </p>
       )}
-      {record?.digest && <Digest digest={record.digest} sessionKey={() => undefined} onSelect={() => {}} />}
+      {record?.digest && <Digest digest={record.digest} format={format} sessionKey={() => undefined} onSelect={() => {}} />}
       {record && record.entries.length > 0 && (
         <section className="journal-block">
           <div className="overview-lane-head">{scope === "year" ? "Months" : "Days"}<span className="count">{record.entries.length}</span></div>
@@ -376,31 +392,40 @@ function PeriodView({ scope, initialId, onOpenDay, onOpenMonth }: {
 
 export default function Journal({ onSelect }: { onSelect: (key: string) => void }) {
   const [scope, setScope] = useState<Scope>("day");
+  const [format, setFormat] = useState<SummaryFormat>("bullets");
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [monthId, setMonthId] = useState<string | null>(null);
   return (
     <div className="journal">
       <div className="yak-report-head">
-        <div className="segmented" role="radiogroup" aria-label="Scope">
-          {SCOPES.map((s) => (
-            <button key={s.id} role="radio" aria-checked={scope === s.id} className={`segment${scope === s.id ? " active" : ""}`} onClick={() => { setMonthId(null); setOpenDay(null); setScope(s.id); }}>
-              {s.label}
-            </button>
-          ))}
+        <div className="journal-controls">
+          <div className="segmented" role="radiogroup" aria-label="Scope">
+            {SCOPES.map((s) => (
+              <button key={s.id} role="radio" aria-checked={scope === s.id} className={`segment${scope === s.id ? " active" : ""}`} onClick={() => { setMonthId(null); setOpenDay(null); setScope(s.id); }}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="segmented" role="group" aria-label="Summary format">
+            {(["bullets", "paragraph"] as const).map((value) => (
+              <button key={value} aria-pressed={format === value} className={`segment${format === value ? " active" : ""}`} onClick={() => setFormat(value)}>
+                {value === "bullets" ? "Bullets" : "Paragraph"}
+              </button>
+            ))}
+          </div>
         </div>
         <span className="yak-report-note">
-          One entry per work day, which runs from 4 AM to 4 AM, written from every session's summaries, prompts,
-          blockers and tangents. Entries are saved as Markdown under ~/.local/share/twapp/journal, where an agent
-          can read them back, and weeks, months and years are summarized from them.
+          Work days run from 4 AM to 4 AM.
         </span>
       </div>
       {scope === "day" ? (
-        <DayView key={openDay ?? ""} initial={openDay} onSelect={onSelect} />
+        <DayView key={openDay ?? ""} initial={openDay} format={format} onSelect={onSelect} />
       ) : (
         <PeriodView
           scope={scope}
           key={monthId ?? scope}
           initialId={monthId}
+          format={format}
           onOpenDay={(day) => { setOpenDay(day); setScope("day"); }}
           onOpenMonth={(id) => { setMonthId(id); setScope("month"); }}
         />

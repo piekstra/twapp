@@ -280,6 +280,7 @@ Settings (`⌘,`) edits the same file, and also manages default Claude permissio
 | `twapp blocker add\|list\|show\|note\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |
 | `twapp yaks [--json]`, `twapp yaks --all [--days N]` | The session's main effort and tangents, or tangents across all sessions |
+| `twapp journal [day\|period] [--paragraph]` | Read a concise bullet recap, or its paragraph overview, for a day, week, month, or year |
 | `twapp effort [name\|--clear]` | Show or set the larger effort the session belongs to |
 | `twapp delete [--everything] --yes` | Delete the session (without `--yes`, says what it would delete) |
 | `twapp set-session <id>` | Change the session's conversation id |
@@ -291,6 +292,8 @@ Settings (`⌘,`) edits the same file, and also manages default Claude permissio
 | `twapp setup-cert` | Create the local signing certificate |
 | `twapp dev-reload` | Rebuild twapp from source and restart the window |
 | `twapp completions <shell>` | Shell completions for zsh, bash or fish |
+
+The Journal tab shows concise bullets by default. Switch to **Paragraph** for the written overview, or expand **By effort** and **Recorded activity** for the details. Older entries work without regeneration. The CLI uses bullets too; `twapp journal --paragraph` selects the paragraph version. Newly written Markdown entries keep both summary forms.
 
 ### Model selection
 

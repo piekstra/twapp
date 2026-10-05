@@ -6,7 +6,8 @@ use crate::summary::SummarizerConfig;
 use super::period::Period;
 use super::store::{self, Context};
 
-pub fn cmd_journal(when: Option<&str>, json: bool, regenerate: bool, list: bool, path: bool) -> i32 {
+pub fn cmd_journal(when: Option<&str>, json: bool, regenerate: bool, list: bool, path: bool, paragraph: bool) -> i32 {
+    let style = if paragraph { super::render::SummaryStyle::Paragraph } else { super::render::SummaryStyle::Bullets };
     let ctx = Context::load(super::default_root(), &[]);
     if list {
         let rows = store::list_days(&ctx);
@@ -40,7 +41,7 @@ pub fn cmd_journal(when: Option<&str>, json: bool, regenerate: bool, list: bool,
                 } else if json {
                     println!("{}", serde_json::to_string_pretty(&record).unwrap_or_default());
                 } else {
-                    print!("{}", super::render::period_markdown(&record));
+                    print!("{}", super::render::period_markdown_with_style(&record, style));
                 }
                 0
             }
@@ -74,7 +75,7 @@ pub fn cmd_journal(when: Option<&str>, json: bool, regenerate: bool, list: bool,
             } else if json {
                 println!("{}", serde_json::to_string_pretty(&record).unwrap_or_default());
             } else {
-                print!("{}", super::render::day_markdown(&record));
+                print!("{}", super::render::day_markdown_with_style(&record, style));
             }
             0
         }

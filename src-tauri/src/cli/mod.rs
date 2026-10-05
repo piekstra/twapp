@@ -161,6 +161,9 @@ pub enum Commands {
     /// The work journal: one entry per work day, written from every
     /// session's activity, and summaries of weeks, months and years
     Journal {
+        /// Show the paragraph summary instead of concise bullets
+        #[arg(long, conflicts_with_all = ["json", "list", "path"])]
+        paragraph: bool,
         /// A day (YYYY-MM-DD, today, yesterday, last) or a period (week,
         /// month, year, last-week, last-month, last-year, 2026-W38, 2026-09,
         /// 2026). Defaults to the last finished work day.
@@ -548,8 +551,8 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::InstallGui { binary } => cmd_install_gui(&binary),
         Commands::SetupCert => cmd_setup_cert(),
         Commands::InstallSkill => cmd_install_skill(),
-        Commands::Journal { when, json, regenerate, list, path } => {
-            crate::journal::cmd::cmd_journal(when.as_deref(), json, regenerate, list, path)
+        Commands::Journal { when, json, regenerate, list, path, paragraph } => {
+            crate::journal::cmd::cmd_journal(when.as_deref(), json, regenerate, list, path, paragraph)
         }
         Commands::Yaks { json, dir, all, days } => {
             if all {

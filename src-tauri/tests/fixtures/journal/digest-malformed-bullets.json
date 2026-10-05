@@ -1,0 +1,39 @@
+{
+  "headline": "Import fixes prepared; rollout still pending",
+  "overview": "Fixed duplicate imports and restored the missing preview. Tests passed, and both changes await review. Nothing was deployed.",
+  "efforts": [
+    {
+      "name": "Import reliability",
+      "sessions": [
+        "Import fixes"
+      ],
+      "done": [
+        "Fixed duplicate imports"
+      ],
+      "state": "Review pending; not deployed"
+    },
+    {
+      "name": "Preview",
+      "sessions": [
+        "Preview repair"
+      ],
+      "done": [
+        "Restored the missing preview"
+      ],
+      "state": "Ready for review"
+    }
+  ],
+  "bullets": [
+    "  Fixed duplicate imports.  ",
+    "",
+    null,
+    "Fixed duplicate imports.",
+    "Restored preview \u2014 review pending.",
+    "Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words Repeated words ",
+    "Outcome 0.",
+    "Outcome 1.",
+    "Outcome 2.",
+    "Outcome 3.",
+    "Outcome 4."
+  ]
+}

@@ -373,6 +373,7 @@ export interface JournalDayRow {
 export interface JournalDigest {
   headline: string;
   overview: string;
+  bullets: string[];
   efforts: { name: string; sessions: string[]; done: string[]; state?: string | null }[];
 }
 
