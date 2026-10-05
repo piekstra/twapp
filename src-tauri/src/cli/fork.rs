@@ -37,13 +37,9 @@ pub fn prepare_fork_session(
     let mut ticket_file: Option<String> = None;
     let mut ticket_key_for_session: Option<String> = None;
 
-    // Custom name takes priority over directory-derived name (ticket overrides both)
+    // The display name is independent of the sanitized directory name below.
     if let Some(ref n) = name {
-        let filtered: String = n
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_')
-            .collect();
-        window_name = filtered.split_whitespace().collect::<Vec<_>>().join("-");
+        window_name = n.trim().to_string();
     }
 
     // Set up the directory for the resolved ticket, when provided.
@@ -634,14 +630,17 @@ mod tests {
         let (name, args) = prepare_fork_session(
             parent.to_string_lossy().into_owned(),
             None,
-            None,
+            Some("A session with spaces".into()),
             Some(AgentProvider::Codex),
             &roots,
         )
         .unwrap();
         let copy = destination(&args);
         let fork = crate::cli::session::read_session(copy).unwrap();
-        assert_eq!(name, "Original session fork");
+        assert_eq!(name, "A session with spaces");
+        assert_eq!(fork.name, name);
+        assert_eq!(copy.file_name().unwrap(), "A-session-with-spaces-fork");
+        assert_eq!(args[args.iter().position(|arg| arg == "--name").unwrap() + 1], name);
         assert_eq!(fork.ticket_key.as_deref(), Some(ticket.key.as_str()));
         assert!(fork.session_id.is_empty());
         assert!(fork.codex_session_id.is_none());
