@@ -39,7 +39,7 @@ try {
         },
       };
     }, { theme, width, snapshot });
-    await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1422');
+    await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1420');
     const lane = page.getByRole('radiogroup', { name: 'Lane' });
     await lane.waitFor();
     const overflow = await lane.evaluate(el => [...el.querySelectorAll('button')]
@@ -54,13 +54,14 @@ try {
       await page.reload();
       await lane.waitFor();
       assert.equal(await retained.count(), 1, 'unfolding survives reload');
+      const beforeParking = await page.evaluate(() => window.__calls.length);
       await lane.getByRole('radio', { name: 'Parked', exact: true }).click();
       assert.equal(await lane.getByRole('radio', { name: 'Parked', exact: true }).getAttribute('aria-checked'), 'true');
       assert.equal(await page.locator('.rail-attention-count').count(), 0);
-      assert.deepEqual(await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_set_lane')), [
+      // Xterm may fit asynchronously after reload; resizing does not stop a PTY.
+      assert.deepEqual(await page.evaluate(offset => window.__calls.slice(offset).filter(c => c.cmd !== 'hub_resize'), beforeParking), [
         { cmd: 'hub_set_lane', args: { key: '/work/source', lane: 'parked' } },
       ]);
-      assert.equal(await page.evaluate(() => window.__calls.filter(c => /close_session|suspend|restart_session|delete_session/.test(c.cmd)).length), 0);
       await page.screenshot({ path: path.join(dir, `parked-${theme}-${width}.png`) });
       await page.locator('.rail-home').click();
       const heading = page.locator('.overview-lane-head').filter({ hasText: 'Parked' });
