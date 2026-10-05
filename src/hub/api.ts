@@ -140,15 +140,16 @@ export interface Blocker {
   history?: { at: string; kind: string; text?: string; by?: string | null }[];
 }
 
-export type Lane = "priority" | "background" | "blocked";
+export type Lane = "priority" | "background" | "blocked" | "parked";
 
 export const LANES: { lane: Lane; label: string }[] = [
   { lane: "priority", label: "Priority" },
   { lane: "background", label: "Background" },
   { lane: "blocked", label: "Blocked" },
+  { lane: "parked", label: "Parked" },
 ];
 
-/** Sessions in lane order (priority, background, blocked), keeping the
+/** Sessions in lane order (priority, background, blocked, parked), keeping the
  * user's order within each lane. */
 export function byLane(sessions: SessionView[]): SessionView[] {
   return LANES.flatMap(({ lane }) => sessions.filter((s) => (s.lane ?? "background") === lane));
@@ -456,4 +457,3 @@ export async function sendToSession(key: string, id: string, onSelect?: (key: st
   onSelect?.(key);
   window.dispatchEvent(new CustomEvent("twapp:focus-terminal"));
 }
-

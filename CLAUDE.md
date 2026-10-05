@@ -12,7 +12,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp decision|action|followup add|list|answer|done|drop|remove`: what the session needs from the user (a decision, an action only they can take) and work noticed outside its scope; the window lists them under For you, per session and across sessions, and pastes an answer given there into the session.
 - `twapp ticket link <ref>|refresh|create`: the session's ticket. `<ref>` is a Jira key, a bare number (prefixed with `defaults.jira_project`), or a GitHub issue (`owner/repo#N`, `#N`). The window also links the ticket the session's summaries find it working under, and never replaces one linked by hand.
 - `twapp status [--json]`: the sessions open in the window by lane, their state and summary.
-- `twapp lane [priority|background|blocked]`: show or set the session's lane (`--dir` for another session).
+- `twapp lane [priority|background|blocked|parked]`: show or set the session's lane (`--dir` for another session). Parked keeps sessions available outside the work queue without stopping terminals.
 - `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp archive [--note <why>]`, `twapp unarchive`: close a session and keep a copy of its conversation in `.twapp-archive/`, restored on the next launch when the harness no longer has it. An archived session cannot be deleted.
@@ -85,11 +85,13 @@ CI derives the version from `version.txt` (major.minor) plus the run number, inj
 ## Key Patterns
 
 - **Session identity**: the canonical session directory path is the key everywhere (`hub::session_key`). Commands take `directory`; nothing reads a per-process session.
+- **Session names**: preserve spaces in display names. Sanitize filesystem directory and notes filenames separately; never write a directory slug back as the user-entered name.
 - **Opening sessions**: every path (CLI, new session, fork, resume, palette) builds GUI launch arguments and calls `Hub::open_argv`. Arguments with a command start the PTY at once; restored sessions start when selected.
 - **Terminal output**: ptyd output reaches the frontend through one Tauri `Channel` per tab as raw bytes; the backend also feeds the main tab's bytes to the status tracker. A terminal that attaches to a running PTY gets a replay, then a one-column resize so the harness redraws.
 - **Status and summaries**: `Hub::poll_once` runs every two seconds. Transitions into `your_turn`, `needs_approval` or `errored` request a summary; the summarizer debounces and caches.
 - **Ticket fetching**: `cli/ticket.rs` owns every jtk and gh call; GUI commands call it through `tickets::fetch_blocking`. jtk 1.3+ has no JSON output, so Jira fields come from `jtk issues get --fields ... --fulltext`, parsed by `parse_jtk_issue` (fixtures in `src-tauri/tests/fixtures/jtk/`).
 - **CLI/GUI parity**: session operations (create, fork, ticket link, rename, lanes, close, delete) exist in both; change them together. Window-state operations go over `hub.sock` (`HubRequest`), file operations are shared functions.
+- **Claude resume cwd**: preserve the configured `claude_cwd` on opens and restarts. Locate history by conversation ID across project folders without rewriting that cwd from transcript records. Cross-project ID resume requires Claude Code 2.1.223 or later.
 - **Tauri commands**: `invoke<T>("command_name", { camelCaseArgs })` from the frontend, `#[tauri::command]` in Rust. Snake_case argument keys are silently dropped.
 - **Design tokens**: `hub/hub.css` defines the surfaces, lines, text, accent and state colors for light and dark, and maps App.css's older variables onto them; session colors appear as swatches, not painted surfaces.
 - **Color palette**: 9 named colors in `cli/theme.rs` and `hub/SessionPanel.tsx`; `getDarkModeAccentColor()` in `color.ts` derives dark-mode variants.

@@ -32,13 +32,13 @@ export interface LayoutPrefs {
   switcherCollapsedLanes: LaneName[];
 }
 
-type LaneName = "priority" | "background" | "blocked";
+type LaneName = "priority" | "background" | "blocked" | "parked";
 
 const KEY = "twapp-layout";
 
 function lanesOr(value: unknown, fallback: LaneName[]): LaneName[] {
   if (!Array.isArray(value)) return fallback;
-  return value.filter((l): l is LaneName => l === "priority" || l === "background" || l === "blocked");
+  return value.filter((l): l is LaneName => l === "priority" || l === "background" || l === "blocked" || l === "parked");
 }
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {
@@ -49,23 +49,27 @@ export const DEFAULT_LAYOUT: LayoutPrefs = {
   railWidth: 264,
   switcherShare: 0.3,
   listPosition: "bottom",
-  collapsedLanes: ["blocked"],
-  switcherCollapsedLanes: ["background", "blocked"],
+  collapsedLanes: ["blocked", "parked"],
+  switcherCollapsedLanes: ["background", "blocked", "parked"],
 };
 
 export function loadLayout(): LayoutPrefs {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return DEFAULT_LAYOUT;
-    const parsed = JSON.parse(raw) as Partial<LayoutPrefs>;
+    const parsed = JSON.parse(raw) as Partial<LayoutPrefs> & { version?: number };
+    const folded = (value: unknown, fallback: LaneName[]) => {
+      const lanes = lanesOr(value, fallback);
+      return parsed.version === 2 || lanes.includes("parked") ? lanes : [...lanes, "parked" as const];
+    };
     const mode: LayoutMode = parsed.mode === "left" || parsed.mode === "split" ? parsed.mode : "right";
     return {
       ...DEFAULT_LAYOUT,
       ...parsed,
       mode,
       listPosition: parsed.listPosition === "top" ? "top" : "bottom",
-      collapsedLanes: lanesOr(parsed.collapsedLanes, DEFAULT_LAYOUT.collapsedLanes),
-      switcherCollapsedLanes: lanesOr(parsed.switcherCollapsedLanes, DEFAULT_LAYOUT.switcherCollapsedLanes),
+      collapsedLanes: folded(parsed.collapsedLanes, DEFAULT_LAYOUT.collapsedLanes),
+      switcherCollapsedLanes: folded(parsed.switcherCollapsedLanes, DEFAULT_LAYOUT.switcherCollapsedLanes),
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth, 260, 640),
       railWidth: clamp(parsed.railWidth ?? DEFAULT_LAYOUT.railWidth, 200, 420),
       switcherShare: clamp(parsed.switcherShare ?? DEFAULT_LAYOUT.switcherShare, 0.15, 0.8),
@@ -77,7 +81,7 @@ export function loadLayout(): LayoutPrefs {
 
 export function saveLayout(prefs: LayoutPrefs) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(prefs));
+    localStorage.setItem(KEY, JSON.stringify({ ...prefs, version: 2 }));
   } catch {
     // Storage can be unavailable; the layout then lasts for this run only.
   }

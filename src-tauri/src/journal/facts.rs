@@ -381,7 +381,9 @@ fn claude_day(roots: &TranscriptRoots, source: &Source, bounds: (DateTime<Utc>, 
     } else {
         source.data.claude_cwd.clone()
     };
-    let path = roots.claude_transcript(&cwd, &source.data.session_id);
+    let Some(path) = roots.resolve_claude_transcript(&cwd, &source.data.session_id) else {
+        return (prompts, replies);
+    };
     let Ok(meta) = std::fs::metadata(&path) else { return (prompts, replies) };
     if meta.modified().map(DateTime::<Utc>::from).is_ok_and(|m| m < bounds.0) {
         return (prompts, replies);
@@ -453,6 +455,22 @@ mod tests {
 
     fn at(d: u32, h: u32) -> String {
         Local.with_ymd_and_hms(2026, 9, d, h, 0, 0).unwrap().to_rfc3339()
+    }
+
+    #[test]
+    fn edited_resume_cwd_keeps_the_original_projects_journal_prompts() {
+        let root = std::env::temp_dir().join(format!("twapp-cwd-facts-{}", uuid::Uuid::new_v4()));
+        let roots = TranscriptRoots { claude_projects: root.join("projects"), codex_history: root.join("history.jsonl") };
+        let mut data: SessionData = serde_json::from_str(include_str!("../../tests/fixtures/migration/session.json")).unwrap();
+        let transcript = roots.claude_transcript(&data.claude_cwd, &data.session_id);
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, include_bytes!("../../tests/fixtures/migration/claude.jsonl")).unwrap();
+        data.claude_cwd = "/work/edited".into();
+        let source = Source { key: "/work/session".into(), dir: root.clone(), data, retired: None };
+        let bounds = (Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap(), Utc.with_ymd_and_hms(2026, 9, 2, 0, 0, 0).unwrap());
+        let (prompts, _) = claude_day(&roots, &source, bounds);
+        assert!(prompts.iter().any(|p| p.contains("Keep the original session")), "{:?}", prompts);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

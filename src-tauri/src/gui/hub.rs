@@ -103,6 +103,7 @@ pub enum Lane {
     #[default]
     Background,
     Blocked,
+    Parked,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -445,7 +446,10 @@ impl HubSession {
     }
 
     fn attention(&self) -> bool {
-        // A reply from whoever the session waits on is news in any lane.
+        if self.lane.lane == Lane::Parked {
+            return false;
+        }
+        // A reply from whoever active work waits on is news in any active lane.
         if self.blocker_updates > 0 {
             return true;
         }
@@ -1646,7 +1650,7 @@ impl Hub {
             inner
                 .sessions
                 .iter()
-                .filter(|s| s.main_running())
+                .filter(|s| s.main_running() && s.lane.lane != Lane::Parked)
                 .map(|s| {
                     let view = s.view();
                     let waiting_secs = chrono::DateTime::parse_from_rfc3339(&s.status.since)
@@ -1909,7 +1913,7 @@ impl Hub {
                         if let Some(req) = summary_request(session, false) {
                             summaries.push(req);
                         }
-                        newly_waiting = true;
+                        newly_waiting |= session.lane.lane != Lane::Parked;
                     }
                 }
             }
@@ -2751,6 +2755,24 @@ mod tests {
         assert!(!s.attention(), "a finished turn in a blocked session waits quietly");
         s.status = SessionStatus::in_state_now(State::NeedsApproval);
         assert!(s.attention(), "an open prompt stops the session until the user answers");
+    }
+
+    #[test]
+    fn parked_sessions_keep_their_status_without_requesting_attention() {
+        let mut s = HubSession::new("/w/parked".into(), AgentProvider::Claude);
+        s.lane.lane = Lane::Parked;
+        s.blocker_updates = 1;
+        for state in [State::YourTurn, State::NeedsApproval, State::Errored, State::Working] {
+            s.status = SessionStatus::in_state_now(state);
+            assert!(!s.attention());
+            assert_eq!(s.status.state, state);
+        }
+        s.lane.lane = Lane::Background;
+        assert!(s.attention(), "moving back restores blocker-update attention");
+        let json = serde_json::to_string(&LaneInfo { lane: Lane::Parked, ..Default::default() }).unwrap();
+        let restored: LaneInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.lane, Lane::Parked);
+        assert!(restored.blocked_since.is_none() && restored.checked_at.is_none());
     }
 
     #[test]
