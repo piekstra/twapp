@@ -458,7 +458,7 @@ Keyboard:
 
 The list keeps the user's order (drag to reorder) rather than sorting by state,
 so a session's `⌘` number does not change while its state does. Sessions sit in
-one of three lanes the user assigns (`priority`, `background`, `blocked`); every
+one of four lanes the user assigns (`priority`, `background`, `blocked`, `parked`); every
 view lists them lane by lane, keeping the user's order within each. A new
 session starts at the top of its lane. The backend
 holds one order across all sessions and the frontend groups it, so a drag sends
@@ -469,6 +469,12 @@ A blocked session carries `blocked_since` (when it was moved to Blocked) and
 return). Its attention is muted except for `needs_approval`, so it stays out of
 `⌘J`, the attention count and the dock badge while it waits on someone else.
 Only the user moves a session out of Blocked.
+
+Parked retains sessions outside the active work queue. It starts folded, has no
+blocked clocks, and suppresses attention navigation, badges, window attention
+requests and triage participation. Status remains visible and terminal processes
+keep running. Only the user changes its lane; parking never archives a session
+or changes its conversation handles.
 
 ## Starting feedback
 
