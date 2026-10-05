@@ -56,10 +56,10 @@ try {
     await page.locator('.journal-headline').waitFor();
     await page.screenshot({ path: path.join(dir, `day-${theme}-${width}.png`) });
     if (process.env.TWAPP_BEFORE !== '1') {
-      const format = page.getByRole('radiogroup', { name: 'Summary format' });
-      const bullets = format.getByRole('radio', { name: 'Bullets', exact: true });
-      const paragraph = format.getByRole('radio', { name: 'Paragraph', exact: true });
-      assert.equal(await bullets.getAttribute('aria-checked'), 'true');
+      const format = page.getByRole('group', { name: 'Summary format' });
+      const bullets = format.getByRole('button', { name: 'Bullets', exact: true });
+      const paragraph = format.getByRole('button', { name: 'Paragraph', exact: true });
+      assert.equal(await bullets.getAttribute('aria-pressed'), 'true');
       assert.deepEqual(await page.locator('.journal-bullets li').allTextContents(), day.digest.bullets);
       assert.equal(await page.locator('.journal-overview').count(), 0);
       assert.equal(await page.locator('.journal-efforts').isVisible(), false);
@@ -68,11 +68,18 @@ try {
       await page.getByText('Recorded activity', { exact: true }).click();
       assert.equal(await page.locator('.journal-sessions').isVisible(), true);
       const calls = await page.evaluate(() => window.__calls.length);
-      await paragraph.click();
+      await bullets.focus();
+      await page.keyboard.press('Tab');
+      assert.equal(await paragraph.evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Space');
+      assert.equal(await paragraph.getAttribute('aria-pressed'), 'true');
       assert.equal(await page.locator('.journal-overview').textContent(), day.digest.overview);
       assert.equal(await page.locator('.journal-bullets').count(), 0);
       await page.screenshot({ path: path.join(dir, `paragraph-${theme}-${width}.png`) });
-      await bullets.click();
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await bullets.evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Enter');
+      assert.equal(await bullets.getAttribute('aria-pressed'), 'true');
       assert.equal(await page.evaluate(() => window.__calls.length), calls, 'format switching must not request a rewrite');
       for (const scope of ['Week', 'Month', 'Year']) {
         await page.getByRole('radiogroup', { name: 'Scope' }).getByRole('radio', { name: scope, exact: true }).click();
@@ -86,7 +93,7 @@ try {
       const overflow = await page.locator('.journal').evaluate(el => [...el.querySelectorAll('.journal-controls button')]
         .filter(b => b.getBoundingClientRect().right > el.getBoundingClientRect().right + 1).length);
       assert.equal(overflow, 0);
-      results.push({ theme, width, scopes: 4, formatSwitchWithoutRewrite: true, overflow });
+      results.push({ theme, width, scopes: 4, keyboardFormatSwitch: true, formatSwitchWithoutRewrite: true, overflow });
     } else results.push({ theme, width, before: true });
     await page.close();
   }

@@ -406,9 +406,9 @@ export default function Journal({ onSelect }: { onSelect: (key: string) => void 
               </button>
             ))}
           </div>
-          <div className="segmented" role="radiogroup" aria-label="Summary format">
+          <div className="segmented" role="group" aria-label="Summary format">
             {(["bullets", "paragraph"] as const).map((value) => (
-              <button key={value} role="radio" aria-checked={format === value} className={`segment${format === value ? " active" : ""}`} onClick={() => setFormat(value)}>
+              <button key={value} aria-pressed={format === value} className={`segment${format === value ? " active" : ""}`} onClick={() => setFormat(value)}>
                 {value === "bullets" ? "Bullets" : "Paragraph"}
               </button>
             ))}
