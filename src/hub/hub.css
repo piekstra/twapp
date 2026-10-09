@@ -2134,11 +2134,6 @@ kbd {
   color: var(--text-2);
 }
 
-.panel-lane-arrow {
-  font-size: 10px;
-  color: var(--text-3);
-}
-
 .panel-lane-since {
   font-size: 11px;
   color: var(--text-3);

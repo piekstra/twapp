@@ -494,7 +494,6 @@ export default function SessionPanel({
               >
                 <span className={`lane-dot lane-dot-${lane}`} aria-hidden="true" />
                 {label}
-                {!selected && <span className="panel-lane-arrow" aria-hidden="true">→</span>}
               </button>
             );
           })}

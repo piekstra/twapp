@@ -69,8 +69,7 @@ try {
       });
       assert.ok(labelContrast >= 4.5, `category label contrast is ${labelContrast}:1`);
       assert.equal(await lane.locator('.lane-dot').count(), 4, 'all category icons remain');
-      assert.equal(await lane.locator('.panel-lane-arrow').count(), 3, 'only unselected categories have arrows');
-      assert.equal(await lane.locator('.segment.active .panel-lane-arrow').count(), 0);
+      assert.doesNotMatch(await lane.innerText(), /→/, 'category assignment uses the label without arrows');
       const rowCount = await lane.evaluate(el => new Set([...el.querySelectorAll('button')]
         .map(button => Math.round(button.getBoundingClientRect().top))).size);
       assert.equal(rowCount, width === 260 ? 2 : 1, 'compact controls wrap only at narrow widths');
@@ -99,7 +98,6 @@ try {
         } else await button.click();
         assert.equal(await lane.getByRole('button', { name: `Current category: ${label}`, exact: true }).getAttribute('aria-pressed'), 'true');
         assert.equal(await lane.locator('.segment.active .lane-dot').count(), 1);
-        assert.equal(await lane.locator('.segment.active .panel-lane-arrow').count(), 0);
         assert.deepEqual(await page.evaluate(start => window.__calls.slice(start).filter(c => c.cmd !== 'hub_resize'), offset), [
           { cmd: 'hub_set_lane', args: { key: '/work/source', lane: value } },
         ], 'one activation changes only the current session category');
