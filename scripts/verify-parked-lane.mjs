@@ -40,13 +40,22 @@ try {
       };
     }, { theme, width, snapshot });
     await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1420');
-    const lane = page.getByRole('radiogroup', { name: 'Lane' });
+    const lane = process.env.TWAPP_BEFORE === '1'
+      ? page.getByRole('radiogroup', { name: 'Lane' })
+      : page.getByRole('group', { name: 'Session category' });
     await lane.waitFor();
     const overflow = await lane.evaluate(el => [...el.querySelectorAll('button')]
       .filter(e => e.getBoundingClientRect().right > el.getBoundingClientRect().right + 1).length);
     assert.equal(overflow, 0);
     await page.screenshot({ path: path.join(dir, `controls-${theme}-${width}.png`) });
     if (process.env.TWAPP_BEFORE !== '1') {
+      assert.equal(await page.locator('.panel-lane-label').textContent(), 'This session is:');
+      assert.equal(await lane.locator('.lane-dot').count(), 4, 'all category icons remain');
+      assert.equal(await lane.locator('.panel-lane-arrow').count(), 3, 'only unselected categories have arrows');
+      assert.equal(await lane.locator('.segment.active .panel-lane-arrow').count(), 0);
+      const rowCount = await lane.evaluate(el => new Set([...el.querySelectorAll('button')]
+        .map(button => Math.round(button.getBoundingClientRect().top))).size);
+      assert.equal(rowCount, width === 260 ? 2 : 1, 'compact controls wrap only at narrow widths');
       const retained = page.locator('.lane-parked .rail-row');
       assert.equal(await retained.count(), 0, 'new lane starts folded for existing layouts');
       await page.locator('.lane-parked .lane-head').click();
@@ -55,14 +64,28 @@ try {
       await lane.waitFor();
       assert.equal(await retained.count(), 1, 'unfolding survives reload');
       const beforeParking = await page.evaluate(() => window.__calls.length);
-      await lane.getByRole('radio', { name: 'Parked', exact: true }).click();
-      assert.equal(await lane.getByRole('radio', { name: 'Parked', exact: true }).getAttribute('aria-checked'), 'true');
+      await lane.getByRole('button', { name: 'Move this session to Parked', exact: true }).click();
+      assert.equal(await lane.getByRole('button', { name: 'Current category: Parked', exact: true }).getAttribute('aria-pressed'), 'true');
       assert.equal(await page.locator('.rail-attention-count').count(), 0);
       // Xterm may fit asynchronously after reload; resizing does not stop a PTY.
       assert.deepEqual(await page.evaluate(offset => window.__calls.slice(offset).filter(c => c.cmd !== 'hub_resize'), beforeParking), [
         { cmd: 'hub_set_lane', args: { key: '/work/source', lane: 'parked' } },
       ]);
       await page.screenshot({ path: path.join(dir, `parked-${theme}-${width}.png`) });
+      for (const [label, value] of [['Background', 'background'], ['Blocked', 'blocked'], ['Priority', 'priority'], ['Parked', 'parked']]) {
+        const offset = await page.evaluate(() => window.__calls.length);
+        const button = lane.getByRole('button', { name: `Move this session to ${label}`, exact: true });
+        if (value === 'background') {
+          await button.focus();
+          await button.press('Enter');
+        } else await button.click();
+        assert.equal(await lane.getByRole('button', { name: `Current category: ${label}`, exact: true }).getAttribute('aria-pressed'), 'true');
+        assert.equal(await lane.locator('.segment.active .lane-dot').count(), 1);
+        assert.equal(await lane.locator('.segment.active .panel-lane-arrow').count(), 0);
+        assert.deepEqual(await page.evaluate(start => window.__calls.slice(start).filter(c => c.cmd !== 'hub_resize'), offset), [
+          { cmd: 'hub_set_lane', args: { key: '/work/source', lane: value } },
+        ], 'one activation changes only the current session category');
+      }
       await page.locator('.rail-home').click();
       const heading = page.locator('.overview-lane-head').filter({ hasText: 'Parked' });
       await heading.waitFor();

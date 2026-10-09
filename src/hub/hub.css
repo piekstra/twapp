@@ -2123,9 +2123,20 @@ kbd {
 .panel-lane {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px 8px;
   padding: 0 14px 10px;
   flex-wrap: wrap;
+}
+
+.panel-lane-label {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.panel-lane-arrow {
+  font-size: 10px;
+  color: var(--text-3);
 }
 
 .panel-lane-since {
@@ -3956,22 +3967,25 @@ kbd {
   opacity: 0.7;
 }
 
-/* The panel is as narrow as 260px: the lane switcher shares the width evenly
-   and the summary actions tighten instead of spilling. */
+/* Category buttons stay together when they fit and wrap at narrow widths. */
 .panel-lane .segmented {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: 100%;
+  flex-wrap: wrap;
   max-width: 100%;
   min-width: 0;
 }
 
 .panel-lane .segment {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 4px 7px;
+  flex: none;
+  gap: 3px;
+  padding: 4px 3px;
+  font-size: 11px;
   justify-content: center;
   white-space: nowrap;
+}
+
+.panel-lane .lane-dot {
+  width: 6px;
+  height: 6px;
 }
 
 .summary-actions .button {
