@@ -73,6 +73,31 @@ try {
       const rowCount = await lane.evaluate(el => new Set([...el.querySelectorAll('button')]
         .map(button => Math.round(button.getBoundingClientRect().top))).size);
       assert.equal(rowCount, width === 260 ? 2 : 1, 'compact controls wrap only at narrow widths');
+      const fill = await lane.evaluate(el => {
+        const panel = el.closest('.panel-lane');
+        const panelStyle = getComputedStyle(panel);
+        const available = panel.getBoundingClientRect().width - parseFloat(panelStyle.paddingLeft) - parseFloat(panelStyle.paddingRight);
+        const bounds = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        const rows = new Map();
+        for (const button of el.querySelectorAll('button')) {
+          const rect = button.getBoundingClientRect();
+          const top = Math.round(rect.top);
+          const row = rows.get(top) || { left: rect.left, right: rect.right };
+          row.left = Math.min(row.left, rect.left);
+          row.right = Math.max(row.right, rect.right);
+          rows.set(top, row);
+        }
+        return {
+          unused: available - bounds.width,
+          rowGaps: [...rows.values()].map(row => Math.max(
+            Math.abs(row.left - bounds.left - parseFloat(style.paddingLeft)),
+            Math.abs(bounds.right - parseFloat(style.paddingRight) - row.right),
+          )),
+        };
+      });
+      assert.ok(Math.abs(fill.unused) <= 1, 'category control fills the panel content width');
+      assert.ok(fill.rowGaps.every(gap => gap <= 1), 'buttons fill each row from left to right');
       const retained = page.locator('.lane-parked .rail-row');
       assert.equal(await retained.count(), 0, 'new lane starts folded for existing layouts');
       await page.locator('.lane-parked .lane-head').click();

@@ -3965,12 +3965,13 @@ kbd {
 /* Category buttons stay together when they fit and wrap at narrow widths. */
 .panel-lane .segmented {
   flex-wrap: wrap;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
 
 .panel-lane .segment {
-  flex: none;
+  flex: 1 0 auto;
   gap: 3px;
   padding: 4px 3px;
   font-size: 11px;
