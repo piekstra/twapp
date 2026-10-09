@@ -2131,7 +2131,7 @@ kbd {
 .panel-lane-label {
   flex-basis: 100%;
   font-size: 11px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .panel-lane-arrow {

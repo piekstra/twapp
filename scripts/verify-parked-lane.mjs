@@ -48,8 +48,26 @@ try {
       .filter(e => e.getBoundingClientRect().right > el.getBoundingClientRect().right + 1).length);
     assert.equal(overflow, 0);
     await page.screenshot({ path: path.join(dir, `controls-${theme}-${width}.png`) });
+    let labelContrast = null;
     if (process.env.TWAPP_BEFORE !== '1') {
       assert.equal(await page.locator('.panel-lane-label').textContent(), 'This session is:');
+      labelContrast = await page.locator('.panel-lane-label').evaluate(el => {
+        const luminance = color => {
+          const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        let surface = el;
+        while (surface.parentElement && ['transparent', 'rgba(0, 0, 0, 0)'].includes(getComputedStyle(surface).backgroundColor)) {
+          surface = surface.parentElement;
+        }
+        const foreground = luminance(getComputedStyle(el).color);
+        const background = luminance(getComputedStyle(surface).backgroundColor);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      assert.ok(labelContrast >= 4.5, `category label contrast is ${labelContrast}:1`);
       assert.equal(await lane.locator('.lane-dot').count(), 4, 'all category icons remain');
       assert.equal(await lane.locator('.panel-lane-arrow').count(), 3, 'only unselected categories have arrows');
       assert.equal(await lane.locator('.segment.active .panel-lane-arrow').count(), 0);
@@ -101,7 +119,7 @@ try {
       await heading.click();
       await page.screenshot({ path: path.join(dir, `overview-${theme}-${width}.png`) });
     }
-    results.push({ theme, width, overflow, parkedInteraction: process.env.TWAPP_BEFORE !== '1' });
+    results.push({ theme, width, overflow, labelContrast, parkedInteraction: process.env.TWAPP_BEFORE !== '1' });
     await page.close();
   }
   await fs.writeFile(path.join(dir, 'results.json'), JSON.stringify(results, null, 2));
