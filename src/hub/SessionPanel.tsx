@@ -479,19 +479,24 @@ export default function SessionPanel({
       )}
 
       <div className="panel-lane">
-        <div className="segmented" role="radiogroup" aria-label="Lane">
-          {LANES.map(({ lane, label }) => (
-            <button
-              key={lane}
-              role="radio"
-              aria-checked={(session.lane ?? "background") === lane}
-              className={`segment${(session.lane ?? "background") === lane ? " active" : ""}`}
-              onClick={() => onSetLane(lane)}
-            >
-              <span className={`lane-dot lane-dot-${lane}`} />
-              {label}
-            </button>
-          ))}
+        <span className="panel-lane-label">This session is:</span>
+        <div className="segmented" role="group" aria-label="Session category">
+          {LANES.map(({ lane, label }) => {
+            const selected = (session.lane ?? "background") === lane;
+            return (
+              <button
+                key={lane}
+                type="button"
+                aria-pressed={selected}
+                aria-label={selected ? `Current category: ${label}` : `Move this session to ${label}`}
+                className={`segment${selected ? " active" : ""}`}
+                onClick={() => onSetLane(lane)}
+              >
+                <span className={`lane-dot lane-dot-${lane}`} aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
         </div>
         {session.lane === "blocked" && <span className="panel-lane-since">{blockedLabel(session, now)}</span>}
       </div>
