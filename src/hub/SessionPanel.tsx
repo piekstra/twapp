@@ -1,18 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { AgentProvider, GlobalConfig, Note, SessionHistoryEvent, TicketInfo } from "../types";
-import { formatTicketBadge, formatTime } from "../utils/format";
-import { remarkAutolinkFilePaths } from "../utils/markdown";
+import type { AgentProvider, GlobalConfig, SessionHistoryEvent } from "../types";
+import { formatTicketBadge } from "../utils/format";
 import { buildSessionFieldsArgs } from "../utils/session";
 import { getDarkModeAccentColor } from "../color";
-import { markdownComponents } from "../components/markdown";
 import { copyText, LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
-import AskList from "./AskList";
-import BlockerList from "./BlockerList";
+import SessionDetails, { useNotes, useTicket, type DetailTab } from "./SessionDetails";
 import Linkify from "./Linkify";
 
 export const SESSION_COLORS = [
@@ -53,6 +47,33 @@ interface Props {
   showCollapse: boolean;
 }
 
+const ASK_NOUNS: Record<string, [string, string]> = {
+  decision: ["decision", "decisions"],
+  action: ["action", "actions"],
+  followup: ["follow-up", "follow-ups"],
+};
+const YAK_NOUNS: Record<string, [string, string]> = {
+  shaving: ["shaving", "shaving"],
+  shaved: ["shaved", "shaved"],
+  set_aside: ["set aside", "set aside"],
+};
+
+/** "1 decision · 2 follow-ups", in the order of `nouns`. */
+function countParts(kinds: string[], nouns: Record<string, [string, string]>) {
+  return Object.entries(nouns)
+    .map(([kind, [one, many]]) => {
+      const n = kinds.filter((k) => k === kind).length;
+      return n ? `${n} ${n === 1 ? one : many}` : null;
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** A note's first line without its markdown, for a one-line preview. */
+function plainLine(text: string) {
+  return text.split("\n")[0].replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~]/g, "").trim();
+}
+
 /** Sessions whose stale-instructions notice was put off until the window restarts. */
 const laterContext = new Set<string>();
 
@@ -71,19 +92,14 @@ export default function SessionPanel({
   showCollapse,
 }: Props) {
   const directory = session.key;
-  const mdComponents = markdownComponents(onPreview);
 
-  // --- Notes ---------------------------------------------------------------
-  // Notes can also change on disk while the panel is open (`twapp note add`
-  // or `remove` from an agent), so the file is the source of truth: every
-  // change here is an edit by note id, applied to what is on disk.
-  const [notes, setNotes] = useState<Note[]>([]);
   const [, setContextLater] = useState(0);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [colorsOpen, setColorsOpen] = useState(false);
   useEffect(() => {
     setNameDraft(null);
     setColorsOpen(false);
+    setDetails(null);
   }, [session.key]);
   useEffect(() => {
     if (!colorsOpen) return;
@@ -104,9 +120,10 @@ export default function SessionPanel({
     setNameDraft(null);
     if (name && name !== session.name) hubApi.rename(directory, name).catch(console.error);
   };
-  const [blockersOpen, setBlockersOpen] = useState<boolean | null>(null);
-  const [asksOpen, setAsksOpen] = useState<boolean | null>(null);
-  const [yaksOpen, setYaksOpen] = useState(false);
+  const notes = useNotes(directory);
+  const ticket = useTicket(directory, session.ticket_key);
+  const [details, setDetails] = useState<{ tab: DetailTab; composing: boolean } | null>(null);
+  const openDetails = (tab: DetailTab, composing = false) => setDetails({ tab, composing });
   const [editingEffort, setEditingEffort] = useState(false);
   const [effortDraft, setEffortDraft] = useState("");
   const effortName = session.effort?.name ?? linkedEffort ?? null;
@@ -116,57 +133,7 @@ export default function SessionPanel({
     if (name === (session.effort?.name ?? "")) return;
     hubApi.setEffort(session.key, name || null).catch(console.error);
   };
-  // Until the user toggles it, the section is open only when it has notes.
-  const [notesOpen, setNotesExpanded] = useState<boolean | null>(null);
-  const [newNote, setNewNote] = useState("");
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-  const [editingText, setEditingText] = useState("");
 
-  const byNewest = (list: Note[]) => [...list].sort((a, b) => b.timestamp - a.timestamp);
-
-  const reloadNotes = () => {
-    invoke<Note[]>("load_notes", { directory })
-      .then((saved) => setNotes(byNewest(saved || [])))
-      .catch(console.error);
-  };
-
-  const updateNotes = (change: (prev: Note[]) => Note[]) => {
-    setNotes((prev) => byNewest(change(prev)));
-    invoke<Note[]>("load_notes", { directory })
-      .then((disk) => {
-        const next = byNewest(change(disk || []));
-        setNotes(next);
-        return invoke("save_notes", { directory, notes: next });
-      })
-      .catch(console.error);
-  };
-
-  useEffect(() => {
-    setNotes([]);
-    reloadNotes();
-    const id = setInterval(reloadNotes, 10000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [directory]);
-
-  const [composing, setComposing] = useState(false);
-  const addNote = () => {
-    if (!newNote.trim()) return;
-    const note = { id: crypto.randomUUID(), text: newNote.trim(), timestamp: Date.now() };
-    updateNotes((prev) => [note, ...prev]);
-    setNewNote("");
-    setComposing(false);
-  };
-  const deleteNote = (id: string) => {
-    updateNotes((prev) => prev.filter((n) => n.id !== id));
-  };
-  const saveEditNote = () => {
-    if (!editingNoteId) return;
-    const trimmed = editingText.trim();
-    if (trimmed) updateNotes((prev) => prev.map((n) => (n.id === editingNoteId ? { ...n, text: trimmed } : n)));
-    setEditingNoteId(null);
-    setEditingText("");
-  };
 
   const send = (text: string) => {
     hubApi.write(session.key, activeTab, text).catch(console.error);
@@ -186,59 +153,6 @@ export default function SessionPanel({
       .catch((e) => setArchiveError(String(e)));
   };
 
-  // --- Ticket --------------------------------------------------------------
-  const [ticket, setTicket] = useState<TicketInfo | null>(null);
-  // Until the user toggles it, the section is open only when a ticket is linked.
-  const [ticketOpen, setTicketExpanded] = useState<boolean | null>(null);
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [changingTicket, setChangingTicket] = useState(false);
-  const [linkKey, setLinkKey] = useState("");
-  const [linking, setLinking] = useState(false);
-  const [ticketError, setTicketError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    setTicket(null);
-    setChangingTicket(false);
-    setTicketError(null);
-    invoke<TicketInfo | null>("get_ticket_info", { directory })
-      .then((info) => setTicket(info))
-      .catch(console.error);
-  }, [directory, session.ticket_key]);
-
-  const linkTicket = async () => {
-    const key = linkKey.trim();
-    if (!key) return;
-    setLinking(true);
-    setTicketError(null);
-    try {
-      setTicket(await invoke<TicketInfo>("link_ticket", { directory, key }));
-      setLinkKey("");
-      setChangingTicket(false);
-    } catch (e) {
-      setTicketError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLinking(false);
-    }
-  };
-
-  const refreshTicket = async () => {
-    setRefreshing(true);
-    setTicketError(null);
-    try {
-      setTicket(await invoke<TicketInfo>("refresh_ticket", { directory }));
-    } catch (e) {
-      setTicketError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const unlinkTicket = async () => {
-    await invoke("unlink_ticket", { directory }).catch(console.error);
-    setTicket(null);
-    setChangingTicket(false);
-  };
 
   // --- Settings and history -------------------------------------------------
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -326,12 +240,10 @@ export default function SessionPanel({
     });
 
   const isDark = document.documentElement.classList.contains("dark");
-  const ticketExpanded = ticketOpen ?? !!ticket;
-  const notesExpanded = notesOpen ?? notes.length > 0;
   const blockers = session.blockers ?? [];
-  const blockersExpanded = blockersOpen ?? blockers.length > 0;
   const asks = session.asks ?? [];
-  const asksExpanded = asksOpen ?? asks.length > 0;
+  const yaks = session.yaks?.yaks ?? [];
+  const shaving = [...yaks].reverse().find((y) => y.status === "shaving");
   const summary = session.summary;
   const status = session.status;
 
@@ -440,10 +352,7 @@ export default function SessionPanel({
           <button
             className="button small"
             onClick={() => {
-              const key = session.ticket_suggestion!;
-              invoke<TicketInfo>("link_ticket", { directory, key })
-                .then((info) => setTicket(info))
-                .catch((e) => setTicketError(e instanceof Error ? e.message : String(e)));
+              ticket.link(session.ticket_suggestion!).then((ok) => ok || openDetails("ticket"));
             }}
           >
             Link
@@ -625,277 +534,85 @@ export default function SessionPanel({
         )}
       </section>
 
-      <section className="panel-section">
-        <div className="section-head" onClick={() => setTicketExpanded(!ticketExpanded)}>
-          <Chevron open={ticketExpanded} />
-          <span className="section-title">Ticket</span>
-          {!ticketExpanded && ticket && <span className="chip chip-mono">{formatTicketBadge(ticket.key)}</span>}
-          {!ticketExpanded && !ticket && <span className="section-empty">None linked</span>}
-          <span className="spacer" />
-          {ticket && ticketExpanded && (
-            <>
-              <button
-                className="button ghost small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  refreshTicket();
-                }}
-                disabled={refreshing}
-              >
-                {refreshing ? "Refreshing" : "Refresh"}
-              </button>
-              <button
-                className="button ghost small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setChangingTicket(true);
-                }}
-              >
-                Change
-              </button>
-            </>
+      <section className="panel-rows" aria-label="Session details">
+        <button className="panel-row" onClick={() => openDetails("ticket")}>
+          <span className="panel-row-label">Ticket</span>
+          {ticket.ticket ? (
+            <span className="panel-row-value">
+              <span className="chip chip-mono">{formatTicketBadge(ticket.ticket.key)}</span>
+              <span className="panel-row-text">{ticket.ticket.title}</span>
+            </span>
+          ) : (
+            <span className="panel-row-value section-empty">None linked</span>
           )}
-        </div>
-        {ticketExpanded && (
-          <div className="section-body">
-            {ticketError && <div className="inline-error">{ticketError}</div>}
-            {ticket && !changingTicket ? (
-              <div className="ticket-card">
-                <div className="ticket-row">
-                  <span className="ticket-key">{ticket.key}</span>
-                  <span className="chip">{ticket.type}</span>
-                  <span className={`chip status-chip status-${ticket.status.toLowerCase().replace(/\s+/g, "-")}`}>{ticket.status}</span>
-                  {ticket.points && <span className="chip">{ticket.points} pts</span>}
-                </div>
-                <div className="ticket-title">{ticket.title}</div>
-                {ticket.epic && <div className="ticket-epic">{ticket.epic}</div>}
-                {ticket.description && (
-                  <div
-                    className={`ticket-description${descriptionExpanded ? " expanded" : ""}`}
-                    onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                  >
-                    {ticket.description}
-                  </div>
-                )}
-                {ticket.url && (
-                  <a
-                    className="text-link"
-                    href={ticket.url}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      openUrl(ticket.url!).catch(console.error);
-                    }}
-                  >
-                    Open in {ticket.source === "github" ? "GitHub" : "Jira"}
-                  </a>
-                )}
-              </div>
-            ) : (
-              <div className="ticket-linker">
-                <div className="input-row">
-                  <input
-                    className="input"
-                    placeholder="ABC-123, 123, or owner/repo#123"
-                    value={linkKey}
-                    onChange={(e) => setLinkKey(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") linkTicket();
-                      if (e.key === "Escape") setChangingTicket(false);
-                    }}
-                    disabled={linking}
-                    autoFocus={changingTicket}
-                  />
-                  <button className="button primary" onClick={linkTicket} disabled={linking || !linkKey.trim()}>
-                    {linking ? "Linking" : "Link"}
-                  </button>
-                </div>
-                {ticket && changingTicket && (
-                  <div className="input-row-actions">
-                    <button className="button ghost small" onClick={unlinkTicket}>Unlink</button>
-                    <button className="button ghost small" onClick={() => setChangingTicket(false)}>Cancel</button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      {asks.length > 0 && (
-        <section className="panel-section">
-          <div className="section-head" onClick={() => setAsksOpen(!asksExpanded)}>
-            <Chevron open={asksExpanded} />
-            <span className="section-title" title="Decisions, actions and follow-ups the session's agent recorded for you">For you</span>
-            <span className="count">{asks.length}</span>
-            {asks.some((a) => a.kind === "decision") && <span className="ask-badge">Decision</span>}
-          </div>
-          {asksExpanded && (
-            <div className="section-body">
-              <AskList items={asks.map((ask) => ({ ask, session }))} now={now} />
-            </div>
-          )}
-        </section>
-      )}
-
-      {blockers.length > 0 && (
-        <section className="panel-section">
-          <div className="section-head" onClick={() => setBlockersOpen(!blockersExpanded)}>
-            <Chevron open={blockersExpanded} />
-            <span className="section-title">Waiting on</span>
-            <span className="count">{blockers.length}</span>
-            {blockers.some((b) => b.status === "updated") && <span className="blocker-badge">Updated</span>}
-          </div>
-          {blockersExpanded && (
-            <div className="section-body">
-              <BlockerList items={blockers.map((blocker) => ({ blocker, session }))} now={now} />
-            </div>
-          )}
-        </section>
-      )}
-
-      {(session.yaks?.yaks.length ?? 0) > 0 && (
-        <section className="panel-section">
-          <div className="section-head" onClick={() => setYaksOpen(!yaksOpen)}>
-            <Chevron open={yaksOpen} />
-            <span className="section-title" title="Tangents the session took away from its main effort">Yaks</span>
-            <span className="count">{session.yaks!.yaks.length}</span>
-            {session.yaks!.yaks.some((y) => y.status === "shaving") && <span className="yak-chip yak-shaving">shaving</span>}
-          </div>
-          {yaksOpen && (
-            <ul className="yak-list section-body">
-              {[...session.yaks!.yaks].reverse().map((yak) => (
-                <li key={yak.id} className="yak-row">
-                  <span className={`yak-chip yak-${yak.status}`}>{yak.status === "set_aside" ? "set aside" : yak.status}</span>
-                  <span className="yak-title">{yak.title}</span>
-                  <span className="yak-meta" title={`First seen ${new Date(yak.first_seen).toLocaleString()}; seen by ${yak.sightings} summaries; the transcript grew ${Math.round(yak.transcript_bytes / 1024)} KB while on it`}>
-                    {sinceLabel(yak.first_seen, now)} ago · {yak.sightings}×
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-
-      <section className="panel-section grow">
-        <div className="section-head" onClick={() => setNotesExpanded(!notesExpanded)}>
-          <Chevron open={notesExpanded} />
-          <span className="section-title">Notes</span>
-          {notes.length > 0 && <span className="count">{notes.length}</span>}
-          {!notesExpanded && notes.length === 0 && <span className="section-empty">None yet</span>}
-          <span className="spacer" />
-          <button
-            className="icon-button small"
-            onClick={(e) => {
-              e.stopPropagation();
-              reloadNotes();
-            }}
-            title="Reload notes from disk"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" />
-            </svg>
+          <Chevron open={false} />
+        </button>
+        {asks.length > 0 && (
+          <button className="panel-row" onClick={() => openDetails("asks")} title="Decisions, actions and follow-ups the session's agent recorded for you">
+            <span className="panel-row-label">For you</span>
+            <span className="panel-row-value">
+              <span className="count">{asks.length}</span>
+              {asks.some((a) => a.kind === "decision") && <span className="ask-badge">Decision</span>}
+              <span className="panel-row-text">{countParts(asks.map((a) => a.kind), ASK_NOUNS)}</span>
+            </span>
+            <Chevron open={false} />
           </button>
-          <button
-            className="icon-button small"
-            onClick={(e) => {
-              e.stopPropagation();
-              setNotesExpanded(true);
-              setComposing(true);
-            }}
-            title="Add a note"
-          >
+        )}
+        {blockers.length > 0 && (
+          <button className="panel-row" onClick={() => openDetails("blockers")}>
+            <span className="panel-row-label">Waiting on</span>
+            <span className="panel-row-value">
+              <span className="count">{blockers.length}</span>
+              {blockers.some((b) => b.status === "updated") && <span className="blocker-badge">Updated</span>}
+              <span className="panel-row-text">{blockers.length === 1 ? blockers[0].title : blockers.map((b) => b.party || b.title).join(", ")}</span>
+            </span>
+            <Chevron open={false} />
+          </button>
+        )}
+        {yaks.length > 0 && (
+          <button className="panel-row" onClick={() => openDetails("yaks")} title="Tangents the session took away from its main effort">
+            <span className="panel-row-label">Yaks</span>
+            <span className="panel-row-value">
+              <span className="count">{yaks.length}</span>
+              {shaving && <span className="yak-chip yak-shaving">shaving</span>}
+              <span className="panel-row-text">{shaving ? shaving.title : countParts(yaks.map((y) => y.status), YAK_NOUNS)}</span>
+            </span>
+            <Chevron open={false} />
+          </button>
+        )}
+        <div className="panel-row-wrap">
+          <button className="panel-row" onClick={() => openDetails("notes")}>
+            <span className="panel-row-label">Notes</span>
+            {notes.notes.length > 0 ? (
+              <span className="panel-row-value">
+                <span className="count">{notes.notes.length}</span>
+                <span className="panel-row-text">{plainLine(notes.notes[0].text)}</span>
+              </span>
+            ) : (
+              <span className="panel-row-value section-empty">None yet</span>
+            )}
+            <Chevron open={false} />
+          </button>
+          <button className="icon-button small panel-row-add" onClick={() => openDetails("notes", true)} title="Add a note">
             +
           </button>
         </div>
-        {notesExpanded && (
-          <div className="section-body">
-            {composing && (
-              <div className="note-composer">
-                <textarea
-                  className="input"
-                  value={newNote}
-                  autoFocus
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Add a note. ⌘↩ to save, Esc to cancel."
-                  rows={2}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && e.metaKey) addNote();
-                    if (e.key === "Escape") {
-                      setNewNote("");
-                      setComposing(false);
-                    }
-                  }}
-                />
-                <div className="note-composer-actions">
-                  <button className="button ghost small" onClick={() => { setNewNote(""); setComposing(false); }}>Cancel</button>
-                  <button className="button primary small" disabled={!newNote.trim()} onClick={addNote}>Add note</button>
-                </div>
-              </div>
-            )}
-            {!composing && notes.length === 0 && (
-              <div className="section-empty blocker-empty">No notes yet. + adds one; the session's agent can add them with <code>twapp note add</code>.</div>
-            )}
-            <div className="note-list">
-              {notes.map((note) => (
-                <div key={note.id} className="note-card">
-                  <div className="note-meta">
-                    <span>{formatTime(note.timestamp)}</span>
-                    <span className="spacer" />
-                    {editingNoteId === note.id ? (
-                      <button className="icon-button small" onClick={saveEditNote} title="Save">✓</button>
-                    ) : (
-                      <button
-                        className="icon-button small"
-                        onClick={() => {
-                          setEditingNoteId(note.id);
-                          setEditingText(note.text);
-                        }}
-                        title="Edit"
-                      >
-                        ✎
-                      </button>
-                    )}
-                    <button
-                      className="icon-button small"
-                      onClick={() => {
-                        send(note.text);
-                        deleteNote(note.id);
-                      }}
-                      title="Type into the terminal"
-                    >
-                      ↵
-                    </button>
-                    <button className="icon-button small" onClick={() => deleteNote(note.id)} title="Delete">×</button>
-                  </div>
-                  {editingNoteId === note.id ? (
-                    <textarea
-                      className="input"
-                      value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && e.metaKey) saveEditNote();
-                        if (e.key === "Escape") {
-                          setEditingNoteId(null);
-                          setEditingText("");
-                        }
-                      }}
-                      autoFocus
-                    />
-                  ) : (
-                    <div className="note-text">
-                      <Markdown remarkPlugins={[remarkGfm, remarkAutolinkFilePaths]} components={mdComponents}>
-                        {note.text}
-                      </Markdown>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {notes.length === 0 && <div className="empty-hint">No notes yet.</div>}
-            </div>
-          </div>
-        )}
       </section>
+
+      {details && (
+        <SessionDetails
+          session={session}
+          tab={details.tab}
+          onTab={(tab) => setDetails({ tab, composing: false })}
+          notes={notes}
+          ticket={ticket}
+          composing={details.composing}
+          now={now}
+          onPreview={onPreview}
+          onSend={send}
+          onClose={() => setDetails(null)}
+        />
+      )}
 
       {settingsOpen && (
         <div className="config-overlay" onClick={() => setSettingsOpen(false)}>
