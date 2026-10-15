@@ -62,6 +62,10 @@ Keep them current:
 
 `twapp note add "<text>"` adds a note the user sees in the session's panel; `twapp note list`, `twapp note remove <id>`. Notes are for the user: decisions to make, things to verify later.
 
+## Pull requests
+
+The window finds the pull requests a session opens on its own, from the URL `gh pr create` prints, and lists every other pull request URL the conversation names as mentioned. For one the session works on that it did not open with `gh pr create` in its own shell (opened in the browser, by a subagent, or a colleague's it is finishing), run `twapp pr add <url>` so the user sees it under the session; `twapp pr list` shows what the window found.
+
 ## Archiving
 
 `twapp archive --note "<why it is worth keeping>"` closes the session and keeps a copy of its conversation in the session directory, so it can be resumed after the harness would have deleted it. Archive only when the user asks; `twapp unarchive` undoes it.

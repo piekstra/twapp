@@ -166,12 +166,13 @@ Each lane folds from its header. The list next to a session's details starts wit
 
 ### Notes and tickets
 
-The sidebar shows the selected session's details first (its state, summary, and one line each for its ticket, For you items, blockers, yaks and notes) and the session list below them; the layout menu can put the list on top instead. The summary starts collapsed to its state line in the session you are working in; click it to expand. Each line gives a count and a preview; click it to open the session's details dialog, with a tab for each, where the items are listed in full and acted on. `+` on the Notes line opens the dialog with a new note started.
+The sidebar shows the selected session's details first (its state, summary, and one line each for its ticket, pull requests, For you items, blockers, yaks and notes) and the session list below them; the layout menu can put the list on top instead. The summary starts collapsed to its state line in the session you are working in; click it to expand. Each line gives a count and a preview; click it to open the session's details dialog, with a tab for each, where the items are listed in full and acted on. `+` on the Notes line opens the dialog with a new note started.
 
 - **Notes** are Markdown and belong to the session. `↵` on a note types it into the terminal and removes it from the list.
+- **Pull requests** are found in the session's conversation. One whose URL `gh pr create` printed in the session is listed as opened here, with its title, description, state (open, draft, merged, closed), checks and review; every other pull request URL the conversation names is listed under Mentioned. The window reads new transcript lines and fetches pull requests with `gh pr view` once a minute at most: an open one the session opened every ten minutes, a mentioned one every hour, a merged or closed one never again. **Refresh** fetches them all now, and **Hide** stops showing one. An agent adds one the session works on but did not open with `twapp pr add <url>`.
 - **Tickets** accept a Jira key (`ABC-1234`), a bare number (prefixed with your configured Jira project), or a GitHub issue (`owner/repo#42` or `#42`). Change or unlink them from the panel, or with `twapp ticket link <ref>`.
 
-Agents in a session can use the same data from the CLI: `twapp note add`, `twapp ticket link`.
+Agents in a session can use the same data from the CLI: `twapp note add`, `twapp ticket link`, `twapp pr add|list|remove`.
 
 ### Forking
 

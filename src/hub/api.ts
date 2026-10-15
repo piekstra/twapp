@@ -55,6 +55,31 @@ export interface Yak {
   transcript_bytes: number;
 }
 
+export interface PullInfo {
+  title: string;
+  body: string;
+  state: "open" | "draft" | "merged" | "closed";
+  checks?: "passing" | "failing" | "pending" | null;
+  review?: "approved" | "changes_requested" | "review_required" | null;
+  head: string;
+  author: string;
+  updated_at: string;
+}
+
+export interface Pull {
+  url: string;
+  repo: string;
+  number: number;
+  /** Opened in the session, or added with `twapp pr add`. */
+  worked_on: boolean;
+  first_seen: string;
+  last_seen: string;
+  mentions: number;
+  info?: PullInfo | null;
+  fetched_at?: string | null;
+  fetch_error?: string | null;
+}
+
 export interface YakLog {
   yaks: Yak[];
   main_effort?: string | null;
@@ -95,6 +120,7 @@ export interface SessionView {
   /** Open decisions, actions and follow-ups the agent recorded for the user. */
   asks?: Ask[];
   yaks?: YakLog;
+  pulls?: Pull[];
   /** The effort the user put the session in, or one "Find related" found. */
   effort?: { name: string; source: "user" | "auto" } | null;
   epic?: string | null;
@@ -224,6 +250,8 @@ export const hubApi = {
   /** Resolves true when the check's output changed. `command` is the text the user was shown. */
   blockerCheck: (key: string, id: string, approve: boolean, once = false, command: string | null = null) =>
     invoke<boolean>("hub_blocker_check", { key, id, approve, once, command }),
+  pullsRefresh: (key: string) => invoke("hub_pulls_refresh", { key }),
+  pullHide: (key: string, url: string) => invoke("hub_pull_hide", { key, url }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
   blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
   blockerSend: (key: string, id: string) => invoke("hub_blocker_send", { key, id }),

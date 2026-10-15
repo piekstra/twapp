@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Markdown from "react-markdown";
@@ -7,11 +7,12 @@ import type { Note, TicketInfo } from "../types";
 import { formatTime } from "../utils/format";
 import { remarkAutolinkFilePaths } from "../utils/markdown";
 import { markdownComponents } from "../components/markdown";
-import { sinceLabel, type SessionView } from "./api";
+import { hubApi, sinceLabel, type Pull, type SessionView } from "./api";
+import { ExternalLink } from "./Linkify";
 import AskList from "./AskList";
 import BlockerList from "./BlockerList";
 
-export type DetailTab = "ticket" | "asks" | "blockers" | "yaks" | "notes";
+export type DetailTab = "ticket" | "pulls" | "asks" | "blockers" | "yaks" | "notes";
 
 const byNewest = (list: Note[]) => [...list].sort((a, b) => b.timestamp - a.timestamp);
 
@@ -122,8 +123,10 @@ export default function SessionDetails({ session, tab, onTab, notes, ticket, com
   const asks = session.asks ?? [];
   const blockers = session.blockers ?? [];
   const yaks = session.yaks?.yaks ?? [];
+  const pulls = session.pulls ?? [];
   const tabs: { tab: DetailTab; label: string; count?: number; shown: boolean }[] = [
     { tab: "ticket", label: "Ticket", shown: true },
+    { tab: "pulls", label: "Pull requests", count: pulls.length, shown: pulls.length > 0 },
     { tab: "asks", label: "For you", count: asks.length, shown: asks.length > 0 },
     { tab: "blockers", label: "Waiting on", count: blockers.length, shown: blockers.length > 0 },
     { tab: "yaks", label: "Yaks", count: yaks.length, shown: yaks.length > 0 },
@@ -149,6 +152,7 @@ export default function SessionDetails({ session, tab, onTab, notes, ticket, com
         </div>
         <div className="config-body details-body">
           {tab === "ticket" && <TicketTab ticket={ticket} />}
+          {tab === "pulls" && <PullsTab session={session} now={now} onPreview={onPreview} />}
           {tab === "asks" &&
             (asks.length ? <AskList items={asks.map((ask) => ({ ask, session }))} now={now} /> : <div className="section-empty">Nothing open.</div>)}
           {tab === "blockers" &&
@@ -232,6 +236,122 @@ function TicketTab({ ticket: t }: { ticket: Ticket }) {
               <button className="button ghost small" onClick={() => setChanging(false)}>Cancel</button>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PULL_STATE = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" } as const;
+const REVIEW_LABEL = { approved: "Approved", changes_requested: "Changes requested", review_required: "Review required" } as const;
+
+/** "2 open · 1 merged" for a list of pull requests, unfetched ones left out. */
+export function pullStates(pulls: Pull[]) {
+  const order = ["open", "draft", "merged", "closed"] as const;
+  return order
+    .map((state) => {
+      const n = pulls.filter((p) => p.info?.state === state).length;
+      return n ? `${n} ${state}` : null;
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function PullCard({ pull, session, now, onPreview }: { pull: Pull; session: SessionView; now: number; onPreview: (path: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
+  const info = pull.info;
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (el && !expanded) setClipped(el.scrollHeight > el.clientHeight + 1);
+  }, [info?.body, expanded]);
+  const mdComponents = markdownComponents(onPreview);
+  return (
+    <div className={`pull-card pull-${info?.state ?? "unknown"}`}>
+      <div className="pull-top">
+        <span className="pull-ref">{pull.repo}#{pull.number}</span>
+        {info && <span className={`chip pull-state pull-state-${info.state}`}>{PULL_STATE[info.state]}</span>}
+        {info?.checks && (info.state === "open" || info.state === "draft") && (
+          <span className={`chip pull-checks pull-checks-${info.checks}`}>Checks {info.checks}</span>
+        )}
+        {info?.review && (info.state === "open" || info.state === "draft") && (
+          <span className={`chip pull-review-${info.review}`}>{REVIEW_LABEL[info.review]}</span>
+        )}
+        <span className="spacer" />
+        {info?.updated_at && <span className="pull-age" title={new Date(info.updated_at).toLocaleString()}>updated {sinceLabel(info.updated_at, now)} ago</span>}
+      </div>
+      <div className="pull-title">{info?.title ?? (pull.fetch_error ? "Could not fetch this pull request" : "Not fetched yet")}</div>
+      {pull.fetch_error && <div className="inline-error">{pull.fetch_error}</div>}
+      {info && (info.head || info.author) && (
+        <div className="pull-meta">
+          {info.head && <code>{info.head}</code>}
+          {info.author && <span>by {info.author}</span>}
+        </div>
+      )}
+      {info?.body && (
+        <div ref={body} className={`pull-body${expanded ? " expanded" : clipped ? "" : " whole"}`}>
+          <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {info.body}
+          </Markdown>
+        </div>
+      )}
+      <div className="pull-actions">
+        <ExternalLink url={pull.url} label="Open on GitHub" />
+        {info?.body && (clipped || expanded) && (
+          <button className="button ghost small" onClick={() => setExpanded(!expanded)}>
+            {expanded ? "Show less" : "Show all"}
+          </button>
+        )}
+        <span className="spacer" />
+        <button
+          className="button ghost small"
+          title="Stop showing it here; later mentions do not bring it back"
+          onClick={() => hubApi.pullHide(session.key, pull.url).catch(console.error)}
+        >
+          Hide
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PullsTab({ session, now, onPreview }: { session: SessionView; now: number; onPreview: (path: string) => void }) {
+  const pulls = session.pulls ?? [];
+  const workedOn = pulls.filter((p) => p.worked_on);
+  const mentioned = pulls.filter((p) => !p.worked_on);
+  const [mentionedOpen, setMentionedOpen] = useState(workedOn.length === 0);
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    setRefreshing(true);
+    hubApi
+      .pullsRefresh(session.key)
+      .catch(console.error)
+      .finally(() => setRefreshing(false));
+  };
+  return (
+    <div className="details-pulls">
+      <div className="details-notes-head">
+        <span className="details-hint">Found in the session's conversation. Opened here: the session ran <code>gh pr create</code> for it or added it with <code>twapp pr add</code>.</span>
+        <span className="spacer" />
+        <button className="button ghost small" disabled={refreshing} onClick={refresh} title="Fetch every pull request's state again">
+          {refreshing ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+      {pulls.length === 0 && <div className="section-empty">No pull requests found.</div>}
+      {workedOn.length > 0 && (
+        <div className="ask-group">
+          <div className="ask-group-head static">Opened here<span className="count">{workedOn.length}</span></div>
+          {workedOn.map((p) => <PullCard key={p.url} pull={p} session={session} now={now} onPreview={onPreview} />)}
+        </div>
+      )}
+      {mentioned.length > 0 && (
+        <div className="ask-group">
+          <button className="ask-group-head" aria-expanded={mentionedOpen} onClick={() => setMentionedOpen(!mentionedOpen)} title="Pull requests the conversation names that the session did not open">
+            <svg className={`section-chevron${mentionedOpen ? " open" : ""}`} width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
+            Mentioned<span className="count">{mentioned.length}</span>
+          </button>
+          {mentionedOpen && mentioned.map((p) => <PullCard key={p.url} pull={p} session={session} now={now} onPreview={onPreview} />)}
         </div>
       )}
     </div>
