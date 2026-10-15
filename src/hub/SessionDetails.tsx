@@ -7,7 +7,7 @@ import type { Note, TicketInfo } from "../types";
 import { formatTime } from "../utils/format";
 import { remarkAutolinkFilePaths } from "../utils/markdown";
 import { markdownComponents } from "../components/markdown";
-import { hubApi, sinceLabel, type Pull, type SessionView } from "./api";
+import { hubApi, sinceLabel, type Pull, type SessionView, type TicketHistoryEntry } from "./api";
 import { ExternalLink } from "./Linkify";
 import AskList from "./AskList";
 import BlockerList from "./BlockerList";
@@ -151,7 +151,7 @@ export default function SessionDetails({ session, tab, onTab, notes, ticket, com
             ))}
         </div>
         <div className="config-body details-body">
-          {tab === "ticket" && <TicketTab ticket={ticket} />}
+          {tab === "ticket" && <TicketTab ticket={ticket} history={session.ticket_history ?? []} now={now} />}
           {tab === "pulls" && <PullsTab session={session} now={now} onPreview={onPreview} />}
           {tab === "asks" &&
             (asks.length ? <AskList items={asks.map((ask) => ({ ask, session }))} now={now} /> : <div className="section-empty">Nothing open.</div>)}
@@ -165,7 +165,7 @@ export default function SessionDetails({ session, tab, onTab, notes, ticket, com
   );
 }
 
-function TicketTab({ ticket: t }: { ticket: Ticket }) {
+function TicketTab({ ticket: t, history, now }: { ticket: Ticket; history: TicketHistoryEntry[]; now: number }) {
   const { ticket } = t;
   const [changing, setChanging] = useState(false);
   const [key, setKey] = useState("");
@@ -176,7 +176,7 @@ function TicketTab({ ticket: t }: { ticket: Ticket }) {
       setChanging(false);
     }
   };
-  return (
+  const card = (
     <div className="ticket-card">
       {t.error && <div className="inline-error">{t.error}</div>}
       {ticket && !changing ? (
@@ -236,6 +236,35 @@ function TicketTab({ ticket: t }: { ticket: Ticket }) {
               <button className="button ghost small" onClick={() => setChanging(false)}>Cancel</button>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="details-ticket">
+      {card}
+      {history.length > 0 && (
+        <div className="ask-group ticket-history">
+          <div className="ask-group-head static" title="Tickets the session was under before this one, or that its summaries found it working under">
+            {ticket ? "Earlier tickets" : "Tickets"}<span className="count">{history.length}</span>
+          </div>
+          {history.map((e) => (
+            <div key={e.key} className="ticket-history-row">
+              <div className="ticket-row">
+                {e.url ? <ExternalLink url={e.url} label={e.key} /> : <span className="ticket-key">{e.key}</span>}
+                {e.status && <span className={`chip status-chip status-${e.status.toLowerCase().replace(/\s+/g, "-")}`}>{e.status}</span>}
+                <span className="ticket-history-how">{e.linked_at ? (e.linked_by === "auto" ? "linked from summaries" : "linked") : "named by summaries"}</span>
+                <span className="spacer" />
+                <span className="pull-age" title={`${new Date(e.first_seen).toLocaleString()} to ${new Date(e.last_seen).toLocaleString()}`}>
+                  {sinceLabel(e.last_seen, now)} ago
+                </span>
+                <button className="button ghost small" disabled={!!t.busy} onClick={() => t.link(e.key)} title="Make it the session's ticket again">
+                  Link
+                </button>
+              </div>
+              {e.title && <div className="ticket-history-title">{e.title}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>

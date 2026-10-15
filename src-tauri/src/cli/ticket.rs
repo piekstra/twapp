@@ -42,8 +42,10 @@ pub fn read_linked(dir: &std::path::Path) -> Option<TicketInfo> {
 /// session file so the rail and search show it.
 pub fn write_linked(dir: &std::path::Path, ticket: &TicketInfo) -> Result<(), String> {
     let json = serde_json::to_string_pretty(ticket).map_err(|e| e.to_string())?;
+    let previous = read_linked(dir);
     super::fsutil::write_atomic(&dir.join(TICKET_FILE), json)
         .map_err(|e| format!("Failed to write ticket file: {}", e))?;
+    super::ticket_history::record_linked(dir, ticket, previous.as_ref());
     if let Ok(mut data) = super::session::read_session(dir) {
         data.ticket_key = Some(ticket.key.clone());
         let _ = super::session::write_session(dir, &data);

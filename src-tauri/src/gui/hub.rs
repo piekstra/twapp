@@ -177,6 +177,9 @@ pub struct SessionView {
     pub yaks: crate::cli::yaks::YakLog,
     /// Pull requests found in the session's transcript, worked-on ones first.
     pub pulls: Vec<crate::cli::pulls::Pull>,
+    /// Tickets the session was under before the linked one, or that its
+    /// summaries named, the latest first.
+    pub ticket_history: Vec<crate::cli::ticket_history::Entry>,
     pub effort: Option<EffortInfo>,
     /// The linked ticket's epic, which groups sessions with no effort set.
     pub epic: Option<String>,
@@ -502,6 +505,10 @@ impl HubSession {
             asks: crate::cli::asks::open_asks(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
             pulls: crate::cli::pulls::visible(Path::new(&self.key)),
+            ticket_history: crate::cli::ticket_history::earlier(
+                Path::new(&self.key),
+                data.as_ref().and_then(|d| d.ticket_key.as_deref()),
+            ),
             effort: self.effort.clone(),
             epic: std::fs::read_to_string(Path::new(&self.key).join(".twapp-ticket.json"))
                 .ok()
@@ -1408,6 +1415,21 @@ impl Hub {
         });
     }
 
+    /// Fetch the details of a ticket a summary named, for the session's
+    /// ticket history, without linking it.
+    fn fetch_named_ticket(&self, key: &str, ticket: String) {
+        let key = key.to_string();
+        std::thread::spawn(move || match crate::cli::ticket::fetch_ticket(&ticket, false) {
+            Ok(info) => {
+                crate::cli::ticket_history::record_details(Path::new(&key), &info);
+                if let Some(hub) = hub() {
+                    hub.emit_changed();
+                }
+            }
+            Err(e) => log::warn!("could not fetch {} for {}'s ticket history: {}", ticket, key, e),
+        });
+    }
+
     /// File a session in a lane. Marking it blocked starts its blocked and
     /// checked clocks; moving it out of blocked clears them.
     pub fn set_lane(&self, key: &str, lane: Lane) {
@@ -1605,6 +1627,7 @@ impl Hub {
         };
         let session_summary = Some(summary);
         let seen = session_summary.as_ref().and_then(|s| s.ticket.clone());
+        let seen_ticket = seen.clone();
         let linked = crate::cli::ticket::read_linked(Path::new(key));
         let (suggestion, effort, plan) = {
             let mut inner = self.inner.lock();
@@ -1617,6 +1640,13 @@ impl Hub {
             session.ticket_seen = seen;
             (suggestion, session.effort.as_ref().map(|e| e.name.clone()), plan)
         };
+        if let Some(named) = seen_ticket.as_deref() {
+            let linking = matches!(&plan, TicketPlan::Link(t) if t.eq_ignore_ascii_case(named))
+                || linked.as_ref().is_some_and(|t| t.key.eq_ignore_ascii_case(named));
+            if crate::cli::ticket_history::record_named(Path::new(key), named, &activity.at) && !linking {
+                self.fetch_named_ticket(key, named.to_string());
+            }
+        }
         if let TicketPlan::Link(ticket) = plan {
             self.auto_link_ticket(key, ticket);
         }
@@ -1636,10 +1666,12 @@ impl Hub {
     }
 
     /// Write journal entries for finished days that lack one, once at start
-    /// and again whenever a new work day begins.
+    /// and again whenever a new work day begins. Every pass also seeds the
+    /// ticket history of hosted sessions that have none from the trail.
     fn journal_loop(&self) {
         let mut done_for: Option<chrono::NaiveDate> = None;
         loop {
+            crate::cli::ticket_history::seed_from_trail(&crate::journal::default_root(), &self.hosted_keys());
             let today = crate::journal::today();
             if done_for != Some(today) {
                 let cfg = crate::summary::SummarizerConfig::from_config(std::env::var("PATH").ok());

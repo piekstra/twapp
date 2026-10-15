@@ -25,7 +25,7 @@ Run `twapp <command> --help` for flags.
 **Binary:** `~/.config/twapp/bin/twapp`, a symlink into `~/.config/twapp/twapp.app`.
 
 **Config and state:**
-- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-asks.json` (decisions, actions, follow-ups), `.twapp-yaks.json` (tangents seen by summaries), `.twapp-pulls.json` (pull requests found in the transcript and how far it was read), `.twapp-archive/` (an archived session's kept transcripts and `archive.json`) in the session directory.
+- Session: `.twapp-session.json`, `.twapp-notes-<name>.json`, `.twapp-ticket.json`, `.twapp-blockers.json`, `.twapp-asks.json` (decisions, actions, follow-ups), `.twapp-yaks.json` (tangents seen by summaries), `.twapp-pulls.json` (pull requests found in the transcript and how far it was read), `.twapp-tickets.json` (tickets linked before the current one and tickets summaries named), `.twapp-archive/` (an archived session's kept transcripts and `archive.json`) in the session directory.
 - Approved check commands: `~/.config/twapp/approved-checks.json`; every check the window runs is logged to `~/.local/state/twapp/blocker-checks.log`.
 - Global: `~/.config/twapp/config.yaml`, `default-permissions.json`, `hub.json` (rail order, lanes, efforts, dismissed name suggestions, selection, last-viewed).
 - Sockets: `~/.config/twapp/run/hub.sock` (window), `ptyd.sock` (terminal host).
