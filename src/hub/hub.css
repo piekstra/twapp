@@ -1231,7 +1231,6 @@ kbd {
   padding: 6px 10px 8px;
   border: none;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
   background: none;
   color: var(--text-2);
   font: 600 12px var(--font-ui);
@@ -2935,6 +2934,16 @@ kbd {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.ask-actions .ask-option {
+  height: auto;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 4px 8px;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
 }
 
 .ask-answer {

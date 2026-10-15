@@ -82,7 +82,7 @@ function Row({ ask, session, now, showSession, onSelect }: Item & { now: number;
         {ask.kind === "decision" && (
           <>
             {(ask.options ?? []).map((o) => (
-              <button key={o} className="button small" disabled={busy} onClick={() => close("answered", o, true)} title={running ? "Answer, and paste the answer into the session for you to send" : "Record the answer"}>
+              <button key={o} className="button small ask-option" disabled={busy} onClick={() => close("answered", o, true)} title={running ? "Answer, and paste the answer into the session for you to send" : "Record the answer"}>
                 {o}
               </button>
             ))}
