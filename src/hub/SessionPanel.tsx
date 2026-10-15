@@ -244,6 +244,7 @@ export default function SessionPanel({
   const asks = session.asks ?? [];
   const yaks = session.yaks?.yaks ?? [];
   const pulls = session.pulls ?? [];
+  const earlierTickets = session.ticket_history?.length ?? 0;
   // The ones the session opened, when there are any; otherwise every one it named.
   const shownPulls = pulls.some((p) => p.worked_on) ? pulls.filter((p) => p.worked_on) : pulls;
   const shaving = [...yaks].reverse().find((y) => y.status === "shaving");
@@ -544,6 +545,7 @@ export default function SessionPanel({
             <span className="panel-row-value">
               <span className="chip chip-mono">{formatTicketBadge(ticket.ticket.key)}</span>
               <span className="panel-row-text">{ticket.ticket.title}</span>
+              {earlierTickets > 0 && <span className="panel-row-more" title={`${earlierTickets} earlier`}>+{earlierTickets}</span>}
             </span>
           ) : (
             <span className="panel-row-value section-empty">None linked</span>

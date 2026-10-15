@@ -92,6 +92,7 @@ pub fn unlink_ticket(directory: String) -> Result<(), String> {
     let path = ticket_path(&directory);
     // A ticket twapp linked on its own is not linked again once removed.
     if let Some(ticket) = crate::cli::ticket::read_linked(std::path::Path::new(&directory)) {
+        crate::cli::ticket_history::record_unlinked(std::path::Path::new(&directory), &ticket);
         if ticket.linked_automatically() {
             if let Some(hub) = super::hub::hub() {
                 hub.dismiss_ticket(&super::hub::session_key(&directory), &ticket.key);
@@ -119,5 +120,7 @@ pub async fn refresh_ticket(directory: String) -> Result<serde_json::Value, Stri
         .map_err(|e| format!("Failed to parse ticket file: {}", e))?;
 
     let ticket = fetch_blocking(move || crate::cli::ticket::refresh_ticket_info(&old)).await?;
-    write_ticket_file(&ticket_path, &ticket)
+    let written = write_ticket_file(&ticket_path, &ticket)?;
+    crate::cli::ticket_history::record_details(std::path::Path::new(&directory), &ticket);
+    Ok(written)
 }

@@ -550,6 +550,24 @@ shown), from
 `~/.config/twapp/approved-checks.json`. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
+## Ticket history
+
+`.twapp-ticket.json` is the session's current ticket; `.twapp-tickets.json`
+keeps every other ticket the session has been under. `ticket::write_linked`
+(the GUI's Link, `twapp ticket link`, and the window's automatic link) and
+`twapp ticket create` record the new ticket and, when it replaces another,
+the previous one, so a ticket file written at session creation is kept once
+replaced. Unlinking keeps the removed ticket; a refresh updates its title and
+status. A summary that names a ticket records it with when it was seen, and
+the window fetches its details once when it is neither linked nor being
+linked. The `SessionView` carries every entry but the current ticket, the
+latest first.
+
+A session with no history file is seeded from the journal's activity trail,
+which records the linked ticket and its title with every summary: each ticket
+there becomes an entry with its first and last sighting. The journal loop
+seeds hosted sessions at start and on every pass after.
+
 ## Pull requests
 
 `.twapp-pulls.json` holds the pull requests found in the session's transcripts

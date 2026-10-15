@@ -1265,6 +1265,46 @@ kbd {
   margin-bottom: 10px;
 }
 
+.panel-row-more {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.details-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ticket-history-row {
+  padding: 8px 0 6px;
+  border-top: 1px solid var(--line);
+}
+
+.ticket-history-row .ticket-row {
+  font-size: 12px;
+}
+
+.ticket-history-row .ticket-key,
+.ticket-history-row .text-link {
+  font: 600 11.5px var(--font-mono);
+}
+
+.ticket-history-how {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.ticket-history-title {
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--text-1);
+  line-height: 1.4;
+}
+
 .details-hint {
   font-size: 11.5px;
   color: var(--text-3);

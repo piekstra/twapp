@@ -18,6 +18,7 @@ pub mod session;
 pub mod session_attribution;
 pub mod theme;
 pub mod ticket;
+pub mod ticket_history;
 pub mod transcript;
 
 use clap::Subcommand;
@@ -1701,8 +1702,11 @@ fn cmd_ticket_create(summary: &str, dir: Option<&str>, issue_type: &str) -> i32 
     };
 
     let ticket_file = target_dir.join(".twapp-ticket.json");
+    let previous = ticket::read_linked(&target_dir);
     if let Ok(json) = serde_json::to_string_pretty(&ti) {
-        let _ = std::fs::write(&ticket_file, json);
+        if std::fs::write(&ticket_file, json).is_ok() {
+            ticket_history::record_linked(&target_dir, &ti, previous.as_ref());
+        }
     }
 
     println!("Linked {}: {}", ti.key, ti.title);
@@ -1755,6 +1759,7 @@ fn cmd_ticket_refresh(dir: Option<&str>) -> i32 {
             eprintln!("Error writing ticket file: {}", e);
             return 1;
         }
+        ticket_history::record_details(&target_dir, &ti);
     }
 
     println!("Refreshed {}: {}", ti.key, ti.title);

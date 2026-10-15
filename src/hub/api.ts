@@ -80,6 +80,19 @@ export interface Pull {
   fetch_error?: string | null;
 }
 
+export interface TicketHistoryEntry {
+  key: string;
+  title?: string | null;
+  status?: string | null;
+  url?: string | null;
+  source?: string | null;
+  first_seen: string;
+  last_seen: string;
+  /** When it was last the linked ticket; none when only summaries named it. */
+  linked_at?: string | null;
+  linked_by?: string | null;
+}
+
 export interface YakLog {
   yaks: Yak[];
   main_effort?: string | null;
@@ -121,6 +134,7 @@ export interface SessionView {
   asks?: Ask[];
   yaks?: YakLog;
   pulls?: Pull[];
+  ticket_history?: TicketHistoryEntry[];
   /** The effort the user put the session in, or one "Find related" found. */
   effort?: { name: string; source: "user" | "auto" } | null;
   epic?: string | null;
