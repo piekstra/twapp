@@ -286,7 +286,8 @@ agents when to use each. A follow-up's title is refused past
 `FOLLOWUP_TITLE_CHARS` (the session-name limit), since it names the session
 started for it; the detail goes in `--context`.
 
-- **Window.** The panel's For you section lists a session's open items; the
+- **Window.** The panel's For you line counts a session's open items and
+  opens them in the session details dialog; the
   rail shows a one-line count (a single decision by its question); the
   overview's For you section lists every session's items by kind, starts open
   when a decision is waiting, and starts actions and follow-ups folded; the
