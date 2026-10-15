@@ -6,7 +6,7 @@ import { buildSessionFieldsArgs } from "../utils/session";
 import { getDarkModeAccentColor } from "../color";
 import { copyText, LANES, STATE_LABELS, hubApi, sinceLabel, type Lane, type SessionView } from "./api";
 import { blockedLabel } from "./SessionRail";
-import SessionDetails, { useNotes, useTicket, type DetailTab } from "./SessionDetails";
+import SessionDetails, { pullStates, useNotes, useTicket, type DetailTab } from "./SessionDetails";
 import Linkify from "./Linkify";
 
 export const SESSION_COLORS = [
@@ -243,6 +243,9 @@ export default function SessionPanel({
   const blockers = session.blockers ?? [];
   const asks = session.asks ?? [];
   const yaks = session.yaks?.yaks ?? [];
+  const pulls = session.pulls ?? [];
+  // The ones the session opened, when there are any; otherwise every one it named.
+  const shownPulls = pulls.some((p) => p.worked_on) ? pulls.filter((p) => p.worked_on) : pulls;
   const shaving = [...yaks].reverse().find((y) => y.status === "shaving");
   const summary = session.summary;
   const status = session.status;
@@ -547,6 +550,21 @@ export default function SessionPanel({
           )}
           <Chevron open={false} />
         </button>
+        {pulls.length > 0 && (
+          <button className="panel-row" onClick={() => openDetails("pulls")} title="Pull requests found in the session's conversation">
+            <span className="panel-row-label">PRs</span>
+            <span className="panel-row-value">
+              <span className="count">{shownPulls.length}</span>
+              {shownPulls.some((p) => p.info?.checks === "failing" && (p.info.state === "open" || p.info.state === "draft")) && (
+                <span className="chip pull-checks-failing">Checks failing</span>
+              )}
+              <span className="panel-row-text">
+                {shownPulls.length === 1 ? shownPulls[0].info?.title ?? `${shownPulls[0].repo}#${shownPulls[0].number}` : pullStates(shownPulls) || `${shownPulls.length} found`}
+              </span>
+            </span>
+            <Chevron open={false} />
+          </button>
+        )}
         {asks.length > 0 && (
           <button className="panel-row" onClick={() => openDetails("asks")} title="Decisions, actions and follow-ups the session's agent recorded for you">
             <span className="panel-row-label">For you</span>

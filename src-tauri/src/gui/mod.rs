@@ -4,6 +4,7 @@ pub mod files;
 pub mod hub;
 pub mod import;
 pub mod notes;
+pub mod pulls;
 pub mod sessions;
 pub mod shell_env;
 pub mod tickets;
@@ -127,6 +128,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_ask_close,
             hub::hub_ask_start_session,
             hub::hub_blocker_check,
+            hub::hub_pulls_refresh,
+            hub::hub_pull_hide,
             hub::hub_blocker_set,
             hub::hub_blocker_note,
             hub::hub_blocker_send,

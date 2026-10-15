@@ -175,6 +175,8 @@ pub struct SessionView {
     pub asks: Vec<crate::cli::asks::Ask>,
     /// Tangents the session took, and its main effort, as summaries saw them.
     pub yaks: crate::cli::yaks::YakLog,
+    /// Pull requests found in the session's transcript, worked-on ones first.
+    pub pulls: Vec<crate::cli::pulls::Pull>,
     pub effort: Option<EffortInfo>,
     /// The linked ticket's epic, which groups sessions with no effort set.
     pub epic: Option<String>,
@@ -499,6 +501,7 @@ impl HubSession {
             blockers: super::blockers::open_blockers(Path::new(&self.key)),
             asks: crate::cli::asks::open_asks(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
+            pulls: crate::cli::pulls::visible(Path::new(&self.key)),
             effort: self.effort.clone(),
             epic: std::fs::read_to_string(Path::new(&self.key).join(".twapp-ticket.json"))
                 .ok()
@@ -676,6 +679,8 @@ impl Hub {
         std::thread::spawn(move || listener.socket_loop());
         let checker = Arc::clone(&hub);
         std::thread::spawn(move || super::blockers::check_loop(checker));
+        let pulls = Arc::clone(&hub);
+        std::thread::spawn(move || super::pulls::pull_loop(pulls));
         let journal = Arc::clone(&hub);
         std::thread::spawn(move || journal.journal_loop());
         // Sessions are told to follow the twapp skill, so it is kept current
@@ -895,6 +900,16 @@ impl Hub {
 
     pub fn hosted_keys(&self) -> Vec<String> {
         self.inner.lock().sessions.iter().map(|s| s.key.clone()).collect()
+    }
+
+    /// Each hosted session with the transcript its harness writes, when known.
+    pub fn transcripts(&self) -> Vec<(String, Option<String>)> {
+        self.inner
+            .lock()
+            .sessions
+            .iter()
+            .map(|s| (s.key.clone(), s.status.transcript_path.clone()))
+            .collect()
     }
 
     /// Re-read every hosted session's blockers after one changed.
@@ -2405,6 +2420,32 @@ pub fn hub_blocker_note(key: String, id: String, text: String) -> Result<(), Str
     }
     crate::cli::blockers::update(Path::new(&key), &id, |b| b.log("note", text, Some("user")))?;
     require_hub()?.refresh_blockers();
+    Ok(())
+}
+
+/// Scan the session's transcript and fetch every one of its pull requests now.
+#[tauri::command]
+pub async fn hub_pulls_refresh(key: String) -> Result<(), String> {
+    let hub = require_hub()?;
+    let transcript = hub.transcripts().into_iter().find(|(k, _)| *k == key).and_then(|(_, t)| t);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = Path::new(&key);
+        if let Some(t) = transcript {
+            crate::cli::pulls::scan(dir, Path::new(&t))?;
+        }
+        crate::cli::pulls::refresh(dir, true, super::pulls::SPACING);
+        hub.emit_changed();
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Stop showing one of the session's pull requests.
+#[tauri::command]
+pub fn hub_pull_hide(key: String, url: String) -> Result<(), String> {
+    crate::cli::pulls::set_hidden(Path::new(&key), &url, true)?;
+    require_hub()?.emit_changed();
     Ok(())
 }
 

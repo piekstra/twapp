@@ -12,6 +12,7 @@ pub mod models;
 pub mod migration;
 pub mod notes;
 pub mod permissions;
+pub mod pulls;
 pub mod retired;
 pub mod session;
 pub mod session_attribution;
@@ -117,6 +118,11 @@ pub enum Commands {
     Blocker {
         #[command(subcommand)]
         command: BlockerCommands,
+    },
+    /// Pull requests the session works on, found in its transcript
+    Pr {
+        #[command(subcommand)]
+        command: PrCommands,
     },
     /// Manage default permissions
     Permissions {
@@ -318,6 +324,31 @@ pub enum TicketCommands {
     /// Re-fetch ticket details from Jira/GitHub
     Refresh {
         /// Target directory
+        #[arg(long)]
+        dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PrCommands {
+    /// List the session's pull requests: worked on first, then mentioned
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Mark a pull request as worked on in the session (one opened elsewhere,
+    /// say); the window finds those `gh pr create` prints on its own
+    Add {
+        /// The pull request's URL
+        url: String,
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Stop showing a pull request; later mentions do not bring it back
+    Remove {
+        url: String,
         #[arg(long)]
         dir: Option<String>,
     },
@@ -554,6 +585,11 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::Journal { when, json, regenerate, list, path, paragraph } => {
             crate::journal::cmd::cmd_journal(when.as_deref(), json, regenerate, list, path, paragraph)
         }
+        Commands::Pr { command } => match command {
+            PrCommands::List { json, dir } => pulls::cmd_list(dir.as_deref(), json),
+            PrCommands::Add { url, dir } => pulls::cmd_add(&url, dir.as_deref()),
+            PrCommands::Remove { url, dir } => pulls::cmd_remove(&url, dir.as_deref()),
+        },
         Commands::Yaks { json, dir, all, days } => {
             if all {
                 yaks::cmd_yak_report(days, json)

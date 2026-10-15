@@ -550,6 +550,39 @@ shown), from
 `~/.config/twapp/approved-checks.json`. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
+## Pull requests
+
+`.twapp-pulls.json` holds the pull requests found in the session's transcripts
+and how many bytes of each transcript have been read. A thread wakes every
+minute, reads the whole lines appended to each hosted session's current
+transcript since the last scan (a line still being written waits for the
+next), and records every `https://github.com/<owner>/<repo>/pull/<n>` with
+its mention count and first and last transcript timestamps. Both harness
+formats are read the same way: a line is parsed only when it contains a
+GitHub URL or `gh pr create`.
+
+A pull request is marked worked on when the output of a tool call that ran
+`gh pr create` holds its URL and no other pull request URL. The call is a
+Claude `Bash` `tool_use` or a Codex shell call (anything but `apply_patch`)
+whose command runs `gh pr create` at the start of a command, after `;`, `&`,
+`|`, `(` or `$(`; a file write or a quoted search pattern that contains the
+words is not one, and a PR named in the create command's own body stays a
+mention. The output is matched by `tool_use_id` or `call_id`. `twapp pr add`
+marks one by hand; `twapp pr remove` and the dialog's Hide set `hidden`, which
+later mentions do not undo.
+
+The same thread fetches the due ones with `gh pr view --json`, one call a
+second: one never fetched, an open or draft one worked on after ten minutes,
+an open mentioned one after an hour, one whose fetch failed after thirty
+minutes, and a merged or closed one never again. Checks reduce to failing
+(any failed, errored, timed out, cancelled or action-required run), pending
+(any still running) or passing. `hub_pulls_refresh` scans and fetches every
+visible one at once.
+
+Only the session's current transcript is scanned, so pull requests from a
+conversation the session left before the window first scanned it are not
+found.
+
 ## Rendering cost
 
 Every hosted session keeps an xterm instance so its screen and scrollback
