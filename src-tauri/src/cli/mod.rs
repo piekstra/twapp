@@ -141,6 +141,17 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Tell the sessions waiting on a pull request, ticket or repository what happened to it
+    Report {
+        /// What happened, for the waiting sessions: merged, released, deployed, migrated, closed
+        text: String,
+        /// The pull request URL, ticket key or repository (owner/repo) it is about
+        #[arg(long, required = true)]
+        on: Vec<String>,
+        /// The reporting session (default: the current directory)
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Manage default permissions
     Permissions {
         #[command(subcommand)]
@@ -414,6 +425,9 @@ pub enum BlockerCommands {
         /// Shell command, run in the session directory, that prints the blocker's state
         #[arg(long)]
         check: Option<String>,
+        /// Another session's work this waits on: a pull request URL, ticket key or repository (owner/repo); `twapp report` on it reaches this blocker
+        #[arg(long)]
+        on: Option<String>,
         /// A first note: context the user will want when the answer comes
         #[arg(long)]
         note: Option<String>,
@@ -458,6 +472,9 @@ pub enum BlockerCommands {
         reference: Option<String>,
         #[arg(long)]
         check: Option<String>,
+        /// A pull request URL, ticket key or repository whose reports reach the blocker
+        #[arg(long)]
+        on: Option<String>,
         #[arg(long)]
         dir: Option<String>,
     },
@@ -607,6 +624,7 @@ pub fn run(cmd: Commands) -> i32 {
             PrCommands::Add { url, dir } => pulls::cmd_add(&url, dir.as_deref()),
             PrCommands::Remove { url, dir } => pulls::cmd_remove(&url, dir.as_deref()),
         },
+        Commands::Report { text, on, dir } => who::cmd_report(&text, &on, dir.as_deref()),
         Commands::Who { refs, all, json, dir } => who::cmd_who(&refs, all, dir.as_deref(), json),
         Commands::Yaks { json, dir, all, days } => {
             if all {

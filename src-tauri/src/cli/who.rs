@@ -1,9 +1,13 @@
-//! Which of the window's sessions work on a pull request, a ticket or a
-//! repository, so an agent about to merge, release or deploy something can
-//! reach the other sessions that hold part of it before acting.
+//! Coordination between the window's sessions, keyed by a pull request, a
+//! ticket or a repository. `twapp who` lists the sessions that hold one, so
+//! an agent about to merge, release or deploy can reach them first. A
+//! session that waits on one subscribes with a blocker (`--on`); the agent
+//! doing the work publishes what happened with `twapp report`, which records
+//! it on every subscribed blocker and prints the sessions to message.
 //!
 //! Answers come from the window's snapshot: each session's pull requests
-//! (found in its transcript), its linked ticket and its earlier tickets.
+//! (found in its transcript), its linked and earlier tickets, and its open
+//! blockers.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -44,6 +48,18 @@ impl Subject {
             "{} is not a pull request URL, a ticket key (ABC-123) or a repository (owner/repo)",
             text
         ))
+    }
+
+    /// Whether a report on `reported` reaches a subscription to `self`: the
+    /// same pull request or ticket, or a pull request in the subscribed
+    /// repository.
+    pub fn covers(&self, reported: &Subject) -> bool {
+        match (self, reported) {
+            (Subject::Pull { repo: a, number: x }, Subject::Pull { repo: b, number: y }) => a.eq_ignore_ascii_case(b) && x == y,
+            (Subject::Ticket(a), Subject::Ticket(b)) => a == b,
+            (Subject::Repo { name: a, .. }, Subject::Repo { name: b, .. } | Subject::Pull { repo: b, .. }) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        }
     }
 
     pub fn label(&self) -> String {
@@ -96,7 +112,32 @@ pub fn holders(snapshot: &Value, subject: &Subject, here: &str, address: &dyn Fn
         .collect()
 }
 
+/// The session's open blockers subscribed to `subject`, as (id, title).
+fn subscriptions(session: &Value, subject: &Subject) -> Vec<(String, String)> {
+    let blockers = session.get("blockers").and_then(Value::as_array).cloned().unwrap_or_default();
+    let text = |b: &Value, field: &str| b.get(field).and_then(Value::as_str).unwrap_or_default().to_string();
+    blockers
+        .iter()
+        .filter(|b| {
+            b.get("on")
+                .and_then(Value::as_str)
+                .and_then(|on| Subject::parse(on, false).ok())
+                .is_some_and(|on| on.covers(subject))
+        })
+        .map(|b| (text(b, "id"), text(b, "title")))
+        .collect()
+}
+
 fn links(session: &Value, subject: &Subject) -> Vec<String> {
+    let mut out: Vec<String> = subscriptions(session, subject)
+        .into_iter()
+        .map(|(id, title)| format!("waits on it: {} (blocker {})", title, id))
+        .collect();
+    out.extend(holdings(session, subject));
+    out
+}
+
+fn holdings(session: &Value, subject: &Subject) -> Vec<String> {
     let pulls = session.get("pulls").and_then(Value::as_array).cloned().unwrap_or_default();
     let pull_text = |p: &Value, path: &str| p.pointer(path).and_then(Value::as_str).unwrap_or_default().to_string();
     let state = |p: &Value| {
@@ -162,6 +203,71 @@ fn claude_address(session: &Value) -> Option<String> {
     let pid = session.pointer("/status/harness_pid").and_then(Value::as_u64)?;
     let socket = format!("/tmp/cc-socks/{}.sock", pid);
     std::path::Path::new(&socket).exists().then(|| format!("uds:{}", socket))
+}
+
+/// Record `text` on every other session's open blocker subscribed to one of
+/// `subjects`. Returns the sessions reached, each with the blockers updated.
+pub fn report(snapshot: &Value, subjects: &[Subject], text: &str, here: &str) -> Result<Vec<(Value, Vec<String>)>, String> {
+    let sessions = snapshot.get("sessions").and_then(Value::as_array).cloned().unwrap_or_default();
+    let from = sessions
+        .iter()
+        .find(|s| s.get("key").and_then(Value::as_str) == Some(here))
+        .and_then(|s| s.get("name").and_then(Value::as_str))
+        .unwrap_or("Another session")
+        .to_string();
+    let mut reached = Vec::new();
+    for session in sessions.iter().filter(|s| s.get("key").and_then(Value::as_str) != Some(here)) {
+        let dir = std::path::Path::new(session.get("key").and_then(Value::as_str).unwrap_or_default());
+        let mut ids: Vec<(String, String)> = subjects.iter().flat_map(|s| subscriptions(session, s)).collect();
+        ids.dedup();
+        let mut updated = Vec::new();
+        for (id, title) in ids {
+            super::blockers::update(dir, &id, |b| b.record_report(&from, text))?;
+            updated.push(title);
+        }
+        if !updated.is_empty() {
+            reached.push((session.clone(), updated));
+        }
+    }
+    Ok(reached)
+}
+
+pub fn cmd_report(text: &str, on: &[String], dir: Option<&str>) -> i32 {
+    let subjects: Vec<Subject> = match on.iter().map(|r| Subject::parse(r, false)).collect() {
+        Ok(subjects) => subjects,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 2;
+        }
+    };
+    let Some(snapshot) = super::hub_link::snapshot() else {
+        eprintln!("twapp is not running.");
+        return 1;
+    };
+    let here = super::target_dir(dir);
+    let reached = match report(&snapshot, &subjects, text, &here) {
+        Ok(reached) => reached,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+    super::hub_link::notify_changed();
+    if reached.is_empty() {
+        println!("No other session waits on it.");
+    }
+    for (session, titles) in &reached {
+        let name = session.get("name").and_then(Value::as_str).unwrap_or_default();
+        println!("{}  {}", name, session.get("key").and_then(Value::as_str).unwrap_or_default());
+        for title in titles {
+            println!("    recorded on: {}", title);
+        }
+        match claude_address(session) {
+            Some(address) => println!("    message: {}", address),
+            None => println!("    not reachable by message; the window shows the update"),
+        }
+    }
+    0
 }
 
 pub fn cmd_who(refs: &[String], all: bool, dir: Option<&str>, json: bool) -> i32 {
@@ -246,6 +352,7 @@ mod tests {
             vec![
                 ("Billing roles", vec!["opened it (merged)".to_string()], false),
                 ("Release notes", vec!["mentioned it (merged)".to_string()], true),
+                ("Docs", vec!["waits on it: Role column released (blocker b1c2d3e4)".to_string()], false),
             ]
         );
         assert_eq!(found[0].state, "your turn");
@@ -276,6 +383,47 @@ mod tests {
     }
 
     #[test]
+    fn a_report_reaches_the_same_subject_or_its_repository() {
+        let pull = Subject::parse("https://github.com/acme/billing/pull/190", false).unwrap();
+        let repo = Subject::parse("ACME/Billing", false).unwrap();
+        assert!(pull.covers(&Subject::parse("https://github.com/Acme/billing/pull/190", false).unwrap()));
+        assert!(!pull.covers(&Subject::parse("https://github.com/acme/billing/pull/189", false).unwrap()));
+        assert!(repo.covers(&pull), "a repository subscription hears about its pull requests");
+        assert!(!pull.covers(&repo));
+        assert!(Subject::Ticket("OPS-81".into()).covers(&Subject::Ticket("OPS-81".into())));
+        assert!(!Subject::Ticket("OPS-81".into()).covers(&pull));
+    }
+
+    #[test]
+    fn who_lists_the_sessions_subscribed_to_a_subject() {
+        let found = holders(&snapshot(), &Subject::parse("https://github.com/acme/billing/pull/190", false).unwrap(), "", &no_address);
+        let docs = found.iter().find(|h| h.name == "Docs").expect("the docs session waits on the billing repository");
+        assert_eq!(docs.links, vec!["waits on it: Role column released (blocker b1c2d3e4)".to_string()]);
+    }
+
+    #[test]
+    fn a_report_records_on_every_other_subscribed_blocker() {
+        let root = std::env::temp_dir().join(format!("twapp-report-{}", std::process::id()));
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let mut waiting = crate::cli::blockers::Blocker::new("Role column released");
+        waiting.id = "b1c2d3e4".into();
+        waiting.on = Some("acme/billing".into());
+        crate::cli::blockers::save(&docs, &[waiting]).unwrap();
+        let mut snap = snapshot();
+        snap["sessions"][2]["key"] = Value::String(docs.to_string_lossy().into());
+        let subject = Subject::parse("https://github.com/acme/billing/pull/190", false).unwrap();
+        let reached = report(&snap, &[subject], "Released in 10.0.185.", "/work/billing-roles").unwrap();
+        assert_eq!(reached.len(), 1);
+        assert_eq!(reached[0].1, vec!["Role column released".to_string()]);
+        let saved = crate::cli::blockers::load(&docs);
+        assert_eq!(saved[0].status, crate::cli::blockers::BlockerStatus::Updated);
+        let event = saved[0].history.last().unwrap();
+        assert_eq!((event.kind.as_str(), event.text.as_str(), event.by.as_deref()), ("reported", "Released in 10.0.185.", Some("Billing roles")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn a_key_does_not_match_a_longer_key_that_starts_with_it() {
         assert!(names_key("OPS-81: Add the role column", "OPS-81"));
         assert!(names_key("someone/ops-81-role-column", "OPS-81"));
@@ -289,7 +437,10 @@ mod tests {
         let summary: Vec<_> = open.iter().map(|h| (h.name.as_str(), h.links.clone())).collect();
         assert_eq!(
             summary,
-            vec![("Release notes", vec!["opened https://github.com/acme/billing/pull/189 (not fetched)".to_string()])]
+            vec![
+                ("Release notes", vec!["opened https://github.com/acme/billing/pull/189 (not fetched)".to_string()]),
+                ("Docs", vec!["waits on it: Role column released (blocker b1c2d3e4)".to_string()]),
+            ]
         );
     }
 
@@ -298,7 +449,7 @@ mod tests {
         let found = holders(&snapshot(), &Subject::Repo { name: "ACME/billing".into(), all: true }, "", &|s| {
             s.pointer("/status/harness_pid").map(|p| format!("pid {}", p))
         });
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.len(), 3, "two holders and the subscribed docs session");
         assert_eq!(
             found[0].links,
             vec!["opened https://github.com/acme/billing/pull/190 (merged) OPS-81: Add the role column".to_string()]

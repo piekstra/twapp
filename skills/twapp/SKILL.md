@@ -1,6 +1,6 @@
 ---
 name: twapp
-description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, before merging, releasing or deploying something other sessions may also hold (twapp who), when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, before merging, releasing or deploying something other sessions may also hold (twapp who), when the work waits on another session's pull request, ticket or release, or finishes something other sessions may wait on (twapp blocker --on, twapp report), when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
 ---
 
 # Working in a twapp session
@@ -78,7 +78,27 @@ twapp who <PR URL> <ticket key> <owner/repo>
 - A ticket key lists the sessions linked to it now or earlier, and those holding a pull request whose title or branch names it.
 - A repository (`owner/repo`) lists the open pull requests each session holds in it; `--all` adds merged and closed ones.
 
-Each session comes with its state and, for a running Claude session, the address to give SendMessage. Message the other sessions before acting on what they hold: say what you are about to do and ask whether anything of theirs depends on it.
+Each session comes with its state and, for a running Claude session, the address to give SendMessage. Message the other sessions before acting on what they hold: say what you are about to do and ask whether anything of theirs depends on it. Sessions that wait on it are listed as "waits on it".
+
+### Waiting on another session's work, and reporting your own
+
+When your work waits on something another session is doing (a pull request to merge, a release to go out, a migration to run, a ticket to close), subscribe instead of checking back:
+
+```bash
+twapp blocker add "<what you need to happen>" --on <PR URL | ticket key | owner/repo>
+```
+
+Do not poll for it. The agent doing that work reports what happened, and the report reaches this blocker: the window flags it, and a Claude session doing the work messages you.
+
+When you finish something other sessions may wait on (you merged a pull request, released or deployed it, ran its migration, moved or closed its ticket), report it:
+
+```bash
+twapp report "<what happened, and what it means for whoever waits>" --on <PR URL> --on <ticket key>
+```
+
+Name every pull request, ticket and repository it concerns; a subscription to a repository hears about each of its pull requests. The report is recorded on every other session's blocker on them, and the command lists those sessions with their message addresses. Send each one the same report with SendMessage. A session without an address (not running, or not Claude) sees it in the window.
+
+When a report reaches you, as a message or as "Update on a blocker", act on it and resolve the blocker once nothing is left to wait for.
 
 ## Archiving
 
