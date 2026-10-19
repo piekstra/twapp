@@ -284,7 +284,7 @@ it with twapp blocker; when it needs the user to decide something or do somethin
 twapp decision or twapp action, and work noticed outside the scope of the session with twapp followup. Follow the twapp \
 skill for these; twapp note adds a note the user sees in the session panel. twapp --help lists the commands. Before merging, \
 releasing or deploying, run twapp who on the pull requests, tickets or repository involved and message the other sessions \
-that hold them. When the work waits on another session's work, record a blocker with --on instead of polling; when you \
+that hold them. When the work waits on work in another session, record a blocker with --on instead of polling; when you \
 finish something others may wait on, run twapp report and message the sessions it lists. Otherwise leave other sessions \
 alone: they belong to the user.";
 
