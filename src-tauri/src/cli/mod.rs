@@ -380,6 +380,13 @@ pub enum PrCommands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Print the session's marker: a hidden line for the body of a pull request the session opens, or with --trailer a commit trailer
+    Marker {
+        #[arg(long)]
+        trailer: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -623,6 +630,7 @@ pub fn run(cmd: Commands) -> i32 {
             PrCommands::List { json, dir } => pulls::cmd_list(dir.as_deref(), json),
             PrCommands::Add { url, dir } => pulls::cmd_add(&url, dir.as_deref()),
             PrCommands::Remove { url, dir } => pulls::cmd_remove(&url, dir.as_deref()),
+            PrCommands::Marker { trailer, dir } => pulls::cmd_marker(trailer, dir.as_deref()),
         },
         Commands::Report { text, on, dir } => who::cmd_report(&text, &on, dir.as_deref()),
         Commands::Who { refs, all, json, dir } => who::cmd_who(&refs, all, dir.as_deref(), json),
