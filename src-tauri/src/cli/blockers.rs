@@ -5,6 +5,11 @@
 //! when its output changes, so the user can see a reply arrived without
 //! asking each session.
 //!
+//! A blocker can name another session's work it waits on (`--on`, a pull
+//! request, a ticket or a repository). The agent doing that work reports
+//! what happened with `twapp report`, which adds the report to every open
+//! blocker on it and marks them updated; nothing polls for it.
+//!
 //! Blockers live in `.twapp-blockers.json` in the session directory.
 
 use serde::{Deserialize, Serialize};
@@ -61,6 +66,10 @@ pub struct Blocker {
     /// blocker's state. A change in its output marks the blocker updated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
+    /// The pull request URL, ticket key or repository whose reports reach
+    /// this blocker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<String>,
     #[serde(default)]
     pub status: BlockerStatus,
     pub created_at: String,
@@ -119,7 +128,10 @@ impl Blocker {
             text.push_str(&format!(", {}", reference));
         }
         text.push('.');
-        if let (Some(check), Some(excerpt)) = (&self.check, &self.excerpt) {
+        if let Some(report) = self.unseen_report() {
+            let from = report.by.as_deref().unwrap_or("Another session");
+            text.push_str(&format!("\n\n{} reported: {}\n", from, report.text));
+        } else if let (Some(check), Some(excerpt)) = (&self.check, &self.excerpt) {
             text.push_str(&format!("\n\nIts check `{}` now prints:\n\n{}\n", check, excerpt));
         }
         text.push_str(&format!(
@@ -127,6 +139,27 @@ impl Blocker {
             id = self.id
         ));
         text
+    }
+
+    /// Another session reported on what this blocker waits on: `from` is
+    /// that session's name.
+    pub fn record_report(&mut self, from: &str, text: &str) {
+        if self.status == BlockerStatus::Waiting {
+            self.changed_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+        if self.is_open() {
+            self.status = BlockerStatus::Updated;
+        }
+        self.log("reported", text, Some(from));
+    }
+
+    /// The latest report since the update was last seen or sent.
+    fn unseen_report(&self) -> Option<&BlockerEvent> {
+        self.history
+            .iter()
+            .rev()
+            .take_while(|e| e.kind != "seen" && e.kind != "sent")
+            .find(|e| e.kind == "reported")
     }
 
     pub fn resolve(&mut self, by: Option<&str>) {
@@ -367,6 +400,9 @@ fn print_blocker(b: &Blocker) {
     if let Some(reference) = &b.reference {
         println!("          ref: {}", reference);
     }
+    if let Some(on) = &b.on {
+        println!("          on: {}", on);
+    }
     if let Some(check) = &b.check {
         let here = std::env::current_dir().unwrap_or_default();
         let approved = if is_approved(check, &here) { "" } else { " (not approved in the window)" };
@@ -393,16 +429,21 @@ fn finish(result: Result<(), String>) -> i32 {
 pub fn run_command(command: super::BlockerCommands) -> i32 {
     use super::BlockerCommands as C;
     match command {
-        C::Add { title, party, kind, reference, check, note, dir } => {
+        C::Add { title, party, kind, reference, check, on, note, dir } => {
             let dir = session_dir(dir.as_deref());
+            let on = match on.as_deref().map(|on| super::who::Subject::parse(on, false)).transpose() {
+                Ok(on) => on.map(|s| s.label()),
+                Err(e) => return finish(Err(e)),
+            };
             let mut blocker = Blocker::new(&title);
             if let Some(note) = note {
                 blocker.log("note", &note, Some("agent"));
             }
             blocker.party = party;
             blocker.kind = kind;
-            blocker.reference = reference;
+            blocker.reference = reference.or_else(|| on.clone());
             blocker.check = check;
+            blocker.on = on;
             let id = blocker.id.clone();
             let mut all = match load_for_update(&dir) {
                 Ok(all) => all,
@@ -429,8 +470,15 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             }
             0
         }
-        C::Update { id, title, party, kind, reference, check, dir } => finish(
-            update(&session_dir(dir.as_deref()), &id, |b| {
+        C::Update { id, title, party, kind, reference, check, on, dir } => {
+            let on = match on.as_deref().map(|on| super::who::Subject::parse(on, false)).transpose() {
+                Ok(on) => on.map(|s| s.label()),
+                Err(e) => return finish(Err(e)),
+            };
+            finish(update(&session_dir(dir.as_deref()), &id, |b| {
+                if on.is_some() {
+                    b.on = on;
+                }
                 if let Some(title) = title {
                     b.title = title;
                 }
@@ -450,8 +498,8 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                     b.latest_hash = None;
                 }
             })
-            .map(|b| print_blocker(&b)),
-        ),
+            .map(|b| print_blocker(&b)))
+        }
         C::Check { id, dir } => {
             let dir = session_dir(dir.as_deref());
             let targets: Vec<Blocker> = load(&dir)
@@ -545,6 +593,21 @@ mod tests {
         b.status = BlockerStatus::Waiting;
         b.record_check(Ok("status: answered\n".into()));
         assert_eq!(b.status, BlockerStatus::Waiting, "the seen output is the new baseline");
+    }
+
+    #[test]
+    fn a_report_marks_the_blocker_updated_and_reaches_its_update_message() {
+        let mut b = Blocker::new("Role column in prd");
+        b.on = Some("https://github.com/acme/billing/pull/190".into());
+        b.record_report("Billing roles", "Merged; the migration ran in prd.");
+        assert_eq!(b.status, BlockerStatus::Updated);
+        assert!(b.changed_at.is_some());
+        assert!(b.update_message().contains("Billing roles reported: Merged; the migration ran in prd."));
+        b.mark_seen();
+        assert!(!b.update_message().contains("reported"), "a seen report is not sent again");
+        b.resolve(None);
+        b.record_report("Billing roles", "Released.");
+        assert_eq!(b.status, BlockerStatus::Resolved, "a report does not reopen a resolved blocker");
     }
 
     #[test]

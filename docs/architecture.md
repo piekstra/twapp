@@ -606,6 +606,20 @@ running Claude session's address is `uds:/tmp/cc-socks/<harness pid>.sock`,
 the socket Claude Code listens on for messages from other sessions, printed
 only while the socket exists.
 
+Sessions coordinate through blockers keyed the same way. A blocker's `on`
+holds the canonical pull request URL, ticket key or repository it waits on.
+`twapp report` reads every other hosted session's open blockers from the
+snapshot and, for each whose `on` covers a reported subject (the same pull
+request or ticket, or the repository of a reported pull request), appends a
+`reported` event whose `by` is the reporting session's name and marks the
+blocker updated, writing the session's `.twapp-blockers.json` through
+`blockers::update`. It then asks the window to re-read, and prints the
+reached sessions with their message addresses. Delivery to the waiting agent
+is the reporting agent's SendMessage, or the window's existing Send for a
+session without an address; twapp polls nothing and types nothing on its
+own. The update message a blocker sends carries its latest report since it
+was last seen or sent.
+
 Only the session's current transcript is scanned, so pull requests from a
 conversation the session left before the window first scanned it are not
 found.

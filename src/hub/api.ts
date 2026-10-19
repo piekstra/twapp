@@ -170,6 +170,8 @@ export interface Blocker {
   kind?: string | null;
   reference?: string | null;
   check?: string | null;
+  /** The pull request URL, ticket key or repository whose reports reach the blocker. */
+  on?: string | null;
   status: "waiting" | "updated" | "resolved";
   created_at: string;
   last_checked_at?: string | null;

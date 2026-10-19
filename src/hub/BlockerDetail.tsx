@@ -7,10 +7,16 @@ const EVENT: Record<string, string> = {
   recorded: "Recorded",
   note: "Note",
   check_changed: "Check output changed",
+  reported: "Reported",
   seen: "Marked seen",
   sent: "Sent to the session",
   resolved: "Resolved",
 };
+
+function byLabel(kind: string, by: string): string {
+  if (kind === "reported") return `by ${by}`;
+  return by === "agent" ? "by the session's agent" : "by you";
+}
 
 interface Props {
   blocker: Blocker;
@@ -68,6 +74,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
               {blocker.changed_at && blocker.status === "updated" && ` ${sinceLabel(blocker.changed_at, now)} ago`}
             </dd>
             {blocker.party && (<><dt>Waiting on</dt><dd>{blocker.party}{blocker.kind ? ` · ${blocker.kind}` : ""}</dd></>)}
+            {blocker.on && blocker.on !== blocker.reference && (<><dt>Waits on</dt><dd><Linkify text={blocker.on} /></dd></>)}
             {blocker.reference && (<><dt>Reference</dt><dd>{link ? <ExternalLink url={link} label={link} /> : blocker.reference}</dd></>)}
             <dt>Session</dt>
             <dd>
@@ -117,7 +124,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
               <li key={`${event.at}-${i}`} className={`blocker-event kind-${event.kind}`}>
                 <div className="blocker-event-head">
                   <span className="blocker-event-kind">{EVENT[event.kind] ?? event.kind}</span>
-                  {event.by && <span className="blocker-event-by">{event.by === "agent" ? "by the session's agent" : "by you"}</span>}
+                  {event.by && <span className="blocker-event-by">{byLabel(event.kind, event.by)}</span>}
                   <span className="blocker-event-at" title={new Date(event.at).toLocaleString()}>{sinceLabel(event.at, now)} ago</span>
                 </div>
                 {event.text && <div className="blocker-event-text"><Linkify text={event.text} /></div>}
