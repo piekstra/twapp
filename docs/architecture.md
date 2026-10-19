@@ -597,6 +597,15 @@ minutes, and a merged or closed one never again. Checks reduce to failing
 (any still running) or passing. `hub_pulls_refresh` scans and fetches every
 visible one at once.
 
+`twapp who` answers across sessions from the window's snapshot: a pull
+request matches each session whose `.twapp-pulls.json` has it, a ticket key
+matches the linked ticket, the earlier tickets in `.twapp-tickets.json` and
+pull requests whose title or head branch names the whole key, and a
+repository matches the session's open and draft pull requests in it. A
+running Claude session's address is `uds:/tmp/cc-socks/<harness pid>.sock`,
+the socket Claude Code listens on for messages from other sessions, printed
+only while the socket exists.
+
 Only the session's current transcript is scanned, so pull requests from a
 conversation the session left before the window first scanned it are not
 found.

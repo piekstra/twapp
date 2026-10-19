@@ -1,0 +1,89 @@
+{
+  "host_error": null,
+  "selected": "/work/billing-roles",
+  "sessions": [
+    {
+      "key": "/work/billing-roles",
+      "name": "Billing roles",
+      "provider": "claude",
+      "status": { "state": "your_turn", "harness_pid": 4242 },
+      "ticket_key": "OPS-81",
+      "ticket_history": [
+        { "key": "OPS-12", "title": "Role audit", "first_seen": "2026-10-01T10:00:00Z", "last_seen": "2026-10-02T10:00:00Z" }
+      ],
+      "pulls": [
+        {
+          "url": "https://github.com/acme/billing/pull/190",
+          "repo": "acme/billing",
+          "number": 190,
+          "worked_on": true,
+          "first_seen": "2026-10-19T16:40:00Z",
+          "last_seen": "2026-10-19T17:20:00Z",
+          "mentions": 6,
+          "hidden": false,
+          "info": {
+            "title": "OPS-81: Add the role column",
+            "body": "",
+            "state": "merged",
+            "head": "someone/ops-81-role-column",
+            "author": "someone",
+            "updated_at": "2026-10-19T16:53:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "key": "/work/release-notes",
+      "name": "Release notes",
+      "provider": "codex",
+      "status": { "state": "working" },
+      "ticket_key": "OPS-8167",
+      "ticket_history": [],
+      "pulls": [
+        {
+          "url": "https://github.com/acme/billing/pull/190",
+          "repo": "acme/billing",
+          "number": 190,
+          "worked_on": false,
+          "first_seen": "2026-10-19T17:00:00Z",
+          "last_seen": "2026-10-19T17:00:00Z",
+          "mentions": 1,
+          "hidden": false,
+          "info": { "title": "OPS-81: Add the role column", "body": "", "state": "merged", "head": "someone/ops-81-role-column", "author": "someone", "updated_at": "2026-10-19T16:53:00Z" }
+        },
+        {
+          "url": "https://github.com/acme/billing/pull/189",
+          "repo": "acme/billing",
+          "number": 189,
+          "worked_on": true,
+          "first_seen": "2026-10-19T16:30:00Z",
+          "last_seen": "2026-10-19T16:50:00Z",
+          "mentions": 4,
+          "hidden": false,
+          "info": null
+        }
+      ]
+    },
+    {
+      "key": "/work/docs",
+      "name": "Docs",
+      "provider": "claude",
+      "status": { "state": "your_turn", "harness_pid": 5151 },
+      "ticket_key": null,
+      "ticket_history": [],
+      "pulls": [
+        {
+          "url": "https://github.com/acme/docs/pull/7",
+          "repo": "acme/docs",
+          "number": 7,
+          "worked_on": true,
+          "first_seen": "2026-10-18T09:00:00Z",
+          "last_seen": "2026-10-18T09:00:00Z",
+          "mentions": 1,
+          "hidden": false,
+          "info": { "title": "Fix the index", "body": "", "state": "open", "head": "fix-index", "author": "someone", "updated_at": "2026-10-18T09:00:00Z" }
+        }
+      ]
+    }
+  ]
+}

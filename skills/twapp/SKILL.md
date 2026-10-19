@@ -1,6 +1,6 @@
 ---
 name: twapp
-description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, before merging, releasing or deploying something other sessions may also hold (twapp who), when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
 ---
 
 # Working in a twapp session
@@ -65,6 +65,20 @@ Keep them current:
 ## Pull requests
 
 The window finds the pull requests a session opens on its own, from the URL `gh pr create` prints, and lists every other pull request URL the conversation names as mentioned. For one the session works on that it did not open with `gh pr create` in its own shell (opened in the browser, by a subagent, or a colleague's it is finishing), run `twapp pr add <url>` so the user sees it under the session; `twapp pr list` shows what the window found.
+
+## Other sessions on the same work
+
+Several sessions can work in the same repository, under related tickets or toward the same release without knowing about each other. Before you merge, release or deploy something, or hold or roll one back, check who else holds it:
+
+```bash
+twapp who <PR URL> <ticket key> <owner/repo>
+```
+
+- A pull request URL lists the sessions that opened or mentioned it. For a release, pass every pull request it carries (those merged since the previous release).
+- A ticket key lists the sessions linked to it now or earlier, and those holding a pull request whose title or branch names it.
+- A repository (`owner/repo`) lists the open pull requests each session holds in it; `--all` adds merged and closed ones.
+
+Each session comes with its state and, for a running Claude session, the address to give SendMessage. Message the other sessions before acting on what they hold: say what you are about to do and ask whether anything of theirs depends on it.
 
 ## Archiving
 
