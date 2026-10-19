@@ -1,0 +1,44 @@
+{
+  "author": {
+    "id": "MDQ6VXNlcjEwNTI3Mjc5",
+    "is_bot": false,
+    "login": "piekstra",
+    "name": ""
+  },
+  "body": "## Summary\n\nFollow-ups, decisions, blocker output and ticket descriptions are too long for the sidebar. The panel now shows one line per section, and the full content moves to a dialog.\n\n- **Panel:** Ticket, For you, Waiting on, Yaks and Notes each get one line with a count, a badge where one applies (Decision, Updated, shaving) and a one-line preview. Ticket and Notes always show; the others appear only when they have items. `+` on the Notes line opens the dialog with a new note started.\n- **Dialog** (`hub/SessionDetails.tsx`): one tab per section, reusing `AskList`, `BlockerList`, the ticket card with Refresh, Change and Unlink, the yak list with its full stats, and the notes editor. Escape closes the dialog, or only the editor when one is open. A blocker's own Details dialog opens on top of it and closes first.\n- Notes and ticket state move into the `useNotes` and `useTicket` hooks so the panel line and the dialog share them.\n- README, architecture doc and CLAUDE.md describe the summary lines and the dialog.\n\n## Verification\n\n- `tsc`, `npm test` (93 passed).\n- Headless Playwright render with every section filled, in light and dark at sidebar widths 260, 340 and 480: no element overflows the summary lines. Each line opens its tab, Escape closes the dialog, `+` opens the composer, and Escape in the composer leaves the dialog open.\n\n<!-- twapp-session: 7b1e2c3d-4f5a-4b6c-9d7e-8f9a0b1c2d3e -->\n",
+  "headRefName": "piekstra/panel-summaries",
+  "isDraft": true,
+  "reviewDecision": "CHANGES_REQUESTED",
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-15T18:38:10Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/piekstra/twapp/actions/runs/38786594476/job/116600050936",
+      "name": "check",
+      "startedAt": "2026-10-15T18:33:30Z",
+      "status": "COMPLETED",
+      "workflowName": "PR Check"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/piekstra/twapp/actions/runs/38786594476/job/116600050936",
+      "name": "build",
+      "startedAt": "2026-10-15T18:33:30Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "PR Check"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "ci/lint",
+      "state": "SUCCESS",
+      "startedAt": "2026-10-15T18:33:30Z",
+      "targetUrl": "https://github.com/piekstra/twapp/actions/runs/38786594476/job/116600050936"
+    }
+  ],
+  "title": "Show panel details as summary lines that open a details dialog",
+  "updatedAt": "2026-10-15T18:38:40Z"
+}

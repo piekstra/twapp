@@ -177,6 +177,8 @@ pub struct SessionView {
     pub yaks: crate::cli::yaks::YakLog,
     /// Pull requests found in the session's transcript, worked-on ones first.
     pub pulls: Vec<crate::cli::pulls::Pull>,
+    /// The marker id agents put in the pull requests the session opens.
+    pub pull_marker: Option<String>,
     /// Tickets the session was under before the linked one, or that its
     /// summaries named, the latest first.
     pub ticket_history: Vec<crate::cli::ticket_history::Entry>,
@@ -509,6 +511,7 @@ impl HubSession {
             asks: crate::cli::asks::open_asks(Path::new(&self.key)),
             yaks: crate::cli::yaks::load(Path::new(&self.key)),
             pulls: crate::cli::pulls::visible(Path::new(&self.key)),
+            pull_marker: crate::cli::pulls::marker_of(Path::new(&self.key)),
             ticket_history: crate::cli::ticket_history::earlier(
                 Path::new(&self.key),
                 data.as_ref().and_then(|d| d.ticket_key.as_deref()),

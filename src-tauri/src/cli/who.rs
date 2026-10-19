@@ -112,6 +112,60 @@ pub fn holders(snapshot: &Value, subject: &Subject, here: &str, address: &dyn Fn
         .collect()
 }
 
+/// Add the sessions whose marker is in a pull request's body to `found`
+/// as having opened it. Returns the markers of sessions the window does not
+/// host: opened on another machine, or from a session since closed.
+pub fn add_marked(
+    snapshot: &Value,
+    markers: &[String],
+    here: &str,
+    address: &dyn Fn(&Value) -> Option<String>,
+    found: &mut Vec<Holder>,
+) -> Vec<String> {
+    const LINK: &str = "opened it (its body carries the session's marker)";
+    let sessions = snapshot.get("sessions").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut unknown = Vec::new();
+    for marker in markers {
+        let Some(session) = sessions.iter().find(|s| s.get("pull_marker").and_then(Value::as_str) == Some(marker.as_str())) else {
+            unknown.push(marker.clone());
+            continue;
+        };
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or_default().to_string();
+        let directory = text(session.get("key"));
+        match found.iter_mut().find(|h| h.directory == directory) {
+            Some(holder) if holder.links.iter().any(|l| l.starts_with("opened")) => {}
+            Some(holder) => holder.links.insert(0, LINK.to_string()),
+            None => found.push(Holder {
+                name: text(session.get("name")),
+                state: text(session.pointer("/status/state")).replace('_', " "),
+                links: vec![LINK.to_string()],
+                address: address(session),
+                this_session: directory == here,
+                directory,
+            }),
+        }
+    }
+    unknown
+}
+
+/// The markers in a pull request's body, from a session's fetched copy when
+/// the window has one.
+fn known_markers(snapshot: &Value, repo: &str, number: u64) -> Option<Vec<String>> {
+    snapshot.get("sessions")?.as_array()?.iter().find_map(|s| {
+        s.get("pulls")?.as_array()?.iter().find_map(|p| {
+            let same = p.get("repo").and_then(Value::as_str).is_some_and(|r| r.eq_ignore_ascii_case(repo))
+                && p.get("number").and_then(Value::as_u64) == Some(number);
+            let info = p.get("info").filter(|i| !i.is_null())?;
+            same.then(|| {
+                info.get("markers")
+                    .and_then(Value::as_array)
+                    .map(|m| m.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default()
+            })
+        })
+    })
+}
+
 /// The session's open blockers subscribed to `subject`, as (id, title).
 fn subscriptions(session: &Value, subject: &Subject) -> Vec<(String, String)> {
     let blockers = session.get("blockers").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -283,25 +337,39 @@ pub fn cmd_who(refs: &[String], all: bool, dir: Option<&str>, json: bool) -> i32
         return 1;
     };
     let here = super::target_dir(dir);
-    let found: Vec<(Subject, Vec<Holder>)> = subjects
+    // For a pull request no session here opened, the marker in its body
+    // names the session that did.
+    let found: Vec<(Subject, Vec<Holder>, Vec<String>)> = subjects
         .into_iter()
         .map(|s| {
-            let found = holders(&snapshot, &s, &here, &claude_address);
-            (s, found)
+            let mut found = holders(&snapshot, &s, &here, &claude_address);
+            let mut unknown = Vec::new();
+            if let Subject::Pull { repo, number } = &s {
+                if !found.iter().any(|h| h.links.iter().any(|l| l.starts_with("opened"))) {
+                    let markers = known_markers(&snapshot, repo, *number)
+                        .or_else(|| super::pulls::fetch(&s.label()).ok().map(|info| info.markers))
+                        .unwrap_or_default();
+                    unknown = add_marked(&snapshot, &markers, &here, &claude_address, &mut found);
+                }
+            }
+            (s, found, unknown)
         })
         .collect();
     if json {
         let out: Vec<Value> = found
             .iter()
-            .map(|(s, h)| serde_json::json!({ "subject": s.label(), "sessions": h }))
+            .map(|(s, h, unknown)| serde_json::json!({ "subject": s.label(), "sessions": h, "other_markers": unknown }))
             .collect();
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return 0;
     }
-    for (subject, holders) in &found {
+    for (subject, holders, unknown) in &found {
         println!("{}", subject.label());
-        if holders.is_empty() {
+        if holders.is_empty() && unknown.is_empty() {
             println!("  no session in the window holds it");
+        }
+        for marker in unknown {
+            println!("  opened from a twapp session this window does not host (marker {}): another machine, or a closed session", marker);
         }
         for h in holders {
             let name = if h.this_session { format!("{} (this session)", h.name) } else { h.name.clone() };
@@ -380,6 +448,31 @@ mod tests {
         );
         let earlier = holders(&snapshot(), &Subject::Ticket("OPS-12".into()), "", &no_address);
         assert_eq!(earlier[0].links, vec!["earlier ticket".to_string()]);
+    }
+
+    #[test]
+    fn a_marker_names_the_session_that_opened_a_pull_request() {
+        let snap = snapshot();
+        let mut found = Vec::new();
+        let markers = ["0d5c6a1e-0000-4000-8000-000000000001".to_string(), "elsewhere".to_string()];
+        let unknown = add_marked(&snap, &markers, "", &no_address, &mut found);
+        assert_eq!(unknown, vec!["elsewhere".to_string()]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Release notes");
+        assert_eq!(found[0].links, vec!["opened it (its body carries the session's marker)".to_string()]);
+        // A session that mentioned it is shown as having opened it too.
+        let mut mentioned = holders(&snap, &Subject::parse("https://github.com/acme/billing/pull/190", false).unwrap(), "", &no_address);
+        add_marked(&snap, &markers[..1], "", &no_address, &mut mentioned);
+        let notes = mentioned.iter().find(|h| h.name == "Release notes").unwrap();
+        assert_eq!(notes.links[0], "opened it (its body carries the session's marker)");
+    }
+
+    #[test]
+    fn markers_come_from_a_fetched_copy_in_the_snapshot() {
+        let snap = snapshot();
+        assert_eq!(known_markers(&snap, "acme/docs", 7), Some(vec!["0d5c6a1e-0000-4000-8000-000000000001".to_string()]));
+        assert_eq!(known_markers(&snap, "acme/billing", 189), None, "an unfetched copy says nothing");
+        assert_eq!(known_markers(&snap, "acme/billing", 190), Some(vec![]));
     }
 
     #[test]

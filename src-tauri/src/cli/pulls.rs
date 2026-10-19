@@ -41,6 +41,12 @@ pub struct PullLog {
     pub creating: Vec<String>,
     #[serde(default)]
     pub pulls: Vec<Pull>,
+    /// The session's marker id, which agents put in the bodies of pull
+    /// requests they open (`twapp pr marker`), created on first use. It is
+    /// random, so a marker in a public repository says nothing about the
+    /// session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,6 +95,9 @@ pub struct PullInfo {
     pub author: String,
     #[serde(default)]
     pub updated_at: String,
+    /// The twapp session markers in the body: the sessions that opened it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<String>,
 }
 
 impl Pull {
@@ -368,7 +377,54 @@ fn parse_view(data: &Value) -> PullInfo {
         head: s("headRefName"),
         author: data.pointer("/author/login").and_then(Value::as_str).unwrap_or_default().to_string(),
         updated_at: s("updatedAt"),
+        markers: markers_in(&s("body")),
     }
+}
+
+const MARKER_OPEN: &str = "<!-- twapp-session: ";
+
+/// The line an agent puts in a pull request body it opens.
+pub fn marker_line(id: &str) -> String {
+    format!("{}{} -->", MARKER_OPEN, id)
+}
+
+/// The commit trailer an agent adds to commits it makes.
+pub fn marker_trailer(id: &str) -> String {
+    format!("Twapp-Session: {}", id)
+}
+
+/// The marker ids in a pull request body.
+pub fn markers_in(body: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = body;
+    while let Some(at) = rest.find(MARKER_OPEN) {
+        rest = &rest[at + MARKER_OPEN.len()..];
+        let id: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        if !id.is_empty() && rest[id.len()..].trim_start().starts_with("-->") && !found.contains(&id) {
+            found.push(id);
+        }
+    }
+    found
+}
+
+/// The session's marker id, created and saved the first time.
+pub fn marker_id(dir: &Path) -> Result<String, String> {
+    let mut log = load(dir);
+    if let Some(id) = &log.marker {
+        return Ok(id.clone());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    log.marker = Some(id.clone());
+    save(dir, &log)?;
+    Ok(id)
+}
+
+/// The session's marker id, if it has one.
+pub fn marker_of(dir: &Path) -> Option<String> {
+    if !path_in(dir).is_file() {
+        return None;
+    }
+    load(dir).marker
 }
 
 /// One word for a PR's checks: any failure fails them, then anything still
@@ -407,10 +463,16 @@ pub fn refresh(dir: &Path, all: bool, spacing: Duration) -> bool {
         let result = fetch(url);
         // Re-read the log for each result, so a scan in between is kept.
         let mut log = load(dir);
+        let marker = log.marker.clone();
         if let Some(p) = log.pulls.iter_mut().find(|p| &p.url == url) {
             p.fetched_at = Some(chrono::Utc::now().to_rfc3339());
             match result {
                 Ok(info) => {
+                    // Its body carries this session's marker: opened here,
+                    // by a subagent or in a way the scan does not see.
+                    if marker.as_ref().is_some_and(|m| info.markers.contains(m)) {
+                        p.worked_on = true;
+                    }
                     p.info = Some(info);
                     p.fetch_error = None;
                 }
@@ -482,6 +544,19 @@ pub fn cmd_list(dir: Option<&str>, json: bool) -> i32 {
     0
 }
 
+pub fn cmd_marker(trailer: bool, dir: Option<&str>) -> i32 {
+    match marker_id(&resolve_dir(dir)) {
+        Ok(id) => {
+            println!("{}", if trailer { marker_trailer(&id) } else { marker_line(&id) });
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
 pub fn cmd_add(url: &str, dir: Option<&str>) -> i32 {
     match add(&resolve_dir(dir), url) {
         Ok(p) => {
@@ -511,6 +586,27 @@ pub fn cmd_remove(url: &str, dir: Option<&str>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marker_is_read_back_from_a_body_and_only_whole() {
+        let line = marker_line("7b1e2c3d-4f5a");
+        assert_eq!(line, "<!-- twapp-session: 7b1e2c3d-4f5a -->");
+        let body = format!("Summary\n\n{}\n{}\n<!-- twapp-session: unterminated", line, line);
+        assert_eq!(markers_in(&body), vec!["7b1e2c3d-4f5a".to_string()]);
+        assert!(markers_in("<!-- twapp-session: id with spaces -->").is_empty());
+        assert_eq!(marker_trailer("7b1e2c3d-4f5a"), "Twapp-Session: 7b1e2c3d-4f5a");
+    }
+
+    #[test]
+    fn a_session_keeps_one_marker_id() {
+        let dir = std::env::temp_dir().join(format!("twapp-marker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(marker_of(&dir), None);
+        let id = marker_id(&dir).unwrap();
+        assert_eq!(marker_id(&dir).unwrap(), id);
+        assert_eq!(marker_of(&dir), Some(id));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     struct TempDir(PathBuf);
     impl TempDir {
@@ -639,6 +735,9 @@ mod tests {
         assert_eq!(merged.review, None);
         assert_eq!(merged.author, "piekstra");
         assert_eq!(merged.head, "piekstra/panel-summaries");
+        let marked = fixture(include_str!("../../tests/fixtures/gh/pr-view-marked.json"));
+        assert_eq!(marked.markers, vec!["7b1e2c3d-4f5a-4b6c-9d7e-8f9a0b1c2d3e".to_string()]);
+        assert!(merged.markers.is_empty());
         let draft = fixture(include_str!("../../tests/fixtures/gh/pr-view-draft-pending.json"));
         assert_eq!(draft.state, "draft");
         assert_eq!(draft.checks.as_deref(), Some("pending"), "one check run is still in progress");

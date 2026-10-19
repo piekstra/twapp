@@ -597,11 +597,23 @@ minutes, and a merged or closed one never again. Checks reduce to failing
 (any still running) or passing. `hub_pulls_refresh` scans and fetches every
 visible one at once.
 
+A session's marker is a random id kept in `.twapp-pulls.json` (`marker`),
+created by the first `twapp pr marker`. Agents end pull request bodies with
+`<!-- twapp-session: <id> -->` and add a `Twapp-Session: <id>` commit
+trailer. Every fetch reads the markers from the full body, before it is cut
+to the kept length, into `markers`; a pull request whose body carries the
+session's own marker is marked worked on. The id is random so that a marker
+in a public repository names nothing; the trailer is for `git log` readers,
+and twapp reads only the pull request body.
+
 `twapp who` answers across sessions from the window's snapshot: a pull
 request matches each session whose `.twapp-pulls.json` has it, a ticket key
 matches the linked ticket, the earlier tickets in `.twapp-tickets.json` and
 pull requests whose title or head branch names the whole key, and a
-repository matches the session's open and draft pull requests in it. A
+repository matches the session's open and draft pull requests in it. When no
+session opened a pull request, its markers (from a session's fetched copy,
+else one `gh pr view`) name the session that did, or say it came from a
+session this window does not host. A
 running Claude session's address is `uds:/tmp/cc-socks/<harness pid>.sock`,
 the socket Claude Code listens on for messages from other sessions, printed
 only while the socket exists.

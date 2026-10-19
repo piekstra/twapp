@@ -35,6 +35,7 @@
     {
       "key": "/work/release-notes",
       "name": "Release notes",
+      "pull_marker": "0d5c6a1e-0000-4000-8000-000000000001",
       "provider": "codex",
       "status": { "state": "working" },
       "ticket_key": "OPS-8167",
@@ -84,7 +85,7 @@
           "last_seen": "2026-10-18T09:00:00Z",
           "mentions": 1,
           "hidden": false,
-          "info": { "title": "Fix the index", "body": "", "state": "open", "head": "fix-index", "author": "someone", "updated_at": "2026-10-18T09:00:00Z" }
+          "info": { "title": "Fix the index", "body": "Fixes the index.\n\n<!-- twapp-session: 0d5c6a1e-0000-4000-8000-000000000001 -->", "markers": ["0d5c6a1e-0000-4000-8000-000000000001"], "state": "open", "head": "fix-index", "author": "someone", "updated_at": "2026-10-18T09:00:00Z" }
         }
       ]
     }

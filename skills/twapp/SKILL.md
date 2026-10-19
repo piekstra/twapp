@@ -66,6 +66,13 @@ Keep them current:
 
 The window finds the pull requests a session opens on its own, from the URL `gh pr create` prints, and lists every other pull request URL the conversation names as mentioned. For one the session works on that it did not open with `gh pr create` in its own shell (opened in the browser, by a subagent, or a colleague's it is finishing), run `twapp pr add <url>` so the user sees it under the session; `twapp pr list` shows what the window found.
 
+Mark every pull request and commit you make, so the window can tell which session they came from even when it never saw them created (a subagent opened the pull request, or another machine did):
+
+- End the body of every pull request you open, or edit, with the line `twapp pr marker` prints, for example `gh pr create --body "$(printf '%s\n\n%s' "$BODY" "$(twapp pr marker)")"`. It is an HTML comment holding a random id for the session, so it does not show in the rendered description and names nothing about the session.
+- Add `--trailer "$(twapp pr marker --trailer)"` to every `git commit`.
+
+Do this in every repository, including public ones; it carries no names.
+
 ## Other sessions on the same work
 
 Several sessions can work in the same repository, under related tickets or toward the same release without knowing about each other. Before you merge, release or deploy something, or hold or roll one back, check who else holds it:
