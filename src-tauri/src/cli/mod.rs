@@ -2,6 +2,7 @@ pub mod app_bundle;
 pub mod archive;
 pub mod asks;
 pub mod blockers;
+pub mod who;
 pub mod yaks;
 pub mod config;
 pub mod fsutil;
@@ -124,6 +125,21 @@ pub enum Commands {
     Pr {
         #[command(subcommand)]
         command: PrCommands,
+    },
+    /// Which sessions in the window work on a pull request, a ticket or a repository, and how to message them
+    Who {
+        /// Pull request URLs, ticket keys (ABC-123) or repositories (owner/repo)
+        #[arg(required = true)]
+        refs: Vec<String>,
+        /// For a repository, include merged and closed pull requests
+        #[arg(long)]
+        all: bool,
+        /// Print JSON
+        #[arg(long)]
+        json: bool,
+        /// The session asking (default: the current directory)
+        #[arg(long)]
+        dir: Option<String>,
     },
     /// Manage default permissions
     Permissions {
@@ -591,6 +607,7 @@ pub fn run(cmd: Commands) -> i32 {
             PrCommands::Add { url, dir } => pulls::cmd_add(&url, dir.as_deref()),
             PrCommands::Remove { url, dir } => pulls::cmd_remove(&url, dir.as_deref()),
         },
+        Commands::Who { refs, all, json, dir } => who::cmd_who(&refs, all, dir.as_deref(), json),
         Commands::Yaks { json, dir, all, days } => {
             if all {
                 yaks::cmd_yak_report(days, json)
@@ -1866,7 +1883,7 @@ impl From<LaneArg> for crate::gui::hub::Lane {
     }
 }
 
-fn target_dir(dir: Option<&str>) -> String {
+pub(crate) fn target_dir(dir: Option<&str>) -> String {
     let path = dir
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
