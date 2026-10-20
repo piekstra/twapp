@@ -8,6 +8,7 @@
       "provider": "claude",
       "status": { "state": "your_turn", "harness_pid": 4242 },
       "ticket_key": "OPS-81",
+      "ticket": { "title": "Add the role column", "status": "In Review", "url": "https://acme.atlassian.net/browse/OPS-81" },
       "ticket_history": [
         { "key": "OPS-12", "title": "Role audit", "first_seen": "2026-10-01T10:00:00Z", "last_seen": "2026-10-02T10:00:00Z" }
       ],

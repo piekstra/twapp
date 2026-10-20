@@ -3,7 +3,8 @@
 //! an agent about to merge, release or deploy can reach them first. A
 //! session that waits on one subscribes with a blocker (`--on`); the agent
 //! doing the work publishes what happened with `twapp report`, which records
-//! it on every subscribed blocker and prints the sessions to message.
+//! it on every subscribed blocker, keeps it for the window's board
+//! (`reports.rs`) and prints the sessions to message.
 //!
 //! Answers come from the window's snapshot: each session's pull requests
 //! (found in its transcript), its linked and earlier tickets, and its open
@@ -263,12 +264,7 @@ fn claude_address(session: &Value) -> Option<String> {
 /// `subjects`. Returns the sessions reached, each with the blockers updated.
 pub fn report(snapshot: &Value, subjects: &[Subject], text: &str, here: &str) -> Result<Vec<(Value, Vec<String>)>, String> {
     let sessions = snapshot.get("sessions").and_then(Value::as_array).cloned().unwrap_or_default();
-    let from = sessions
-        .iter()
-        .find(|s| s.get("key").and_then(Value::as_str) == Some(here))
-        .and_then(|s| s.get("name").and_then(Value::as_str))
-        .unwrap_or("Another session")
-        .to_string();
+    let from = name_of(snapshot, here);
     let mut reached = Vec::new();
     for session in sessions.iter().filter(|s| s.get("key").and_then(Value::as_str) != Some(here)) {
         let dir = std::path::Path::new(session.get("key").and_then(Value::as_str).unwrap_or_default());
@@ -284,6 +280,17 @@ pub fn report(snapshot: &Value, subjects: &[Subject], text: &str, here: &str) ->
         }
     }
     Ok(reached)
+}
+
+/// The name of the session at `key`, as the window shows it.
+fn name_of(snapshot: &Value, key: &str) -> String {
+    snapshot
+        .get("sessions")
+        .and_then(Value::as_array)
+        .and_then(|all| all.iter().find(|s| s.get("key").and_then(Value::as_str) == Some(key)))
+        .and_then(|s| s.get("name").and_then(Value::as_str))
+        .unwrap_or("Another session")
+        .to_string()
 }
 
 pub fn cmd_report(text: &str, on: &[String], dir: Option<&str>) -> i32 {
@@ -306,9 +313,23 @@ pub fn cmd_report(text: &str, on: &[String], dir: Option<&str>) -> i32 {
             return 1;
         }
     };
+    let kept = super::reports::Report {
+        at: chrono::Utc::now().to_rfc3339(),
+        by: name_of(&snapshot, &here),
+        by_key: here.clone(),
+        on: subjects.iter().map(Subject::label).collect(),
+        text: text.to_string(),
+        reached: reached
+            .iter()
+            .map(|(s, _)| s.get("name").and_then(Value::as_str).unwrap_or_default().to_string())
+            .collect(),
+    };
+    if let Err(e) = super::reports::append(&super::reports::default_path(), &kept) {
+        eprintln!("Warning: the report was not kept for the window's board: {}", e);
+    }
     super::hub_link::notify_changed();
     if reached.is_empty() {
-        println!("No other session waits on it.");
+        println!("No other session waits on it. The window's board shows the report.");
     }
     for (session, titles) in &reached {
         let name = session.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -355,10 +376,14 @@ pub fn cmd_who(refs: &[String], all: bool, dir: Option<&str>, json: bool) -> i32
             (s, found, unknown)
         })
         .collect();
+    let kept = super::reports::recent(&super::reports::default_path(), 500);
+    let reported = |s: &Subject| -> Vec<&super::reports::Report> { kept.iter().filter(|r| r.reaches(s)).take(3).collect() };
     if json {
         let out: Vec<Value> = found
             .iter()
-            .map(|(s, h, unknown)| serde_json::json!({ "subject": s.label(), "sessions": h, "other_markers": unknown }))
+            .map(|(s, h, unknown)| {
+                serde_json::json!({ "subject": s.label(), "sessions": h, "other_markers": unknown, "reports": reported(s) })
+            })
             .collect();
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return 0;
@@ -370,6 +395,9 @@ pub fn cmd_who(refs: &[String], all: bool, dir: Option<&str>, json: bool) -> i32
         }
         for marker in unknown {
             println!("  opened from a twapp session this window does not host (marker {}): another machine, or a closed session", marker);
+        }
+        for r in reported(subject) {
+            println!("  reported {}", r.line());
         }
         for h in holders {
             let name = if h.this_session { format!("{} (this session)", h.name) } else { h.name.clone() };

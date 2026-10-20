@@ -14,6 +14,7 @@ pub mod migration;
 pub mod notes;
 pub mod permissions;
 pub mod pulls;
+pub mod reports;
 pub mod retired;
 pub mod session;
 pub mod session_attribution;

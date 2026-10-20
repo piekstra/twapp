@@ -95,7 +95,7 @@ When your work waits on something another session is doing (a pull request to me
 twapp blocker add "<what you need to happen>" --on <PR URL | ticket key | owner/repo>
 ```
 
-Do not poll for it. The agent doing that work reports what happened, and the report reaches this blocker: the window flags it, and a Claude session doing the work messages you.
+Do not poll for it. The agent doing that work reports what happened, and the report reaches this blocker: the window flags it, and a Claude session doing the work messages you. If it was already reported on, the command prints those reports; read them before waiting, since the work may be done.
 
 When you finish something other sessions may wait on (you merged a pull request, released or deployed it, ran its migration, moved or closed its ticket), report it:
 
@@ -103,7 +103,7 @@ When you finish something other sessions may wait on (you merged a pull request,
 twapp report "<what happened, and what it means for whoever waits>" --on <PR URL> --on <ticket key>
 ```
 
-Name every pull request, ticket and repository it concerns; a subscription to a repository hears about each of its pull requests. The report is recorded on every other session's blocker on them, and the command lists those sessions with their message addresses. Send each one the same report with SendMessage. A session without an address (not running, or not Claude) sees it in the window.
+Name every pull request, ticket and repository it concerns; a subscription to a repository hears about each of its pull requests. The report is recorded on every other session's blocker on them and kept for the window's Board, so report even when no session waits yet: one that subscribes later is shown it. The command lists the waiting sessions with their message addresses. Send each one the same report with SendMessage. A session without an address (not running, or not Claude) sees it in the window.
 
 When a report reaches you, as a message or as "Update on a blocker", act on it and resolve the blocker once nothing is left to wait for.
 

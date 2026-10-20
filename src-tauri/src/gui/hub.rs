@@ -183,6 +183,8 @@ pub struct SessionView {
     /// summaries named, the latest first.
     pub ticket_history: Vec<crate::cli::ticket_history::Entry>,
     pub effort: Option<EffortInfo>,
+    /// The linked ticket as last fetched.
+    pub ticket: Option<TicketBrief>,
     /// The linked ticket's epic, which groups sessions with no effort set.
     pub epic: Option<String>,
     /// The session id this session was forked from.
@@ -194,6 +196,13 @@ pub struct SessionView {
     pub stale_context: bool,
     /// The note of an archived session, `Some("")` when archived without one.
     pub archive_note: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TicketBrief {
+    pub title: String,
+    pub status: String,
+    pub url: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -495,11 +504,12 @@ impl HubSession {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| self.key.clone())
             });
+        let linked = crate::cli::ticket::read_linked(Path::new(&self.key));
         SessionView {
             key: self.key.clone(),
             name_suggestion: name_suggestion(&name, self.summary.as_ref(), &self.dismissed_names),
             ticket_suggestion: match ticket_plan(
-                crate::cli::ticket::read_linked(Path::new(&self.key)).as_ref(),
+                linked.as_ref(),
                 self.summary.as_ref().and_then(|s| s.ticket.as_deref()),
                 None,
                 &self.dismissed_tickets,
@@ -517,10 +527,8 @@ impl HubSession {
                 data.as_ref().and_then(|d| d.ticket_key.as_deref()),
             ),
             effort: self.effort.clone(),
-            epic: std::fs::read_to_string(Path::new(&self.key).join(".twapp-ticket.json"))
-                .ok()
-                .and_then(|s| serde_json::from_str::<crate::cli::ticket::TicketInfo>(&s).ok())
-                .and_then(|t| t.epic),
+            ticket: linked.as_ref().map(|t| TicketBrief { title: t.title.clone(), status: t.status.clone(), url: t.url.clone() }),
+            epic: linked.and_then(|t| t.epic),
             forked_from: data.as_ref().and_then(|d| d.forked_from.clone()),
             launch_kind: self.launch_kind.clone(),
             stale_context: self.context_check.is_some_and(|(_, stale)| stale),
@@ -2958,6 +2966,15 @@ mod tests {
         s.status = SessionStatus::in_state_now(State::Working);
         assert!(!s.attention());
     }
+}
+
+/// The latest reports sessions made with `twapp report`, newest first.
+#[tauri::command]
+pub async fn hub_reports(limit: Option<usize>) -> Result<Vec<crate::cli::reports::Report>, String> {
+    let limit = limit.unwrap_or(200).clamp(1, 1000);
+    tauri::async_runtime::spawn_blocking(move || crate::cli::reports::recent(&crate::cli::reports::default_path(), limit))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// What the summarizer and triage spent over the last `days`, next to what
