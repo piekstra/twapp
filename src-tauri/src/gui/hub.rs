@@ -287,8 +287,8 @@ fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) 
 }
 
 /// Told to every harness twapp starts, so the agent knows its session is
-/// one of the user's twapp sessions and where the conventions are. No quotes
-/// of either kind, since it goes inside quoted shell and TOML strings.
+/// one of the user's twapp sessions and where the conventions are. No double
+/// quotes or backslashes, since Codex reads it inside a TOML string.
 pub const SESSION_CONTEXT: &str = "This session runs in twapp, the window that hosts every coding-agent session of this user. \
 When the work waits on someone outside the session (a support case, a ticket, an email, a review), record \
 it with twapp blocker; when it needs the user to decide something or do something only they can, record it with \
@@ -299,9 +299,6 @@ that hold them. When the work waits on work in another session, record a blocker
 finish something others may wait on, run twapp report and message the sessions it lists. Otherwise leave other sessions \
 alone: they belong to the user.";
 
-/// A harness command with twapp's session context added: Claude takes it as
-/// an appended system prompt, Codex as developer instructions. Other
-/// harnesses have no such option and run unchanged.
 /// Record the conversation the session's Claude process is on when it moved
 /// to another one (`/clear`, `/resume`, or a compaction that continues in a
 /// new conversation), so the next start resumes that conversation.
@@ -334,6 +331,14 @@ fn follow_conversation(
     }
 }
 
+/// Holds `SESSION_CONTEXT` in the session shell's environment so the typed
+/// launch command names it instead of spelling it out: a line typed before the
+/// shell's line editor starts reading is cut at the terminal's 1024-byte limit.
+const SESSION_CONTEXT_VAR: &str = "TWAPP_SESSION_CONTEXT";
+
+/// A harness command with twapp's session context added: Claude takes it as
+/// an appended system prompt, Codex as developer instructions. Other
+/// harnesses have no such option and run unchanged.
 fn with_session_context(command: &str) -> String {
     let insert = |command: &str, program: &str, args: &str| -> Option<String> {
         // The program starts the command or follows the `cd ... && ` prefix
@@ -346,8 +351,8 @@ fn with_session_context(command: &str) -> String {
         let end = at + program.len();
         Some(format!("{}{}{}", &command[..end], args, &command[end..]))
     };
-    let claude = format!(" --append-system-prompt '{}'", SESSION_CONTEXT);
-    let codex = format!(" -c 'developer_instructions=\"{}\"'", SESSION_CONTEXT);
+    let claude = format!(" --append-system-prompt \"${}\"", SESSION_CONTEXT_VAR);
+    let codex = format!(" -c \"developer_instructions=\\\"${}\\\"\"", SESSION_CONTEXT_VAR);
     insert(command, "claude", &claude)
         .or_else(|| insert(command, "codex", &codex))
         .unwrap_or_else(|| command.to_string())
@@ -2222,7 +2227,10 @@ fn base_state_in_words(status: &SessionStatus) -> Option<String> {
 }
 
 fn session_env(key: &str) -> Vec<(String, String)> {
-    let mut env = vec![("TWAPP_SESSION_KEY".to_string(), key.to_string())];
+    let mut env = vec![
+        ("TWAPP_SESSION_KEY".to_string(), key.to_string()),
+        (SESSION_CONTEXT_VAR.to_string(), SESSION_CONTEXT.to_string()),
+    ];
     if let Ok(data) = read_session(Path::new(key)) {
         env.push(("TWAPP_SESSION_ID".to_string(), data.session_id.clone()));
     }
@@ -2924,14 +2932,37 @@ mod tests {
 
     #[test]
     fn harness_commands_carry_the_session_context() {
-        let claude = with_session_context("cd '/w' && claude --resume abc --chrome");
-        assert!(claude.starts_with("cd '/w' && claude --append-system-prompt 'This session runs in twapp"), "{}", claude);
-        assert!(claude.ends_with("' --resume abc --chrome"), "{}", claude);
-        let codex = with_session_context("codex resume t1 -C '/w'");
-        assert!(codex.starts_with("codex -c 'developer_instructions=\"This session runs in twapp"), "{}", codex);
-        assert!(codex.ends_with("\"' resume t1 -C '/w'"), "{}", codex);
+        assert_eq!(
+            with_session_context("cd '/w' && claude --resume abc --chrome"),
+            "cd '/w' && claude --append-system-prompt \"$TWAPP_SESSION_CONTEXT\" --resume abc --chrome"
+        );
+        assert_eq!(
+            with_session_context("codex resume t1 -C '/w'"),
+            "codex -c \"developer_instructions=\\\"$TWAPP_SESSION_CONTEXT\\\"\" resume t1 -C '/w'"
+        );
         assert_eq!(with_session_context("agy --workspace /w"), "agy --workspace /w");
-        assert!(!SESSION_CONTEXT.contains('\'') && !SESSION_CONTEXT.contains('"'));
+        assert!(!SESSION_CONTEXT.contains('"') && !SESSION_CONTEXT.contains('\\'));
+    }
+
+    #[test]
+    fn the_shell_hands_the_harness_the_whole_session_context() {
+        let argv = |program: &str, command: &str| {
+            let script = format!("{}() {{ printf '%s\\n' \"$@\"; }}; {}", program, with_session_context(command));
+            let out = std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .env(SESSION_CONTEXT_VAR, SESSION_CONTEXT)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert_eq!(
+            argv("claude", "claude --resume abc"),
+            format!("--append-system-prompt\n{}\n--resume\nabc\n", SESSION_CONTEXT)
+        );
+        assert_eq!(
+            argv("codex", "codex resume t1"),
+            format!("-c\ndeveloper_instructions=\"{}\"\nresume\nt1\n", SESSION_CONTEXT)
+        );
     }
 
     #[test]

@@ -513,7 +513,11 @@ needs two sessions to make a group.
 Every main-tab launch goes through `Hub::main_spawn_request`, which adds
 `SESSION_CONTEXT` to the harness command: `--append-system-prompt` for
 Claude, `-c developer_instructions=...` for Codex; Antigravity has no such
-option and runs unchanged. The text tells the agent it runs in twapp and
+option and runs unchanged. The command names the text as
+`"$TWAPP_SESSION_CONTEXT"`, which the spawn request sets in the shell's
+environment, because ptyd types the command into a shell that may still be
+starting, and macOS cuts a line typed before the shell's line editor reads it
+at 1024 bytes. The text tells the agent it runs in twapp and
 points at `twapp blocker`, `twapp decision`, `twapp action`, `twapp followup`,
 `twapp note` and the twapp skill, which the window writes to
 `~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start when their
