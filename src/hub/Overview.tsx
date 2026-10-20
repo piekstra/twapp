@@ -176,8 +176,7 @@ export default function Overview({
   const waiting = blockersOf(sessions);
   const asks = asksOf(sessions);
   const decisions = asks.filter((a) => a.ask.kind === "decision");
-  const [asksFold, setAsksFold] = useState<boolean | null>(null);
-  const asksOpen = asksFold ?? decisions.length > 0;
+  const [asksOpen, setAsksOpen] = useState(false);
   const updatedWaiting = waiting.filter((b) => b.blocker.status === "updated");
   const waitingOpen = waitingFold ?? updatedWaiting.length > 0;
   const checkable = waiting.filter((b) => b.blocker.check);
@@ -334,7 +333,7 @@ export default function Overview({
 
           {asks.length > 0 && (
             <section className="overview-waiting">
-              <button className="overview-lane-head overview-fold" onClick={() => setAsksFold(!asksOpen)}>
+              <button className="overview-lane-head overview-fold" onClick={() => setAsksOpen(!asksOpen)}>
                 <svg className={`section-chevron${asksOpen ? " open" : ""}`} width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 2l3 3-3 3" /></svg>
                 For you
                 <span className="count">{asks.length}</span>

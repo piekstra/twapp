@@ -289,9 +289,9 @@ started for it; the detail goes in `--context`.
 - **Window.** The panel's For you line counts a session's open items and
   opens them in the session details dialog; the
   rail shows a one-line count (a single decision by its question); the
-  overview's For you section lists every session's items by kind, starts open
-  when a decision is waiting, and starts actions and follow-ups folded; the
-  section and each kind fold on their own. Answering a decision (a choice or free text) records the
+  overview's For you section lists every session's items by kind and starts
+  folded, with its head counting the decisions waiting; opened, it starts
+  actions and follow-ups folded, and each kind folds on its own. Answering a decision (a choice or free text) records the
   answer and, when the session runs, pastes "Decision on: ... My answer: ..."
   into its input with a bracketed paste for the user to submit. An action's
   command is copied with `hub_copy_text` (`pbcopy`, since the webview's
