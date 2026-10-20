@@ -632,6 +632,24 @@ session without an address; twapp polls nothing and types nothing on its
 own. The update message a blocker sends carries its latest report since it
 was last seen or sent.
 
+Every report is also appended to `~/.local/state/twapp/reports.jsonl`
+(`cli/reports.rs`), with the sessions it reached, whether or not any blocker
+waited on it. A blocker that subscribes after the fact (`blocker add` or
+`update` with `--on`) prints the latest reports that subscription would have
+heard, on standard error so the new id stays alone on standard output, and
+`twapp who` prints the latest for each subject.
+
+The overview's Board (`hub/Board.tsx`) builds its rows in the frontend
+(`hub/boardModel.ts`) from the snapshot and `hub_reports`, the newest 200
+reports. A row is a pull request some session opened, a session's linked
+ticket (status from `SessionView.ticket`, the last fetched
+`.twapp-ticket.json`), or the subject of an open blocker's `on`; a pull
+request's state is the freshest copy any session fetched. Reports attach to
+a row with the same covering rule as delivery, and a ticket row lists the
+board's pull requests whose title or head branch names it. The Board
+re-reads reports on `hub:changed`, which `twapp report` sends even when the
+report reached no blocker.
+
 Only the session's current transcript is scanned, so pull requests from a
 conversation the session left before the window first scanned it are not
 found.

@@ -413,6 +413,23 @@ fn print_blocker(b: &Blocker) {
     }
 }
 
+/// What other sessions already reported on the work a blocker now waits
+/// on, so an agent subscribing after the fact learns it at once. Written to
+/// standard error, which leaves the new blocker's id alone on standard
+/// output.
+fn print_reported(on: Option<&str>) {
+    let Some(subject) = on.and_then(|on| super::who::Subject::parse(on, false).ok()) else { return };
+    let kept = super::reports::recent(&super::reports::default_path(), 500);
+    let earlier: Vec<_> = kept.iter().filter(|r| r.reaches(&subject)).take(3).collect();
+    if earlier.is_empty() {
+        return;
+    }
+    eprintln!("Already reported on {}, newest first:", subject.label());
+    for r in earlier {
+        eprintln!("  {}", r.line());
+    }
+}
+
 fn finish(result: Result<(), String>) -> i32 {
     match result {
         Ok(()) => {
@@ -443,7 +460,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             blocker.kind = kind;
             blocker.reference = reference.or_else(|| on.clone());
             blocker.check = check;
-            blocker.on = on;
+            blocker.on = on.clone();
             let id = blocker.id.clone();
             let mut all = match load_for_update(&dir) {
                 Ok(all) => all,
@@ -453,6 +470,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             let code = finish(save(&dir, &all));
             if code == 0 {
                 println!("{}", id);
+                print_reported(on.as_deref());
             }
             code
         }
@@ -475,7 +493,8 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 Ok(on) => on.map(|s| s.label()),
                 Err(e) => return finish(Err(e)),
             };
-            finish(update(&session_dir(dir.as_deref()), &id, |b| {
+            let subscribed = on.clone();
+            let code = finish(update(&session_dir(dir.as_deref()), &id, |b| {
                 if on.is_some() {
                     b.on = on;
                 }
@@ -498,7 +517,11 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                     b.latest_hash = None;
                 }
             })
-            .map(|b| print_blocker(&b)))
+            .map(|b| print_blocker(&b)));
+            if code == 0 {
+                print_reported(subscribed.as_deref());
+            }
+            code
         }
         C::Check { id, dir } => {
             let dir = session_dir(dir.as_deref());

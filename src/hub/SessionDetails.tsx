@@ -271,8 +271,8 @@ function TicketTab({ ticket: t, history, now }: { ticket: Ticket; history: Ticke
   );
 }
 
-const PULL_STATE = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" } as const;
-const REVIEW_LABEL = { approved: "Approved", changes_requested: "Changes requested", review_required: "Review required" } as const;
+export const PULL_STATE = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" } as const;
+export const REVIEW_LABEL = { approved: "Approved", changes_requested: "Changes requested", review_required: "Review required" } as const;
 
 /** "2 open · 1 merged" for a list of pull requests, unfetched ones left out. */
 export function pullStates(pulls: Pull[]) {

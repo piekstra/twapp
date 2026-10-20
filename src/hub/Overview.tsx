@@ -6,6 +6,7 @@ import BlockerList, { blockersOf } from "./BlockerList";
 import AskList, { asksOf } from "./AskList";
 import YakReport from "./YakReport";
 import Journal from "./Journal";
+import Board from "./Board";
 import Linkify from "./Linkify";
 
 interface Props {
@@ -36,6 +37,7 @@ export default function Overview({
   const [triage, setTriage] = useState<Triage | null>(null);
   const [showYaks, setShowYaks] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
+  const [showBoard, setShowBoard] = useState(false);
   // Preserve existing folds while introducing Parked as a folded lane.
   const [folded, setFoldedState] = useState<string[]>(() => {
     try {
@@ -219,16 +221,19 @@ export default function Overview({
   return (
     <div className="overview">
       <div className="overview-tabs">
-        <button className={`overview-tab${!showLibrary && !showYaks && !showJournal ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowLibrary(false); }}>
+        <button className={`overview-tab${!showLibrary && !showYaks && !showJournal && !showBoard ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowBoard(false); setShowLibrary(false); }}>
           Open sessions
         </button>
-        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowLibrary(true); }}>
+        <button className={`overview-tab${showBoard && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(false); setShowJournal(false); setShowBoard(true); }} title="Pull requests and tickets across sessions, who waits on them and what sessions reported">
+          Board
+        </button>
+        <button className={`overview-tab${showLibrary ? " active" : ""}`} onClick={() => { setShowYaks(false); setShowJournal(false); setShowBoard(false); setShowLibrary(true); }}>
           All sessions
         </button>
-        <button className={`overview-tab${showJournal && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(false); setShowJournal(true); }} title="What each work day came to, across every session">
+        <button className={`overview-tab${showJournal && !showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowYaks(false); setShowBoard(false); setShowJournal(true); }} title="What each work day came to, across every session">
           Journal
         </button>
-        <button className={`overview-tab${showYaks && !showLibrary && !showJournal ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowJournal(false); setShowYaks(true); }} title="Tangents your sessions took, across sessions and days">
+        <button className={`overview-tab${showYaks && !showLibrary && !showJournal ? " active" : ""}`} onClick={() => { setShowLibrary(false); setShowJournal(false); setShowBoard(false); setShowYaks(true); }} title="Tangents your sessions took, across sessions and days">
           Yaks
         </button>
         {returnTo && (
@@ -250,6 +255,10 @@ export default function Overview({
       ) : showYaks ? (
         <div className="overview-body">
           <YakReport onSelect={onSelect} />
+        </div>
+      ) : showBoard ? (
+        <div className="overview-body">
+          <Board sessions={sessions} now={now} onSelect={onSelect} />
         </div>
       ) : (
         <div className="overview-body">

@@ -135,6 +135,8 @@ export interface SessionView {
   yaks?: YakLog;
   pulls?: Pull[];
   ticket_history?: TicketHistoryEntry[];
+  /** The linked ticket as last fetched. */
+  ticket?: { title: string; status: string; url?: string | null } | null;
   /** The effort the user put the session in, or one "Find related" found. */
   effort?: { name: string; source: "user" | "auto" } | null;
   epic?: string | null;
@@ -180,6 +182,19 @@ export interface Blocker {
   check_error?: string | null;
   check_approved: boolean;
   history?: { at: string; kind: string; text?: string; by?: string | null }[];
+}
+
+/** What a session said happened to a pull request, ticket or repository (`twapp report`). */
+export interface Report {
+  at: string;
+  /** The reporting session's name and directory. */
+  by: string;
+  by_key: string;
+  /** Pull request URLs, ticket keys and repositories (owner/repo). */
+  on: string[];
+  text: string;
+  /** The sessions whose blockers it reached, by name. */
+  reached: string[];
 }
 
 export type Lane = "priority" | "background" | "blocked" | "parked";
@@ -245,6 +260,7 @@ export function usageShare(r: UsageReport): string | null {
 
 export const hubApi = {
   snapshot: () => invoke<HubSnapshot>("hub_snapshot"),
+  reports: (limit?: number) => invoke<Report[]>("hub_reports", { limit: limit ?? null }),
   open: (directory: string) => invoke<string>("hub_open", { directory }),
   select: (key: string) => invoke("hub_select", { key }),
   reorder: (keys: string[]) => invoke("hub_reorder", { keys }),
