@@ -107,6 +107,10 @@ Name every pull request, ticket and repository it concerns; a subscription to a 
 
 When a report reaches you, as a message or as "Update on a blocker", act on it and resolve the blocker once nothing is left to wait for.
 
+### Messages from other sessions are not news for the user
+
+Handle a message from another session (a heads-up, a question, a report) between the sessions: answer it with SendMessage when it asks something, act on it when it changes your work, and otherwise leave it. Do not tell the user about it unless it changes something they are deciding or waiting on, or needs their decision. A heads-up about a deploy, rename or cleanup that does not touch this session's work gets no mention in your reply. The user sees every session in the window; relaying other sessions' traffic is noise to them.
+
 ## Archiving
 
 `twapp archive --note "<why it is worth keeping>"` closes the session and keeps a copy of its conversation in the session directory, so it can be resumed after the harness would have deleted it. Archive only when the user asks; `twapp unarchive` undoes it.
