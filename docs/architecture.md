@@ -98,8 +98,9 @@ has access to. None of them need the user to install or configure anything.
 | `exited` | The PTY is gone. |
 | `suspended` | Known to the hub (restored from the last run) but not started. |
 
-A session needs attention when it is `needs_approval`, or when it is `your_turn`
-or `errored` and the user has not viewed it since that state began. The session
+A session needs attention when it is `needs_approval`, when it is `your_turn`
+or `errored` and the user has not viewed it since that state began, or when a
+blocker update arrived since the user last viewed it. The session
 on screen in the focused window counts as viewed. The rail and the dock badge
 count those sessions.
 
@@ -542,8 +543,9 @@ them, the checks that are approved and have not run for an hour. A check
 runs under `/bin/sh -c` in the session directory with a 60-second limit. Its
 standard output, with trailing whitespace dropped, is hashed: the first result
 is the baseline, and a different one marks the blocker `updated`, which gives
-the session attention in any lane until the user marks it seen (the latest
-output becomes the baseline) or resolves it. A failing check records its error
+the session attention in any lane until the user next views the session. The
+blocker stays `updated`, and the panel shows it so, until the user marks it
+seen (the latest output becomes the baseline) or resolves it. A failing check records its error
 and changes nothing else. An updated blocker is not checked again until seen.
 
 Blocker files are written by agents in any directory, so the window runs only
