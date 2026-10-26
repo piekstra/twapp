@@ -41,15 +41,16 @@ twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" -
 
 It prints the case's status, whether it is resolved, and how many replies the vendor has written, so it changes only when the case moves. Look up the real field names in the CLI's help or one real response before writing the check.
 
-For a chat message you posted and need someone to answer, by a reply in its thread or a reaction, the check reads the thread. With `slck`, `messages read` prints the message, its replies and its reactions, and nothing that changes between runs:
+For a Slack message you posted and need someone to answer, by a reply in its thread or a reaction, follow it with `slck watch` and check its local copy. `slck watch listen` holds one Socket Mode connection for every session and writes each watched thread to a file as Slack pushes changes, so `slck watch status` costs no API call and changes only when the thread does. It fails when the listener is not connected, which marks the check failed instead of silently stale:
 
 ```bash
+slck watch add C0123ABCD/1790000000.123456
 twapp blocker add "Team to approve the rollout plan" --party "Platform team" --kind slack \
     --ref "https://example.slack.com/archives/C0123ABCD/p1790000000123456" \
-    --check "slck --as-user messages read C0123ABCD/1790000000.123456"
+    --check "slck watch status C0123ABCD/1790000000.123456"
 ```
 
-Record it right after posting, so the first check's baseline is the message before anyone answered.
+Add the watch and the blocker right after posting, so the baseline is the message before anyone answered. `slck watch list` shows whether the listener is connected; when it is not, say so rather than falling back to polling the thread.
 
 A blocker without a check still shows in the window; the user checks it by hand.
 
@@ -58,10 +59,11 @@ A blocker without a check still shows in the window; the user checks it by hand.
 The window checks a blocker about once an hour and leaves sending the update to the session to the user. When the session's own work should carry on as soon as the answer arrives, wait for it in the background:
 
 ```bash
-twapp blocker wait <id>
+twapp blocker wait <id>                 # a check that calls a service
+twapp blocker wait <id> --every 5       # a local check, such as slck watch status
 ```
 
-Run it as a background command (in Claude Code, Bash with `run_in_background`), never in the foreground. It runs the check every two minutes (`--every <seconds>`, at least 30), rereads the blocker for reports from other sessions and a resolve from the window, and exits when the blocker is updated or resolved, printing what changed, so the session is woken by its exit instead of polling. It exits with an error after three failed checks in a row (an expired login, for example) or after `--timeout <minutes>`. The blocker stays marked updated, so the user still sees it in the window. Once you have handled the change, resolve the blocker, or run `twapp blocker seen <id>` and wait again when you still need a further answer.
+Run it as a background command (in Claude Code, Bash with `run_in_background`), never in the foreground. It runs the check every two minutes (`--every <seconds>`), rereads the blocker for reports from other sessions and a resolve from the window, and exits when the blocker is updated or resolved, printing what changed, so the session is woken by its exit instead of polling. It exits with an error after three failed checks in a row (an expired login, for example) or after `--timeout <minutes>`. The blocker stays marked updated, so the user still sees it in the window. Once you have handled the change, resolve the blocker, or run `twapp blocker seen <id>` and wait again when you still need a further answer.
 
 ## Decisions, actions and follow-ups: what the session needs from the user
 

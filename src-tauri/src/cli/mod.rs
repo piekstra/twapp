@@ -496,8 +496,9 @@ pub enum BlockerCommands {
     /// Run it in the background so the session carries on when the answer arrives
     Wait {
         id: String,
-        /// Seconds between checks
-        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(30..))]
+        /// Seconds between checks. Keep it at the default for a check that calls a service; a
+        /// check that reads local state (such as `slck watch status`) can run every few seconds
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..))]
         every: u64,
         /// Stop waiting after this many minutes
         #[arg(long)]
