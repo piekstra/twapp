@@ -1,6 +1,6 @@
 ---
 name: twapp
-description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it and has to wait for the answer, when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, before merging, releasing or deploying something other sessions may also hold (twapp who), when the work waits on another session's pull request, ticket or release, or finishes something other sessions may wait on (twapp blocker --on, twapp report), when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
+description: How to work in a session hosted by twapp, which hosts all of this user's sessions - recording what the session waits on outside itself (twapp blocker), decisions and actions it needs from the user and follow-ups it noticed (twapp decision, action, followup), session notes, reading the window's view of sessions, and reading the user's work journal (twapp journal) for what they worked on over a day, week, month or year. Use whenever the session files a support case, ticket, email, question or review with someone outside it, or posts a chat message it needs a reply or reaction to, and has to wait for the answer (twapp blocker wait resumes the session when it arrives), when that answer arrives, when the work needs the user to decide something or do something only they can, when it notices work outside its scope, before merging, releasing or deploying something other sessions may also hold (twapp who), when the work waits on another session's pull request, ticket or release, or finishes something other sessions may wait on (twapp blocker --on, twapp report), when the user asks to note something for the session, or when the user asks what they worked on (a standup, a weekly update, a performance review).
 ---
 
 # Working in a twapp session
@@ -41,7 +41,29 @@ twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" -
 
 It prints the case's status, whether it is resolved, and how many replies the vendor has written, so it changes only when the case moves. Look up the real field names in the CLI's help or one real response before writing the check.
 
+For a Slack message you posted and need someone to answer, by a reply in its thread or a reaction, follow it with `slck watch` and check its local copy. `slck watch listen` holds one Socket Mode connection for every session and writes each watched thread to a file as Slack pushes changes, so `slck watch status` costs no API call and changes only when the thread does. It fails when the listener is not connected, which marks the check failed instead of silently stale:
+
+```bash
+slck watch add C0123ABCD/1790000000.123456
+twapp blocker add "Team to approve the rollout plan" --party "Platform team" --kind slack \
+    --ref "https://example.slack.com/archives/C0123ABCD/p1790000000123456" \
+    --check "slck watch status C0123ABCD/1790000000.123456"
+```
+
+Add the watch and the blocker right after posting, so the baseline is the message before anyone answered. `slck watch list` shows whether the listener is connected; when it is not, say so rather than falling back to polling the thread.
+
 A blocker without a check still shows in the window; the user checks it by hand.
+
+### Waiting in the session
+
+The window checks a blocker about once an hour and leaves sending the update to the session to the user. When the session's own work should carry on as soon as the answer arrives, wait for it in the background:
+
+```bash
+twapp blocker wait <id>                 # a check that calls a service
+twapp blocker wait <id> --every 5       # a local check, such as slck watch status
+```
+
+Run it as a background command (in Claude Code, Bash with `run_in_background`), never in the foreground. It runs the check every two minutes (`--every <seconds>`), rereads the blocker for reports from other sessions and a resolve from the window, and exits when the blocker is updated or resolved, printing what changed, so the session is woken by its exit instead of polling. It exits with an error after three failed checks in a row (an expired login, for example) or after `--timeout <minutes>`. The blocker stays marked updated, so the user still sees it in the window. Once you have handled the change, resolve the blocker, or run `twapp blocker seen <id>` and wait again when you still need a further answer.
 
 ## Decisions, actions and follow-ups: what the session needs from the user
 

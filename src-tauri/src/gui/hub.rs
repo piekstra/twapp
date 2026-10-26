@@ -290,7 +290,7 @@ fn name_suggestion(name: &str, summary: Option<&Summary>, dismissed: &[String]) 
 /// one of the user's twapp sessions and where the conventions are. No double
 /// quotes or backslashes, since Codex reads it inside a TOML string.
 pub const SESSION_CONTEXT: &str = "This session runs in twapp, the window that hosts every coding-agent session of this user. \
-When the work waits on someone outside the session (a support case, a ticket, an email, a review), record \
+When the work waits on someone outside the session (a support case, a ticket, an email, a review, a reply to a chat message), record \
 it with twapp blocker; when it needs the user to decide something or do something only they can, record it with \
 twapp decision or twapp action, and work noticed outside the scope of the session with twapp followup. Follow the twapp \
 skill for these; twapp note adds a note the user sees in the session panel. twapp --help lists the commands. Before merging, \

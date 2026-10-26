@@ -382,6 +382,60 @@ pub fn approve(command: &str, dir: &Path) -> Result<(), String> {
     super::fsutil::write_atomic(&approved_path(), json).map_err(|e| e.to_string())
 }
 
+// --- Waiting -----------------------------------------------------------------
+
+/// Failed checks in a row after which `wait` gives up: a check that keeps
+/// failing (an expired login, a mistyped command) would never see the answer.
+const WAIT_FAILURES: u32 = 3;
+/// How often `wait` rereads the blocker file between its own checks, for a
+/// report, a resolve or a check the window ran.
+const WAIT_REREAD: Duration = Duration::from_secs(5);
+
+/// Block until the blocker is updated or resolved, running its check every
+/// `every`, and return the text for the agent. An updated blocker stays
+/// updated, so the window still flags it for the user.
+pub fn wait(dir: &Path, id: &str, every: Duration, timeout: Option<Duration>) -> Result<String, String> {
+    let started = Instant::now();
+    let mut next_check = started;
+    let mut failures = 0;
+    loop {
+        let blocker = load_for_update(dir)?
+            .into_iter()
+            .find(|b| b.id.starts_with(id))
+            .ok_or_else(|| format!("no blocker {}", id))?;
+        match blocker.status {
+            BlockerStatus::Resolved => return Ok(format!("The blocker \"{}\" was resolved.", blocker.title)),
+            BlockerStatus::Updated => {
+                return Ok(format!(
+                    "{}\nTo wait for the next change instead: `twapp blocker seen {id} && twapp blocker wait {id}`.",
+                    blocker.update_message(),
+                    id = blocker.id
+                ))
+            }
+            BlockerStatus::Waiting => {}
+        }
+        if blocker.check.is_none() && blocker.on.is_none() {
+            return Err("the blocker has no check command and waits on no other session's work, so nothing can update it".into());
+        }
+        if timeout.is_some_and(|t| started.elapsed() >= t) {
+            return Err(format!("still waiting on \"{}\"", blocker.title));
+        }
+        if let Some(check) = blocker.check.as_deref().filter(|_| Instant::now() >= next_check) {
+            let result = run_check(check, dir);
+            let error = result.as_ref().err().cloned();
+            update(dir, &blocker.id, |b| b.record_check(result))?;
+            super::hub_link::notify_changed();
+            failures = if error.is_some() { failures + 1 } else { 0 };
+            if failures >= WAIT_FAILURES {
+                return Err(format!("the check failed {} times in a row: {}", failures, error.unwrap_or_default()));
+            }
+            next_check = Instant::now() + every;
+            continue;
+        }
+        std::thread::sleep(WAIT_REREAD.min(every));
+    }
+}
+
 // --- CLI ---------------------------------------------------------------------
 
 fn session_dir(dir: Option<&str>) -> PathBuf {
@@ -548,6 +602,19 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             super::hub_link::notify_changed();
             i32::from(failed)
         }
+        C::Wait { id, every, timeout, dir } => {
+            let timeout = timeout.map(|minutes| Duration::from_secs(minutes * 60));
+            match wait(&session_dir(dir.as_deref()), &id, Duration::from_secs(every), timeout) {
+                Ok(text) => {
+                    println!("{}", text);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    1
+                }
+            }
+        }
         C::Seen { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, Blocker::mark_seen).map(|_| ())),
         C::Resolve { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, |b| b.resolve(Some("agent"))).map(|_| ())),
         C::Note { id, text, dir } => {
@@ -679,6 +746,54 @@ mod tests {
         assert!(update(&dir, "a", |_| {}).is_err());
         assert!(std::fs::read_to_string(path_in(&dir)).unwrap().contains("half-writ"), "the file is left for the user");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn wait_dir(check: Option<&str>) -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("twapp-blockers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut b = Blocker::new("Reply in the thread");
+        b.check = check.map(str::to_string);
+        let id = b.id.clone();
+        save(&dir, &[b]).unwrap();
+        (dir, id)
+    }
+
+    #[test]
+    fn wait_returns_when_the_check_output_changes_and_leaves_the_blocker_updated() {
+        let (dir, id) = wait_dir(Some("cat state.txt"));
+        std::fs::write(dir.join("state.txt"), "replies: 0\n").unwrap();
+        let writer = {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(dir.join("state.txt"), "replies: 1\n").unwrap();
+            })
+        };
+        let text = wait(&dir, &id, Duration::from_millis(50), Some(Duration::from_secs(10))).unwrap();
+        writer.join().unwrap();
+        assert!(text.contains("now prints:\n\nreplies: 1"));
+        assert!(text.contains(&format!("twapp blocker seen {id} && twapp blocker wait {id}")));
+        assert_eq!(load(&dir)[0].status, BlockerStatus::Updated, "the window still flags it");
+        let again = wait(&dir, &id, Duration::from_millis(50), Some(Duration::from_secs(1))).unwrap();
+        assert!(again.contains("replies: 1"), "an update not yet seen returns at once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wait_gives_up_on_a_failing_check_a_timeout_or_nothing_to_watch() {
+        let (dir, id) = wait_dir(Some("exit 4"));
+        let error = wait(&dir, &id, Duration::from_millis(10), None).unwrap_err();
+        assert!(error.contains("failed 3 times in a row: exited with 4"), "{error}");
+        let (dir2, id2) = wait_dir(Some("printf same"));
+        let error = wait(&dir2, &id2, Duration::from_millis(10), Some(Duration::from_millis(100))).unwrap_err();
+        assert!(error.contains("still waiting"), "{error}");
+        let (dir3, id3) = wait_dir(None);
+        assert!(wait(&dir3, &id3, Duration::from_millis(10), None).unwrap_err().contains("nothing can update it"));
+        update(&dir3, &id3, |b| b.resolve(None)).unwrap();
+        assert!(wait(&dir3, &id3, Duration::from_millis(10), None).unwrap().contains("was resolved"));
+        for d in [dir, dir2, dir3] {
+            let _ = std::fs::remove_dir_all(&d);
+        }
     }
 
     #[test]
