@@ -427,8 +427,8 @@ struct HubSession {
     ticket_seen: Option<String>,
     /// Tickets whose fetch failed, not tried again while the window runs.
     ticket_failed: Vec<String>,
-    /// Blockers whose check output changed since the user last looked.
-    blocker_updates: usize,
+    /// When the newest news on the session's updated blockers arrived.
+    blocker_update_at: Option<String>,
     effort: Option<EffortInfo>,
     /// Whether the main tab's last start resumed a conversation or began one.
     launch_kind: Option<String>,
@@ -455,7 +455,7 @@ impl HubSession {
             dismissed_tickets: Vec::new(),
             ticket_seen: None,
             ticket_failed: Vec::new(),
-            blocker_updates: super::blockers::updated_count(Path::new(&key_for_blockers)),
+            blocker_update_at: super::blockers::latest_update(Path::new(&key_for_blockers)),
             effort: None,
             launch_kind: None,
             context_check: None,
@@ -474,8 +474,10 @@ impl HubSession {
         if self.lane.lane == Lane::Parked {
             return false;
         }
-        // A reply from whoever active work waits on is news in any active lane.
-        if self.blocker_updates > 0 {
+        // A reply from whoever active work waits on is news in any active lane
+        // until the user opens the session. The blocker stays updated until
+        // marked seen, since an agent waiting on it reads that status.
+        if self.blocker_update_at.as_deref().is_some_and(|at| self.unseen(at)) {
             return true;
         }
         // A blocked session waits on someone else; only an open prompt, which
@@ -485,12 +487,14 @@ impl HubSession {
         }
         match self.status.state {
             State::NeedsApproval => true,
-            State::YourTurn | State::Errored => match &self.last_viewed {
-                Some(viewed) => viewed.as_str() < self.status.since.as_str(),
-                None => true,
-            },
+            State::YourTurn | State::Errored => self.unseen(&self.status.since),
             _ => false,
         }
+    }
+
+    /// Whether `at` came after the user last viewed the session.
+    fn unseen(&self, at: &str) -> bool {
+        self.last_viewed.as_deref().is_none_or(|viewed| viewed < at)
     }
 
     fn view(&self) -> SessionView {
@@ -941,19 +945,19 @@ impl Hub {
 
     /// Re-read every hosted session's blockers after one changed.
     pub fn refresh_blockers(&self) {
-        let counts: Vec<(String, usize)> = self
+        let updates: Vec<(String, Option<String>)> = self
             .hosted_keys()
             .into_iter()
             .map(|key| {
-                let count = super::blockers::updated_count(Path::new(&key));
-                (key, count)
+                let at = super::blockers::latest_update(Path::new(&key));
+                (key, at)
             })
             .collect();
         {
             let mut inner = self.inner.lock();
-            for (key, count) in counts {
+            for (key, at) in updates {
                 if let Some(session) = inner.session(&key) {
-                    session.blocker_updates = count;
+                    session.blocker_update_at = at;
                 }
             }
         }
@@ -2857,7 +2861,7 @@ mod tests {
     fn parked_sessions_keep_their_status_without_requesting_attention() {
         let mut s = HubSession::new("/w/parked".into(), AgentProvider::Claude);
         s.lane.lane = Lane::Parked;
-        s.blocker_updates = 1;
+        s.blocker_update_at = Some(chrono::Utc::now().to_rfc3339());
         for state in [State::YourTurn, State::NeedsApproval, State::Errored, State::Working] {
             s.status = SessionStatus::in_state_now(state);
             assert!(!s.attention());
@@ -2996,6 +3000,20 @@ mod tests {
         assert!(s.attention(), "an open prompt needs the user even when viewed");
         s.status = SessionStatus::in_state_now(State::Working);
         assert!(!s.attention());
+    }
+
+    #[test]
+    fn a_blocker_update_needs_the_user_until_they_open_the_session() {
+        let mut s = HubSession::new("/w/a".into(), AgentProvider::Claude);
+        s.status = SessionStatus::in_state_now(State::Working);
+        s.blocker_update_at = Some("2026-10-26T15:01:46+00:00".into());
+        assert!(s.attention(), "an unseen update needs the user");
+        s.last_viewed = Some("2026-10-26T17:36:31+00:00".into());
+        assert!(!s.attention(), "opened after the update arrived");
+        s.blocker_update_at = Some("2026-10-26T18:00:00+00:00".into());
+        assert!(s.attention(), "news after the last view needs the user again");
+        s.lane.lane = Lane::Blocked;
+        assert!(s.attention(), "even in the Blocked lane");
     }
 }
 

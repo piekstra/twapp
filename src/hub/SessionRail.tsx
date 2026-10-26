@@ -173,7 +173,7 @@ export default function SessionRail({
             <div className={`rail-waiting rail-asks${s.asks!.some((a) => a.kind === "decision") ? " decision" : ""}`}>{askSummary(s.asks!)}</div>
           )}
           {(s.blockers?.length ?? 0) > 0 && (
-            <div className={`rail-waiting${s.blockers!.some((b) => b.status === "updated") ? " updated" : ""}`}>
+            <div className={`rail-waiting${s.attention && s.blockers!.some((b) => b.status === "updated") ? " updated" : ""}`}>
               {s.blockers!.some((b) => b.status === "updated")
                 ? `Update on: ${s.blockers!.find((b) => b.status === "updated")!.title}`
                 : `Waiting on ${s.blockers!.length === 1 ? s.blockers![0].party || s.blockers![0].title : `${s.blockers!.length} things`}`}

@@ -38,14 +38,21 @@ pub fn open_blockers(dir: &Path) -> Vec<BlockerView> {
         .collect()
 }
 
-pub fn updated_count(dir: &Path) -> usize {
+/// When the newest news on an updated blocker arrived: its check output
+/// changed, or another session reported on what it waits on.
+pub fn latest_update(dir: &Path) -> Option<String> {
     if !blockers::path_in(dir).is_file() {
-        return 0;
+        return None;
     }
     blockers::load(dir)
         .iter()
         .filter(|b| b.status == BlockerStatus::Updated)
-        .count()
+        .flat_map(|b| {
+            let reports = b.history.iter().filter(|e| e.kind == "reported").map(|e| &e.at);
+            std::iter::once(b.changed_at.as_ref().unwrap_or(&b.created_at)).chain(reports)
+        })
+        .max()
+        .cloned()
 }
 
 fn due(blocker: &Blocker, now: chrono::DateTime<chrono::Utc>) -> bool {
@@ -153,5 +160,28 @@ mod tests {
         assert!(due(&b, now));
         b.status = BlockerStatus::Updated;
         assert!(!due(&b, now), "an update waits for the user before the next check");
+    }
+
+    #[test]
+    fn the_latest_update_is_the_newest_news_on_an_updated_blocker() {
+        let dir = std::env::temp_dir().join(format!("twapp-gui-blockers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(latest_update(&dir), None, "no blocker file");
+        let at = |hour: u32| format!("2026-10-26T{:02}:00:00+00:00", hour);
+        let mut checked = Blocker::new("check changed");
+        checked.status = BlockerStatus::Updated;
+        checked.changed_at = Some(at(10));
+        let mut reported = Blocker::new("reported twice");
+        reported.status = BlockerStatus::Updated;
+        reported.changed_at = Some(at(9));
+        reported.record_report("other session", "merged");
+        reported.history.last_mut().unwrap().at = at(12);
+        let mut waiting = Blocker::new("seen since");
+        waiting.changed_at = Some(at(14));
+        blockers::save(&dir, &[checked, reported, waiting.clone()]).unwrap();
+        assert_eq!(latest_update(&dir), Some(at(12)), "a later report counts; a seen blocker does not");
+        blockers::save(&dir, &[waiting]).unwrap();
+        assert_eq!(latest_update(&dir), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
