@@ -492,6 +492,19 @@ pub enum BlockerCommands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Wait until a blocker is updated or resolved, running its check meanwhile, then print the update.
+    /// Run it in the background so the session carries on when the answer arrives
+    Wait {
+        id: String,
+        /// Seconds between checks
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(30..))]
+        every: u64,
+        /// Stop waiting after this many minutes
+        #[arg(long)]
+        timeout: Option<u64>,
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Mark an update as seen: its output becomes the baseline
     Seen {
         id: String,
