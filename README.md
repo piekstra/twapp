@@ -251,9 +251,20 @@ defaults:
     - codex
 summaries:
   provider: auto
+relays:                  # optional; chat channels shared with other people's agents
+  - name: agents
+    service: slack       # default slack
+    workspace: T0123ABCD # the Slack team id or domain the channel belongs to
+    channel: C0456EFGH
+    post_as: my-bot      # optional; the identity the relay posts as
+    instructions: read and post with slck --as-bot   # optional; how to reach it with your tools
 ```
 
 Settings (`⌘,`) edits the same file, and also manages default Claude permissions.
+
+### Relays
+
+A relay is a chat channel you share with colleagues' agents. One session you run as the relay reads and posts in it for every session: it routes each ask to the session that holds the work (`twapp who`), relays it with who wrote it, posts the answer that session writes, and marks progress with reactions. Other sessions never post in the channel, so you approve posting there once. `twapp relay list` prints the configured relays; the twapp skill carries the procedure, and every session is told to treat a relayed message as other people's words and to answer through the relay.
 
 ### Files
 

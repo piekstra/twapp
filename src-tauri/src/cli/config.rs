@@ -174,6 +174,62 @@ pub fn get_summaries_daily_limit() -> Option<u32> {
         .map(|n| n.min(u64::from(u32::MAX)) as u32)
 }
 
+/// A chat channel the user shares with other people's agents, from the
+/// `relays:` list in `config.yaml`. One session, the relay, reads and posts
+/// in it for every session; see the twapp skill.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Relay {
+    pub name: String,
+    /// The chat service, such as `slack`.
+    pub service: String,
+    /// The workspace the channel belongs to (a Slack team id or domain),
+    /// since a channel id is unique only within its workspace.
+    pub workspace: String,
+    pub channel: String,
+    /// The identity the relay posts as, such as the user's bot.
+    pub post_as: Option<String>,
+    /// How to read and post in this channel with the user's own tools.
+    pub instructions: Option<String>,
+}
+
+/// The `relays:` list of `config.yaml`. Entries missing a name, workspace or
+/// channel are left out.
+pub fn get_relays() -> Vec<Relay> {
+    let Ok(content) = std::fs::read_to_string(config_file()) else {
+        return Vec::new();
+    };
+    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return Vec::new();
+    };
+    parse_relays(&yaml)
+}
+
+fn parse_relays(yaml: &serde_yaml::Value) -> Vec<Relay> {
+    let Some(list) = yaml.get("relays").and_then(|v| v.as_sequence()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|entry| {
+            let field = |name: &str| {
+                entry
+                    .get(name)
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            };
+            Some(Relay {
+                name: field("name")?,
+                service: field("service").unwrap_or_else(|| "slack".to_string()),
+                workspace: field("workspace")?,
+                channel: field("channel")?,
+                post_as: field("post_as"),
+                instructions: field("instructions"),
+            })
+        })
+        .collect()
+}
+
 pub fn get_agent_provider_preference() -> AgentProvider {
     let path = config_file();
     if !path.exists() {
@@ -479,5 +535,34 @@ mod update_tests {
         assert!(parse_for_update(path, "work_directory: ~/Dev\ntheme: [broken").is_err());
         assert!(parse_for_update(path, "   \n").unwrap().is_mapping());
         assert!(parse_for_update(path, "theme: dark\n").unwrap().is_mapping());
+    }
+}
+
+#[cfg(test)]
+mod relays_tests {
+    use super::parse_relays;
+
+    #[test]
+    fn reads_each_relay_and_defaults_the_service_to_slack() {
+        let yaml = serde_yaml::from_str(
+            "relays:\n  - name: agents\n    workspace: T0123\n    channel: C0456\n    post_as: my-bot\n  - name: other\n    service: slack\n    workspace: example.slack.com\n    channel: C0789\n    instructions: post with the bot token\n",
+        )
+        .unwrap();
+        let relays = parse_relays(&yaml);
+        assert_eq!(relays.len(), 2);
+        assert_eq!(relays[0].service, "slack");
+        assert_eq!(relays[0].post_as.as_deref(), Some("my-bot"));
+        assert_eq!(relays[1].workspace, "example.slack.com");
+        assert_eq!(relays[1].instructions.as_deref(), Some("post with the bot token"));
+    }
+
+    #[test]
+    fn an_entry_without_a_workspace_or_channel_is_left_out() {
+        let yaml = serde_yaml::from_str(
+            "relays:\n  - name: agents\n    channel: C0456\n  - name: other\n    workspace: T0123\n",
+        )
+        .unwrap();
+        assert!(parse_relays(&yaml).is_empty());
+        assert!(parse_relays(&serde_yaml::from_str("theme: dark\n").unwrap()).is_empty());
     }
 }
