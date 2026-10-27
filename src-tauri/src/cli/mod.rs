@@ -14,6 +14,7 @@ pub mod migration;
 pub mod notes;
 pub mod permissions;
 pub mod pulls;
+pub mod relay;
 pub mod reports;
 pub mod retired;
 pub mod session;
@@ -237,6 +238,11 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Chat channels shared with other people's agents, which one relay session reads and posts in for every session
+    Relay {
+        #[command(subcommand)]
+        command: RelayCommands,
+    },
     /// Show or set the larger effort the session belongs to in the window
     #[command(after_help = "Examples:\n  twapp effort                       Show this session's effort\n  twapp effort \"Payments integration\"\n  twapp effort --clear")]
     Effort {
@@ -355,6 +361,16 @@ pub enum TicketCommands {
         /// Target directory
         #[arg(long)]
         dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RelayCommands {
+    /// The relays in config.yaml: each channel's service, workspace and how to post there
+    List {
+        /// Print JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -664,6 +680,7 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::Archive { note, dir } => archive::cmd_archive(dir.as_deref(), note.as_deref(), false),
         Commands::Unarchive { dir } => archive::cmd_archive(dir.as_deref(), None, true),
         Commands::Close { dir } => cmd_close(dir.as_deref()),
+        Commands::Relay { command: RelayCommands::List { json } } => relay::cmd_relay_list(json),
         Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),
         Commands::Delete { dir, everything, yes } => cmd_delete(dir.as_deref(), everything, yes),
         Commands::Models { command } => match command {
