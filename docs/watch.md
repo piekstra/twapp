@@ -139,7 +139,8 @@ refused, with the reason and when to try again, when:
 
 - the source is paused;
 - the local time is in the source's quiet hours (which may span midnight);
-- the topic is terminal: its last state reported `terminal: true`;
+- the topic is terminal: its last state reported `terminal: true` (a poll
+  by hand, `twapp watch poll`, still reads it, in case it reopened);
 - the topic is being polled already (a claim expires after 90 seconds, so a
   poll that died does not hold it);
 - the topic's interval has not passed since its last poll started:
@@ -153,10 +154,15 @@ other process polls it meanwhile. Because the policy lives in the store, no
 caller can poll faster than the source allows, and sessions that wait on
 the same topic share its polls.
 
-When three polls of one source fail in a row, across its topics, with no
-success between them (an expired login fails them all), the source pauses:
-nothing of it polls until `twapp watch resume <source>`, and `twapp watch
-sources` and `list` show it paused with its last error.
+When three polls of one source fail in a row with no success between them,
+and the failures span three of its topics (or every topic it has, when it
+has fewer), the source pauses: an expired login fails them all, while one
+deleted item fails only its own and just backs off. Nothing of a paused
+source polls until `twapp watch resume <source>`, which also clears its
+topics' backoff; `twapp watch sources` and `list` show it paused with the
+error that paused it. A command that runs past its 60 seconds is stopped
+with its whole process group, so no part of a pipeline keeps calling the
+service after its claim ends.
 
 A terminal topic keeps its last state; its subscribers stay open until their
 sessions resolve them.
@@ -168,7 +174,9 @@ request loops. Every minute it collects the subscribed topics (the `watch`
 of every open blocker in every hosted session) and polls those of approved
 sources that the policy allows, one claim at a time. A topic with no
 subscribers is not polled. Its state is kept for 30 days, so a new
-subscriber within that time starts from the known state.
+subscriber within that time starts from the known state. After the window
+starts, due topics are spread across the first `min_interval` of each source
+rather than run back to back.
 
 ## Delivery
 
