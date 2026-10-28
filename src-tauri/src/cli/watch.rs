@@ -19,6 +19,12 @@ use std::time::Duration;
 const BODY_CHARS: usize = 4000;
 /// Events older than this are dropped from the log.
 const EVENT_DAYS: i64 = 30;
+/// Polls of one source failing in a row, across its topics, after which the
+/// source pauses: an expired login fails them all.
+const PAUSE_AFTER: u32 = 3;
+/// A claim older than this belongs to a poll that died without recording;
+/// the command's own limit is 60 seconds.
+const CLAIM_EXPIRES: Duration = Duration::from_secs(90);
 
 // --- Sources -----------------------------------------------------------------
 
@@ -306,8 +312,12 @@ pub struct Topic {
     /// Each entry's id and a hash of its body; bodies stay in events only.
     #[serde(default)]
     pub entries: BTreeMap<String, String>,
+    /// When the last poll started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_polled_at: Option<String>,
+    /// Set while a poll runs, so another process does not run it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polling_since: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_changed_at: Option<String>,
     #[serde(default)]
@@ -326,6 +336,101 @@ pub struct Store {
     pub seq: u64,
     #[serde(default)]
     pub topics: BTreeMap<String, Topic>,
+    /// Polls of each source failed in a row, across its topics.
+    #[serde(default)]
+    pub source_failures: BTreeMap<String, u32>,
+    /// Sources that poll nothing until `twapp watch resume`.
+    #[serde(default)]
+    pub paused: BTreeMap<String, Paused>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Paused {
+    pub at: String,
+    pub error: String,
+}
+
+fn parse_at(at: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(at).ok().map(|t| t.with_timezone(&chrono::Utc))
+}
+
+fn add(at: chrono::DateTime<chrono::Utc>, d: Duration) -> chrono::DateTime<chrono::Utc> {
+    at + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::MAX)
+}
+
+impl Source {
+    /// The wait before a topic's next poll: `min_interval`, or after
+    /// failures the backoff, doubling from `backoff_start` to `backoff_max`.
+    pub fn interval(&self, failures: u32) -> Duration {
+        if failures == 0 {
+            return self.min_interval;
+        }
+        let doubled = 2u32.checked_pow(failures - 1).and_then(|f| self.backoff_start.checked_mul(f));
+        doubled.map_or(self.backoff_max, |d| d.min(self.backoff_max))
+    }
+
+    /// Whether `local` falls in the quiet hours, which may span midnight.
+    pub fn quiet_at(&self, local: chrono::NaiveTime) -> bool {
+        match &self.quiet_hours {
+            None => false,
+            Some(q) if q.from <= q.to => local >= q.from && local < q.to,
+            Some(q) => local >= q.from || local < q.to,
+        }
+    }
+}
+
+impl Store {
+    fn source_topics<'a>(&'a self, source: &'a str) -> impl Iterator<Item = (&'a String, &'a Topic)> + 'a {
+        self.topics.iter().filter(move |(t, _)| parse_topic(t).is_ok_and(|(s, _)| s == source))
+    }
+
+    /// When `topic` may next be polled by its own schedule: one never polled
+    /// at any time, a terminal one never.
+    pub fn next_poll_at(&self, source: &Source, topic: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        let Some(state) = self.topics.get(topic) else { return Some(chrono::DateTime::<chrono::Utc>::MIN_UTC) };
+        if state.terminal {
+            return None;
+        }
+        match state.last_polled_at.as_deref().and_then(parse_at) {
+            None => Some(chrono::DateTime::<chrono::Utc>::MIN_UTC),
+            Some(at) => Some(add(at, source.interval(state.failures))),
+        }
+    }
+
+    /// Why `topic` may not be polled at `now`, or `None` when it may. Every
+    /// poll, from any process, passes this under the store's lock.
+    pub fn refusal(&self, source: &Source, topic: &str, now: chrono::DateTime<chrono::Utc>, local: chrono::NaiveTime) -> Option<String> {
+        if let Some(p) = self.paused.get(&source.name) {
+            return Some(format!(
+                "{} is paused since {} after {} failed polls in a row ({}); fix it, then `twapp watch resume {}`",
+                source.name, p.at, PAUSE_AFTER, p.error, source.name
+            ));
+        }
+        if source.quiet_at(local) {
+            let q = source.quiet_hours.as_ref()?;
+            return Some(format!("{} is quiet from {} to {}", source.name, q.from.format("%H:%M"), q.to.format("%H:%M")));
+        }
+        let running = |t: &Topic| t.polling_since.as_deref().and_then(parse_at).is_some_and(|at| add(at, CLAIM_EXPIRES) > now);
+        if let Some(state) = self.topics.get(topic) {
+            if state.terminal {
+                return Some(format!("{} is {}, which no longer changes; it is not polled again", topic, state.status.as_deref().unwrap_or("terminal")));
+            }
+            if running(state) {
+                return Some(format!("{} is being polled now", topic));
+            }
+        }
+        if let Some(next) = self.next_poll_at(source, topic).filter(|next| *next > now) {
+            return Some(format!("{} allows the next poll of {} at {}", source.name, topic, next.format("%H:%M:%S UTC")));
+        }
+        if self.source_topics(&source.name).filter(|(_, t)| running(t)).count() >= source.max_concurrency {
+            return Some(format!("{} already has {} poll(s) running", source.name, source.max_concurrency));
+        }
+        let latest = self.source_topics(&source.name).filter_map(|(_, t)| t.last_polled_at.as_deref().and_then(parse_at)).max();
+        if let Some(next) = latest.map(|at| add(at, source.spacing)).filter(|next| *next > now) {
+            return Some(format!("{} spaces its polls; the next may start at {}", source.name, next.format("%H:%M:%S UTC")));
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -538,6 +643,30 @@ impl Paths {
         }
     }
 
+    /// Claim a poll of `topic` if its source allows one now: the claim marks
+    /// it running and starts its interval, so no other process polls it.
+    pub fn claim(&self, source: &Source, topic: &str) -> Result<(), String> {
+        let now = chrono::Utc::now();
+        let local = chrono::Local::now().time();
+        self.locked(|store| {
+            if let Some(why) = store.refusal(source, topic, now, local) {
+                return Ok(Err(why));
+            }
+            let entry = store.topics.entry(topic.to_string()).or_default();
+            entry.polling_since = Some(now.to_rfc3339());
+            entry.last_polled_at = Some(now.to_rfc3339());
+            Ok(Ok(()))
+        })?
+    }
+
+    /// Let a paused source poll again; its topics keep their backoff.
+    pub fn resume(&self, source: &str) -> Result<bool, String> {
+        self.locked(|store| {
+            store.source_failures.remove(source);
+            Ok(store.paused.remove(source).is_some())
+        })
+    }
+
     /// Events after `since`, oldest first, for one topic or all.
     pub fn events_since(&self, topic: Option<&str>, since: u64) -> Vec<Event> {
         std::fs::read_to_string(self.events())
@@ -556,16 +685,26 @@ impl Paths {
         // failure is saved on the topic too.
         self.locked(|store| {
             let mut entry = store.topics.get(topic).cloned().unwrap_or_default();
-            entry.last_polled_at = Some(now.to_rfc3339());
+            entry.polling_since = None;
+            if entry.last_polled_at.is_none() {
+                entry.last_polled_at = Some(now.to_rfc3339());
+            }
+            let source = parse_topic(topic).map(|(s, _)| s.to_string()).unwrap_or_default();
             let state = match result {
                 Err(error) => {
                     entry.failures += 1;
                     entry.last_error = Some(error.clone());
                     store.topics.insert(topic.to_string(), entry);
+                    let failed = store.source_failures.entry(source.clone()).or_default();
+                    *failed += 1;
+                    if *failed >= PAUSE_AFTER {
+                        store.paused.insert(source, Paused { at: now.to_rfc3339(), error: error.clone() });
+                    }
                     return Ok(Err(error));
                 }
                 Ok(state) => state,
             };
+            store.source_failures.remove(&source);
             entry.failures = 0;
             entry.last_error = None;
             let mut event = None;
@@ -614,22 +753,12 @@ fn open_private(path: &Path, append: bool) -> Result<std::fs::File, String> {
 }
 
 /// Poll one topic now: run its source's command and record the result.
-/// Refused until `min_interval` has passed since the topic's last poll.
+/// Refused when the source's policy does not allow a poll now (`refusal`).
 pub fn poll(sources: &Path, paths: &Paths, topic: &str) -> Result<Option<Event>, String> {
     let (name, id) = parse_topic(topic)?;
     let source = find_source(sources, name)?;
     let command = source.command_for(id)?;
-    let last = paths.load()?.topics.get(topic).and_then(|t| t.last_polled_at.clone());
-    if let Some(at) = last.as_deref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()) {
-        let next = at.with_timezone(&chrono::Utc) + chrono::Duration::from_std(source.min_interval).unwrap_or_default();
-        if chrono::Utc::now() < next {
-            return Err(format!(
-                "{} was polled at {}; {} allows the next poll at {}",
-                topic, at.format("%H:%M:%S UTC"), source.name, next.format("%H:%M:%S UTC")
-            ));
-        }
-    }
-    paths.ensure()?;
+    paths.claim(&source, topic)?;
     paths.log_poll(topic, &command);
     // A source usually pipes a CLI into jq; without pipefail a CLI that
     // failed (an expired login) would read as jq's empty success.
@@ -669,6 +798,7 @@ pub fn cmd_sources(json: bool) -> i32 {
         print_json(&rows);
         return 0;
     }
+    let paused = Paths::new(state_dir()).load().map(|s| s.paused).unwrap_or_default();
     if loaded.is_empty() {
         println!("No sources. Plugins install them as YAML files in {}.", dir.display());
         return 0;
@@ -677,6 +807,9 @@ pub fn cmd_sources(json: bool) -> i32 {
         match source {
             Ok(s) => {
                 println!("{}  {}", s.name, s.description.as_deref().unwrap_or(""));
+                if let Some(p) = paused.get(&s.name) {
+                    println!("  PAUSED since {}: {} (`twapp watch resume {}` once fixed)", p.at, p.error, s.name);
+                }
                 println!(
                     "  every {} at most, {} at a time, {} apart, backing off {} to {}",
                     human(s.min_interval), s.max_concurrency, human(s.spacing), human(s.backoff_start), human(s.backoff_max)
@@ -691,6 +824,68 @@ pub fn cmd_sources(json: bool) -> i32 {
         }
     }
     0
+}
+
+pub fn cmd_list(json: bool) -> i32 {
+    let store = match Paths::new(state_dir()).load() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+    let dir = sources_dir();
+    let next = |topic: &str| {
+        let source = parse_topic(topic).ok().and_then(|(n, _)| find_source(&dir, n).ok())?;
+        store.next_poll_at(&source, topic)
+    };
+    if json {
+        let rows: Vec<serde_json::Value> = store
+            .topics
+            .iter()
+            .map(|(topic, state)| serde_json::json!({ "topic": topic, "state": state, "next_poll_at": next(topic).map(|t| t.to_rfc3339()) }))
+            .collect();
+        print_json(&rows);
+        return 0;
+    }
+    if store.topics.is_empty() {
+        println!("No topics polled yet.");
+    }
+    for (topic, state) in &store.topics {
+        let when = |at: Option<chrono::DateTime<chrono::Utc>>| at.map(|t| t.format("%m-%d %H:%M UTC").to_string());
+        let last = when(state.last_polled_at.as_deref().and_then(parse_at)).unwrap_or_else(|| "never".into());
+        let following = match next(topic) {
+            _ if state.terminal => "never".to_string(),
+            Some(t) if t <= chrono::Utc::now() => "due".to_string(),
+            t => when(t).unwrap_or_else(|| "unknown".into()),
+        };
+        println!("{}  {}", topic, state.status.as_deref().unwrap_or("(no state yet)"));
+        println!("  last poll {}, next {}, event #{}", last, following, state.head);
+        if let Some(error) = &state.last_error {
+            println!("  failing ({} in a row): {}", state.failures, error);
+        }
+    }
+    for (source, p) in &store.paused {
+        println!("source {} PAUSED since {}: {}", source, p.at, p.error);
+    }
+    0
+}
+
+pub fn cmd_resume(source: &str) -> i32 {
+    match Paths::new(state_dir()).resume(source) {
+        Ok(true) => {
+            println!("{} polls again.", source);
+            0
+        }
+        Ok(false) => {
+            println!("{} is not paused.", source);
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
 }
 
 pub fn cmd_poll(topic: &str, json: bool) -> i32 {
@@ -934,6 +1129,107 @@ mod tests {
         assert_eq!(body_hash("a"), "af63dc4c8601ec8c");
     }
 
+    fn policy_source(extra: &str) -> Source {
+        let dir = temp("policy");
+        let path = dir.join("p.yaml");
+        std::fs::write(&path, format!("name: p\nid_pattern: '[0-9]+'\nmin_interval: 30m\ncommand: cli {{id}}\nbackoff: {{start: 1h, max: 6h}}\nspacing: 10s\n{}", extra)).unwrap();
+        let source = Source::load(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        source
+    }
+
+    fn at(minutes: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-10-28T12:00:00Z").unwrap().with_timezone(&chrono::Utc) + chrono::Duration::minutes(minutes)
+    }
+
+    fn polled(minutes: i64) -> Topic {
+        Topic { status: Some("Open".into()), last_polled_at: Some(at(minutes).to_rfc3339()), ..Default::default() }
+    }
+
+    #[test]
+    fn a_topic_waits_its_interval_and_backs_off_after_failures() {
+        let source = policy_source("");
+        let noon = chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let mut store = Store::default();
+        assert_eq!(store.refusal(&source, "p:1", at(0), noon), None, "never polled");
+        store.topics.insert("p:1".into(), polled(0));
+        assert!(store.refusal(&source, "p:1", at(29), noon).unwrap().contains("next poll of p:1 at 12:30:00"));
+        assert_eq!(store.refusal(&source, "p:1", at(30), noon), None);
+
+        assert_eq!(source.interval(1), Duration::from_secs(3600));
+        assert_eq!(source.interval(3), Duration::from_secs(4 * 3600));
+        assert_eq!(source.interval(9), Duration::from_secs(6 * 3600), "capped at max");
+        assert_eq!(source.interval(200), Duration::from_secs(6 * 3600), "no overflow");
+        store.topics.get_mut("p:1").unwrap().failures = 2;
+        assert!(store.refusal(&source, "p:1", at(119), noon).is_some());
+        assert_eq!(store.refusal(&source, "p:1", at(120), noon), None);
+
+        store.topics.get_mut("p:1").unwrap().terminal = true;
+        assert!(store.refusal(&source, "p:1", at(999), noon).unwrap().contains("not polled again"));
+    }
+
+    #[test]
+    fn a_source_runs_its_cap_of_polls_spaced_apart() {
+        let source = policy_source("");
+        let noon = chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let mut store = Store::default();
+        let mut running = polled(60);
+        running.polling_since = running.last_polled_at.clone();
+        store.topics.insert("p:1".into(), running);
+        let now = at(60) + chrono::Duration::seconds(20);
+        assert!(store.refusal(&source, "p:1", now, noon).unwrap().contains("being polled now"));
+        assert!(store.refusal(&source, "p:2", now, noon).unwrap().contains("1 poll(s) running"), "max_concurrency 1");
+        let later = at(62);
+        assert_eq!(store.refusal(&source, "p:2", later, noon), None, "a claim that never recorded expires");
+
+        let mut store = Store::default();
+        store.topics.insert("p:1".into(), polled(60));
+        assert!(store.refusal(&source, "p:2", at(60) + chrono::Duration::seconds(5), noon).unwrap().contains("spaces its polls"));
+        assert_eq!(store.refusal(&source, "p:2", at(60) + chrono::Duration::seconds(10), noon), None);
+    }
+
+    #[test]
+    fn quiet_hours_may_span_midnight() {
+        let source = policy_source("quiet_hours: {from: '20:00', to: '07:00'}\n");
+        let t = |h| chrono::NaiveTime::from_hms_opt(h, 0, 0).unwrap();
+        assert!(source.quiet_at(t(22)) && source.quiet_at(t(3)));
+        assert!(!source.quiet_at(t(7)) && !source.quiet_at(t(12)));
+        assert!(Store::default().refusal(&source, "p:1", at(0), t(22)).unwrap().contains("quiet from 20:00 to 07:00"));
+        let day = policy_source("quiet_hours: {from: '12:00', to: '13:00'}\n");
+        assert!(day.quiet_at(t(12)) && !day.quiet_at(t(13)));
+    }
+
+    #[test]
+    fn a_source_pauses_after_failures_in_a_row_until_resumed() {
+        let paths = Paths::new(temp("pause"));
+        let source = policy_source("");
+        paths.record("p:1", Ok(state("open.json"))).unwrap();
+        for topic in ["p:1", "p:2", "p:3"] {
+            assert!(paths.record(topic, Err("exited with 1: login expired".into())).is_err());
+        }
+        let store = paths.load().unwrap();
+        assert_eq!(store.paused["p"].error, "exited with 1: login expired");
+        let why = store.refusal(&source, "p:9", chrono::Utc::now(), chrono::NaiveTime::MIN).unwrap();
+        assert!(why.contains("twapp watch resume p"), "{}", why);
+        assert!(paths.resume("p").unwrap());
+        assert!(!paths.resume("p").unwrap(), "already running");
+        assert!(paths.load().unwrap().paused.is_empty());
+        std::fs::remove_dir_all(&paths.dir).unwrap();
+    }
+
+    #[test]
+    fn a_success_resets_the_source_count() {
+        let paths = Paths::new(temp("reset"));
+        paths.record("p:1", Err("timeout".into())).unwrap_err();
+        paths.record("p:2", Err("timeout".into())).unwrap_err();
+        paths.record("p:3", Ok(state("open.json"))).unwrap();
+        paths.record("p:1", Err("timeout".into())).unwrap_err();
+        let store = paths.load().unwrap();
+        assert!(store.paused.is_empty());
+        assert_eq!(store.source_failures["p"], 1);
+        std::fs::remove_dir_all(&paths.dir).unwrap();
+    }
+
     #[test]
     fn old_events_are_dropped() {
         let paths = Paths::new(temp("prune"));
@@ -962,7 +1258,7 @@ mod tests {
         let script = fixtures().join("states");
         std::fs::write(
             sources.join("local.yaml"),
-            format!("name: local\nid_pattern: '[a-z-]+'\nmin_interval: 1m\ncommand: cat {}/{{id}}.json\n", script.display()),
+            format!("name: local\nid_pattern: '[a-z-]+'\nmin_interval: 1m\nspacing: 0s\ncommand: cat {}/{{id}}.json\n", script.display()),
         )
         .unwrap();
         let paths = Paths::new(temp("e2e-state"));
@@ -970,7 +1266,7 @@ mod tests {
         let topics = paths.load().unwrap();
         assert_eq!(topics.topics["local:open"].status.as_deref(), Some("Open"));
         let again = poll(&sources, &paths, "local:open").unwrap_err();
-        assert!(again.contains("allows the next poll at"), "{}", again);
+        assert!(again.contains("allows the next poll of local:open at"), "{}", again);
         assert!(poll(&sources, &paths, "local:missing").is_err(), "a failing command is an error");
         assert!(poll(&sources, &paths, "../local:open").unwrap_err().contains("not a source name"));
         std::fs::write(

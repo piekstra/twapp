@@ -240,7 +240,7 @@ pub enum Commands {
         dir: Option<String>,
     },
     /// External items (a vendor case, a merge request, a ticket elsewhere) polled through sources that plugins install
-    #[command(after_help = "Examples:\n  twapp watch sources\n  twapp watch poll vendor-case:CASE-4411\n  twapp watch show vendor-case:CASE-4411\n  twapp watch log --since 120\n\nA source is a YAML file in ~/.config/twapp/sources.d/ naming a command that prints\none item's state as JSON. docs/watch.md in the twapp repository describes the format.")]
+    #[command(after_help = "Examples:\n  twapp watch sources\n  twapp watch poll vendor-case:CASE-4411\n  twapp watch list\n  twapp watch show vendor-case:CASE-4411\n  twapp watch log --since 120\n\nA source is a YAML file in ~/.config/twapp/sources.d/ naming a command that prints\none item's state as JSON. docs/watch.md in the twapp repository describes the format.")]
     Watch {
         #[command(subcommand)]
         command: WatchCommands,
@@ -383,6 +383,15 @@ pub enum WatchCommands {
         topic: String,
         #[arg(long)]
         json: bool,
+    },
+    /// Every topic polled: its status, last and next poll, and errors
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Let a source paused after failed polls (an expired login) poll again
+    Resume {
+        source: String,
     },
     /// A topic's last state and its latest events
     Show {
@@ -723,6 +732,8 @@ pub fn run(cmd: Commands) -> i32 {
             WatchCommands::Sources { json } => watch::cmd_sources(json),
             WatchCommands::Poll { topic, json } => watch::cmd_poll(&topic, json),
             WatchCommands::Show { topic, json } => watch::cmd_show(&topic, json),
+            WatchCommands::List { json } => watch::cmd_list(json),
+            WatchCommands::Resume { source } => watch::cmd_resume(&source),
             WatchCommands::Log { topic, since, json } => watch::cmd_log(topic.as_deref(), since, json),
         },
         Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),
