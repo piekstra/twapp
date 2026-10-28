@@ -10,9 +10,7 @@
 //! last state) and `events.jsonl` (one event per line, oldest first).
 
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -108,9 +106,7 @@ impl Source {
     pub fn load(path: &Path) -> Result<Source, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let file: SourceFile = serde_yaml::from_str(&text).map_err(|e| e.to_string())?;
-        let valid_name = !file.name.is_empty()
-            && file.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-        if !valid_name {
+        if !valid_name(&file.name) {
             return Err(format!("name {:?} must be lowercase letters, digits and hyphens", file.name));
         }
         if path.file_stem().and_then(|s| s.to_str()) != Some(file.name.as_str()) {
@@ -136,7 +132,7 @@ impl Source {
                 parse_duration(&b.start).map_err(|e| format!("backoff.start: {}", e))?,
                 parse_duration(&b.max).map_err(|e| format!("backoff.max: {}", e))?,
             ),
-            None => (min_interval, min_interval * 8),
+            None => (min_interval, min_interval.checked_mul(8).ok_or("min_interval is too long")?),
         };
         if backoff_start < min_interval || backoff_max < backoff_start {
             return Err("backoff must run from at least min_interval up to max".into());
@@ -177,6 +173,10 @@ impl Source {
     }
 }
 
+fn valid_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 pub fn sources_dir() -> PathBuf {
     super::config::config_dir().join("sources.d")
 }
@@ -199,6 +199,9 @@ pub fn load_sources(dir: &Path) -> Vec<(PathBuf, Result<Source, String>)> {
 }
 
 pub fn find_source(dir: &Path, name: &str) -> Result<Source, String> {
+    if !valid_name(name) {
+        return Err(format!("{:?} is not a source name: lowercase letters, digits and hyphens", name));
+    }
     for ext in ["yaml", "yml"] {
         let path = dir.join(format!("{}.{}", name, ext));
         if path.is_file() {
@@ -221,7 +224,7 @@ pub fn parse_duration(text: &str) -> Result<Duration, String> {
         "d" => 24 * 60 * 60,
         _ => return Err(format!("{:?} is not a duration such as 30m", text)),
     };
-    Ok(Duration::from_secs(n * unit))
+    n.checked_mul(unit).map(Duration::from_secs).ok_or_else(|| format!("{:?} is too long", text))
 }
 
 // --- Topics ------------------------------------------------------------------
@@ -342,6 +345,9 @@ pub struct Event {
     pub changes: Vec<Change>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<Entry>,
+    /// Ids of entries gone from the item since the last poll.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
     /// Whether the event wakes a subscriber: a value changed or an entry
     /// that notifies arrived.
     pub notify: bool,
@@ -360,6 +366,9 @@ impl Event {
             let what = if e.edited { "edited" } else { "new" };
             parts.push(format!("{} entry by {}", what, e.author.as_deref().unwrap_or("unknown")));
         }
+        for id in &self.removed {
+            parts.push(format!("entry {} removed", id));
+        }
         format!("#{} {} UTC  {}  {}", self.seq, when, self.topic, parts.join("; "))
     }
 }
@@ -371,10 +380,11 @@ fn plain(value: &serde_json::Value) -> String {
     }
 }
 
+/// FNV-1a: kept in `topics.json` across builds, so it must not change with
+/// the Rust toolchain the way `DefaultHasher` may.
 fn body_hash(body: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    body.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let hash = body.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    format!("{:016x}", hash)
 }
 
 fn cut(body: &str) -> String {
@@ -385,22 +395,35 @@ fn cut(body: &str) -> String {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Diff {
+    pub changes: Vec<Change>,
+    pub entries: Vec<Entry>,
+    pub removed: Vec<String>,
+}
+
 /// Compare a new state with the topic's last one. The first state is the
 /// baseline and makes no event; after that, every changed value (`status`
-/// and `terminal` included) and every new or edited entry is in the event.
-pub fn diff(last: &Topic, now: &ItemState) -> Option<(Vec<Change>, Vec<Entry>)> {
+/// and `terminal` included), every new or edited entry and every entry gone
+/// is in the event.
+pub fn diff(last: &Topic, now: &ItemState) -> Option<Diff> {
     let Some(last_status) = &last.status else { return None };
     let mut changes = Vec::new();
-    if !now.fields.contains_key("status") && *last_status != now.status {
-        changes.push(Change { field: "status".into(), from: last_status.clone().into(), to: now.status.clone().into() });
-    }
+    // `status` counts as a field whether or not the source lists it there,
+    // so it is reported once, with the source's own value when it has one.
+    let with_status = |fields: &BTreeMap<String, serde_json::Value>, status: &str| {
+        let mut fields = fields.clone();
+        fields.entry("status".to_string()).or_insert_with(|| status.into());
+        fields
+    };
+    let (last_fields, now_fields) = (with_status(&last.fields, last_status), with_status(&now.fields, &now.status));
     if last.terminal != now.terminal {
         changes.push(Change { field: "terminal".into(), from: last.terminal.into(), to: now.terminal.into() });
     }
-    let keys: std::collections::BTreeSet<&String> = last.fields.keys().chain(now.fields.keys()).collect();
+    let keys: std::collections::BTreeSet<&String> = last_fields.keys().chain(now_fields.keys()).collect();
     for key in keys {
-        let from = last.fields.get(key).cloned().unwrap_or(serde_json::Value::Null);
-        let to = now.fields.get(key).cloned().unwrap_or(serde_json::Value::Null);
+        let from = last_fields.get(key).cloned().unwrap_or(serde_json::Value::Null);
+        let to = now_fields.get(key).cloned().unwrap_or(serde_json::Value::Null);
         if from != to {
             changes.push(Change { field: key.clone(), from, to });
         }
@@ -414,10 +437,16 @@ pub fn diff(last: &Topic, now: &ItemState) -> Option<(Vec<Change>, Vec<Entry>)> 
             Some(_) => None,
         })
         .collect();
-    if changes.is_empty() && entries.is_empty() {
+    let removed: Vec<String> = last
+        .entries
+        .keys()
+        .filter(|id| !now.entries.iter().any(|e| e.id == **id))
+        .cloned()
+        .collect();
+    if changes.is_empty() && entries.is_empty() && removed.is_empty() {
         None
     } else {
-        Some((changes, entries))
+        Some(Diff { changes, entries, removed })
     }
 }
 
@@ -540,8 +569,11 @@ impl Paths {
             entry.failures = 0;
             entry.last_error = None;
             let mut event = None;
-            if let Some((changes, entries)) = diff(&entry, &state) {
+            if let Some(Diff { changes, entries, removed }) = diff(&entry, &state) {
                 store.seq += 1;
+                // Saved before the event is appended, so a failed save can
+                // never hand the next event this one's number.
+                self.save(store)?;
                 let notify = !changes.is_empty() || entries.iter().any(|e| e.notify);
                 let made = Event {
                     seq: store.seq,
@@ -550,6 +582,7 @@ impl Paths {
                     status: state.status.clone(),
                     changes,
                     entries,
+                    removed,
                     notify,
                 };
                 self.prune(now)?;
@@ -581,10 +614,21 @@ fn open_private(path: &Path, append: bool) -> Result<std::fs::File, String> {
 }
 
 /// Poll one topic now: run its source's command and record the result.
+/// Refused until `min_interval` has passed since the topic's last poll.
 pub fn poll(sources: &Path, paths: &Paths, topic: &str) -> Result<Option<Event>, String> {
     let (name, id) = parse_topic(topic)?;
     let source = find_source(sources, name)?;
     let command = source.command_for(id)?;
+    let last = paths.load()?.topics.get(topic).and_then(|t| t.last_polled_at.clone());
+    if let Some(at) = last.as_deref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()) {
+        let next = at.with_timezone(&chrono::Utc) + chrono::Duration::from_std(source.min_interval).unwrap_or_default();
+        if chrono::Utc::now() < next {
+            return Err(format!(
+                "{} was polled at {}; {} allows the next poll at {}",
+                topic, at.format("%H:%M:%S UTC"), source.name, next.format("%H:%M:%S UTC")
+            ));
+        }
+    }
     paths.ensure()?;
     paths.log_poll(topic, &command);
     // A source usually pipes a CLI into jq; without pipefail a CLI that
@@ -603,6 +647,7 @@ fn print_json<T: Serialize>(value: &T) {
 fn human(d: Duration) -> String {
     let s = d.as_secs();
     match s {
+        0 => "0s".to_string(),
         _ if s.is_multiple_of(86400) => format!("{}d", s / 86400),
         _ if s.is_multiple_of(3600) => format!("{}h", s / 3600),
         _ if s.is_multiple_of(60) => format!("{}m", s / 60),
@@ -788,6 +833,8 @@ mod tests {
         assert_eq!(parse_duration("6h").unwrap(), Duration::from_secs(21600));
         assert!(parse_duration("6").is_err());
         assert!(parse_duration("1w").is_err());
+        assert!(parse_duration("99999999999999999d").unwrap_err().contains("too long"));
+        assert_eq!(human(Duration::ZERO), "0s");
     }
 
     #[test]
@@ -856,11 +903,35 @@ mod tests {
             ]),
             entries: vec![],
         };
-        let (changes, _) = diff(&last, &now).unwrap();
+        let changes = diff(&last, &now).unwrap().changes;
         let fields: Vec<&str> = changes.iter().map(|c| c.field.as_str()).collect();
-        // `status` is reported once, from fields, since the source lists it there.
         assert_eq!(fields, vec!["terminal", "assignee", "resolution", "status"]);
-        assert_eq!(changes[3].from, serde_json::Value::Null);
+        assert_eq!((changes[3].from.clone(), changes[3].to.clone()), ("Open".into(), "Closed".into()));
+
+        let had_status = Topic { fields: BTreeMap::from([("status".to_string(), "Open".into())]), ..last.clone() };
+        let dropped = ItemState { status: "Closed".into(), terminal: false, fields: BTreeMap::new(), entries: vec![] };
+        let changes = diff(&had_status, &dropped).unwrap().changes;
+        assert_eq!(changes, vec![Change { field: "status".into(), from: "Open".into(), to: "Closed".into() }],
+            "status once, though the source stopped listing it in fields");
+    }
+
+    #[test]
+    fn an_entry_gone_from_the_item_is_reported_removed() {
+        let last = Topic {
+            status: Some("Open".into()),
+            entries: BTreeMap::from([("1".to_string(), body_hash("a")), ("2".to_string(), body_hash("b"))]),
+            ..Default::default()
+        };
+        let now = parse_state(r#"{"status": "Open", "entries": [{"id": "1", "body": "a"}]}"#).unwrap();
+        let found = diff(&last, &now).unwrap();
+        assert_eq!(found.removed, vec!["2".to_string()]);
+        assert!(found.changes.is_empty() && found.entries.is_empty());
+    }
+
+    #[test]
+    fn body_hashes_are_stable_across_builds() {
+        assert_eq!(body_hash(""), "cbf29ce484222325");
+        assert_eq!(body_hash("a"), "af63dc4c8601ec8c");
     }
 
     #[test]
@@ -874,6 +945,7 @@ mod tests {
             status: "Open".into(),
             changes: vec![],
             entries: vec![],
+            removed: vec![],
             notify: true,
         };
         paths.append_event(&old).unwrap();
@@ -897,7 +969,10 @@ mod tests {
         assert_eq!(poll(&sources, &paths, "local:open").unwrap(), None);
         let topics = paths.load().unwrap();
         assert_eq!(topics.topics["local:open"].status.as_deref(), Some("Open"));
+        let again = poll(&sources, &paths, "local:open").unwrap_err();
+        assert!(again.contains("allows the next poll at"), "{}", again);
         assert!(poll(&sources, &paths, "local:missing").is_err(), "a failing command is an error");
+        assert!(poll(&sources, &paths, "../local:open").unwrap_err().contains("not a source name"));
         std::fs::write(
             sources.join("piped.yaml"),
             "name: piped\nid_pattern: '[a-z]+'\nmin_interval: 1m\ncommand: cat /nonexistent/{id} | cat\n",

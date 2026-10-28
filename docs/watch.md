@@ -117,9 +117,12 @@ Under `~/.local/state/twapp/watch/`, written only by the window:
    "notify": true}
   ```
 
-  `seq` increases across all topics. Entry bodies are cut to 4,000
-  characters. An entry whose id was seen but whose body hash changed appears
-  with `edited: true`. Events older than 30 days are dropped.
+  `seq` increases across all topics. `status` is compared as a field whether
+  or not the source lists it in `fields`. Entry bodies are cut to 4,000
+  characters. An entry whose id was seen but whose body hash (FNV-1a, stable
+  across builds) changed appears with `edited: true`; the ids of entries gone
+  from the item are listed in `removed`, which does not notify. Events older
+  than 30 days are dropped.
 
 Both files are mode `0600`, since they hold third-party text.
 
@@ -211,6 +214,10 @@ interval or the pattern) is a new hash and polls nothing until approved
 again. The window asks for approval the first time a blocker watches an
 unapproved source, showing the whole file.
 
+Approval governs what the window runs unattended. `twapp watch poll`, run
+by the user or an agent in a terminal, runs the source as that caller, as
+`twapp blocker check` runs a check today; it still keeps to `min_interval`.
+
 Every poll is appended to `~/.local/state/twapp/watch/polls.log` with the
 time, the topic and the command as run.
 
@@ -221,6 +228,7 @@ time, the topic and the command as run.
 | Command exits non-zero, times out, or prints something that is not the contract | The poll failed: error recorded on the topic, backoff, no event, state unchanged. |
 | Login expired or the source system is down | Its topics fail together and the source pauses after three failures; `twapp watch sources` and the window show it. |
 | Item deleted or no longer readable | Failed polls, as above. The adapter reports `terminal` only when the item says so. |
+| An entry deleted from the item | Listed in the next event's `removed`, without waking anyone. |
 | Entries without stable ids | The adapter must supply one; a projection can derive it from author and timestamp. |
 | An entry edited after it was seen | An `edited` entry in the next event. |
 | Window not running | Nothing polls. `wait` on a watched blocker exits with an error; the first tick after start spreads the due polls. |
