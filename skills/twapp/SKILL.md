@@ -33,6 +33,8 @@ twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" -
 
 The topic is `<source>:<id>`. One poll serves every session watching the item, within the limits the source sets (how often, how many at once), and the update carries what changed: the new status, and each new comment's author and text. `twapp watch show <topic>` prints the item's last state and recent changes, and `twapp watch log <topic>` every change. Do not also poll the item yourself; the source's limits exist because the system behind it must not be read more often.
 
+The window polls a watched item on its own only once the user has approved its source. `twapp watch sources` says which are not approved; tell the user, and run `twapp watch approve <source>` only when they ask you to in the conversation, then show what it printed. Until then the item is polled only while a session runs `blocker wait` or `blocker check` on it.
+
 ### Writing a check command
 
 The window runs a check now and then, only after the user approves that exact command, and marks the blocker **Updated** when the command's output changes. So a check prints the blocker's state and nothing else:
