@@ -2,6 +2,7 @@ import { useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
 import BlockerDetail from "./BlockerDetail";
 import CheckButton from "./CheckButton";
+import WatchButton, { watchProblem, watchSummary } from "./WatchButton";
 import { hubApi, sendToSession, sinceLabel, type Blocker, type SessionView } from "./api";
 
 interface Props {
@@ -33,6 +34,9 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
     }
   };
   const updated = blocker.status === "updated";
+  const watching = watchSummary(blocker, (at) => sinceLabel(at, now));
+  const watchError = watchProblem(blocker);
+  const lastWatched = [...(blocker.history ?? [])].reverse().find((e) => e.kind === "watched");
   const link = blocker.reference && /^https?:\/\//.test(blocker.reference) ? blocker.reference : null;
   const age = (
     <span className="blocker-age" title={`Waiting since ${new Date(blocker.created_at).toLocaleString()}`}>
@@ -72,7 +76,12 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
       )}
       {open && (
         <div className="blocker-detail">
-          {blocker.check ? (
+          {blocker.watch ? (
+            <div className="blocker-check">
+              <code>{blocker.watch}</code>
+              <span className="blocker-checked">{watching}</span>
+            </div>
+          ) : blocker.check ? (
             <div className="blocker-check">
               <code>{blocker.check}</code>
               <span className="blocker-checked">
@@ -84,11 +93,23 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
             <div className="blocker-checked">No check command; the session's agent can add one.</div>
           )}
           {blocker.check_error && <div className="blocker-error">Last check failed: <Linkify text={blocker.check_error} /></div>}
+          {watchError && <div className="blocker-error"><Linkify text={watchError} /></div>}
+          {blocker.watch && lastWatched?.text && (
+            <pre className="blocker-excerpt">
+              <Linkify text={lastWatched.text} />
+            </pre>
+          )}
           {blocker.excerpt && (
             <pre className="blocker-excerpt">
               <Linkify text={blocker.excerpt} />
             </pre>
           )}
+        </div>
+      )}
+      {blocker.watch && !open && (
+        <div className="blocker-checked">
+          {checkResult ?? `Watching ${blocker.watch}: ${watching ?? "not polled yet"}`}
+          {watchError && !checkResult && (blocker.watched?.source?.paused ? " · its source is paused" : " · the last poll failed")}
         </div>
       )}
       {blocker.check && !open && (
@@ -101,6 +122,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
       {error && <div className="blocker-error">{error}</div>}
       <div className="blocker-actions">
         <CheckButton blocker={blocker} sessionKey={session.key} onError={setError} onResult={(t) => setCheckResult(t || null)} />
+        <WatchButton blocker={blocker} onError={setError} onResult={(t) => setCheckResult(t || null)} />
         {updated && (
           <button
             className="button primary small"
