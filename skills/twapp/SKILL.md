@@ -42,6 +42,8 @@ The window runs a check now and then, only after the user approves that exact co
 - Use a read-only command that makes one request. Rate limits and partner policies apply to checks like any other call.
 - Run it once yourself (`twapp blocker check <id>`) to confirm it works and prints what you expect.
 
+The user approves a check in the window, or by telling you in the conversation to approve it ("approve it", "approve the check"). Then run `twapp blocker approve <id>` (or `--all` for every open blocker in the session) and show the command it printed as approved. Never approve a check the user has not asked you to approve in the conversation: the approval is what lets the window run an agent-written command unattended. An approval holds for the exact text in this session directory, so a check changed with `blocker update --check` needs the user's approval again.
+
 For example, for a vendor support case that a CLI can read as JSON:
 
 ```bash
