@@ -1,8 +1,9 @@
 # Watching external items
 
-Status: steps 1 and 2 of the delivery plan are built (sources, the state
-contract, the store, the polling policy and `twapp watch
-sources|list|poll|show|log|resume`); the rest is design.
+Status: steps 1 to 3 of the delivery plan are built (sources, the state
+contract, the store, the polling policy, `twapp watch
+sources|list|poll|show|log|resume`, and blockers that watch a topic); the
+window's scheduler and views, and waking idle sessions, are design.
 
 Sessions wait on things outside twapp: a vendor support case, a merge request
 on another forge, a ticket in a tracker, an email thread. Today each waiting
@@ -128,8 +129,10 @@ file, by whichever process polls:
 
 Both files are mode `0600`, since they hold third-party text.
 
-A blocker with `watch` keeps `watch_seen`, the `seq` of the last event its
-session saw. The cursor a session asks about is that number.
+A blocker with `watch` keeps `watch_latest`, the `seq` of the newest event
+recorded on it, and `watch_seen`, the newest its session saw. The cursor a
+session asks about is `watch_seen`: `twapp watch log <topic> --since
+<watch_seen>`.
 
 ## Polling policy
 
@@ -180,27 +183,30 @@ rather than run back to back.
 
 ## Delivery
 
-An event with `notify: true` reaches every open blocker subscribed to its
-topic. For each, through `blockers::update`, the watcher appends a `watched`
-history event holding the event's summary (status change and new entries'
-authors) and its `seq`, and marks the blocker `updated`, as a report from
-another session does today. The window then re-reads, so the session gets
-attention in its lane and the update shows in the panel.
+A poll that makes an event delivers it at once to every open blocker
+watching its topic, in every session the window hosts and in the polling
+session's own directory. Through `blockers::update`, each such blocker logs
+a `watched` history event holding the event's summary, by the topic, and
+records the event's `seq` as `watch_latest`, so an event is delivered to a
+blocker once. An event with `notify: true` marks the blocker `updated`, as a
+report from another session does; one without only records. A blocker whose
+delivery failed, or whose session was not hosted when the event was made,
+catches up from `events.jsonl` the next time its session checks or waits on
+it.
 
 The update message a blocker sends (`update_message`) carries every event
-after `watch_seen`: the field changes and each new entry's author and body.
-The agent gets what changed in the message itself and does not reread the
-item.
+after `watch_seen` through `watch_latest`: each changed value and each new
+entry's author and full text. The agent gets what changed in the message
+itself and does not reread the item.
 
 The agent is woken in one of two ways:
 
-- `twapp blocker wait <id>` running in the background rereads the blocker
-  file every few seconds and exits when it is updated, logging `delivered` on
-  the blocker. For a watched blocker, `wait` runs no command of its own, so a
-  waiting session adds no polls. When the watcher's heartbeat in
-  `topics.json` is more than five minutes old (the window is not running),
-  `wait` exits with an error that says so rather than polling the source
-  itself.
+- `twapp blocker wait <id>` running in the background. For a watched
+  blocker it tries a poll every `--every` seconds; the source's policy
+  refuses all but one per interval across every session waiting on the
+  topic, so waiting adds no calls to the source. It exits when the blocker
+  is updated or resolved, after three failed polls in a row, or when the
+  source is paused, saying why.
 - Otherwise the window sends it. Any blocker update (a check's output
   changed, another session reported, a watched topic changed) that no `wait`
   delivered within a minute is submitted to the session as its update
@@ -215,7 +221,9 @@ The agent is woken in one of two ways:
 Waking applies to every blocker, not only watched ones, so it lands
 separately from the watcher.
 
-`twapp blocker seen <id>` moves `watch_seen` to the topic's `head`.
+`twapp blocker check <id>` on a watched blocker polls its topic by hand
+(once per topic, however many blockers it covers) and delivers the result.
+`twapp blocker seen <id>` moves `watch_seen` to `watch_latest`.
 
 Messages to other channels (a chat message, a push notification) are not
 part of this design; a later `on_event` command in `config.yaml` could add

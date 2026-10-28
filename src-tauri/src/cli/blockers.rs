@@ -70,6 +70,17 @@ pub struct Blocker {
     /// this blocker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<String>,
+    /// The external item this blocker watches, a topic `<source>:<id>`
+    /// polled once for every blocker watching it (`twapp watch`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<String>,
+    /// The number of the newest event of `watch` recorded here.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub watch_latest: u64,
+    /// The number of the newest event of `watch` the user has seen; the
+    /// update message carries the events after it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub watch_seen: u64,
     #[serde(default)]
     pub status: BlockerStatus,
     pub created_at: String,
@@ -96,6 +107,10 @@ pub struct Blocker {
     pub history: Vec<BlockerEvent>,
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 impl Blocker {
     pub fn new(title: &str) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
@@ -120,6 +135,23 @@ impl Blocker {
     /// A message telling the session's agent what changed, for the user to
     /// review and send.
     pub fn update_message(&self) -> String {
+        self.message_with(self.watched_events())
+    }
+
+    /// The events of the watched topic after the last one seen, through the
+    /// last one recorded here.
+    fn watched_events(&self) -> Vec<super::watch::Event> {
+        match &self.watch {
+            Some(topic) if self.watch_latest > self.watch_seen => super::watch::Paths::new(super::watch::state_dir())
+                .events_since(Some(topic), self.watch_seen)
+                .into_iter()
+                .filter(|e| e.seq <= self.watch_latest)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn message_with(&self, watched: Vec<super::watch::Event>) -> String {
         let mut text = format!("Update on a blocker this session is waiting on: {}", self.title);
         if let Some(party) = &self.party {
             text.push_str(&format!(" ({})", party));
@@ -131,6 +163,11 @@ impl Blocker {
         if let Some(report) = self.unseen_report() {
             let from = report.by.as_deref().unwrap_or("Another session");
             text.push_str(&format!("\n\n{} reported: {}\n", from, report.text));
+        } else if let (Some(topic), false) = (&self.watch, watched.is_empty()) {
+            text.push_str(&format!("\n\n{} changed:\n\n", topic));
+            for event in &watched {
+                text.push_str(&event.details());
+            }
         } else if let (Some(check), Some(excerpt)) = (&self.check, &self.excerpt) {
             text.push_str(&format!("\n\nIts check `{}` now prints:\n\n{}\n", check, excerpt));
         }
@@ -160,6 +197,25 @@ impl Blocker {
             .rev()
             .take_while(|e| e.kind != "seen" && e.kind != "sent")
             .find(|e| e.kind == "reported")
+    }
+
+    /// A poll of the watched topic found a change. One that only records
+    /// (an entry from the waiting side) is logged without marking it updated.
+    pub fn record_watched(&mut self, event: &super::watch::Event) {
+        self.watch_latest = self.watch_latest.max(event.seq);
+        if !self.is_open() {
+            return;
+        }
+        if event.notify {
+            if self.status == BlockerStatus::Waiting {
+                self.changed_at = Some(event.at.clone());
+            }
+            self.status = BlockerStatus::Updated;
+        } else if self.status == BlockerStatus::Waiting {
+            // Nothing here for the user, so it counts as seen.
+            self.watch_seen = self.watch_latest;
+        }
+        self.log("watched", &event.summary(), Some(&event.topic));
     }
 
     pub fn resolve(&mut self, by: Option<&str>) {
@@ -212,6 +268,7 @@ impl Blocker {
         if self.latest_hash.is_some() {
             self.seen_hash = self.latest_hash.clone();
         }
+        self.watch_seen = self.watch_latest;
     }
 }
 
@@ -419,11 +476,33 @@ pub fn wait(dir: &Path, id: &str, every: Duration, timeout: Option<Duration>) ->
             }
             BlockerStatus::Waiting => {}
         }
-        if blocker.check.is_none() && blocker.on.is_none() {
-            return Err("the blocker has no check command and waits on no other session's work, so nothing can update it".into());
+        if blocker.check.is_none() && blocker.on.is_none() && blocker.watch.is_none() {
+            return Err("the blocker has no check command, watches nothing and waits on no other session's work, so nothing can update it".into());
         }
         if timeout.is_some_and(|t| started.elapsed() >= t) {
             return Err(format!("still waiting on \"{}\"", blocker.title));
+        }
+        if let Some(topic) = blocker.watch.as_deref().filter(|_| Instant::now() >= next_check) {
+            // Polls only when the source's policy allows, so every session
+            // waiting on the topic shares its polls; a refusal is no failure.
+            let paths = super::watch::Paths::new(super::watch::state_dir());
+            super::watch::catch_up(&paths, dir, &blocker.id)?;
+            match super::watch::poll_and_deliver(topic, dir, false) {
+                Ok(_) => failures = 0,
+                Err(super::watch::PollError::Refused(why)) => {
+                    if let Some(p) = super::watch::paused(topic) {
+                        return Err(format!("{} ({})", why, p.error));
+                    }
+                }
+                Err(super::watch::PollError::Failed(error)) => {
+                    failures += 1;
+                    if failures >= WAIT_FAILURES {
+                        return Err(format!("polling {} failed {} times in a row: {}", topic, failures, error));
+                    }
+                }
+            }
+            next_check = Instant::now() + every;
+            continue;
         }
         if let Some(check) = blocker.check.as_deref().filter(|_| Instant::now() >= next_check) {
             let result = run_check(check, dir);
@@ -461,6 +540,10 @@ fn print_blocker(b: &Blocker) {
     }
     if let Some(on) = &b.on {
         println!("          on: {}", on);
+    }
+    if let Some(topic) = &b.watch {
+        let news = if b.watch_latest > b.watch_seen { " (changes not seen yet)" } else { "" };
+        println!("          watch: {}{}", topic, news);
     }
     if let Some(check) = &b.check {
         let here = std::env::current_dir().unwrap_or_default();
@@ -505,8 +588,12 @@ fn finish(result: Result<(), String>) -> i32 {
 pub fn run_command(command: super::BlockerCommands) -> i32 {
     use super::BlockerCommands as C;
     match command {
-        C::Add { title, party, kind, reference, check, on, note, dir } => {
+        C::Add { title, party, kind, reference, check, on, watch, note, dir } => {
             let dir = session_dir(dir.as_deref());
+            let url = match watch.as_deref().map(super::watch::check_topic).transpose() {
+                Ok(url) => url.flatten(),
+                Err(e) => return finish(Err(e)),
+            };
             let on = match on.as_deref().map(|on| super::who::Subject::parse(on, false)).transpose() {
                 Ok(on) => on.map(|s| s.label()),
                 Err(e) => return finish(Err(e)),
@@ -517,9 +604,15 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             }
             blocker.party = party;
             blocker.kind = kind;
-            blocker.reference = reference.or_else(|| on.clone());
+            blocker.reference = reference.or_else(|| on.clone()).or(url);
             blocker.check = check;
             blocker.on = on.clone();
+            if let Some(topic) = watch {
+                // Only what changes from now on is news to this blocker.
+                blocker.watch_latest = super::watch::head(&topic);
+                blocker.watch_seen = blocker.watch_latest;
+                blocker.watch = Some(topic);
+            }
             let id = blocker.id.clone();
             let mut all = match load_for_update(&dir) {
                 Ok(all) => all,
@@ -547,7 +640,10 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             }
             0
         }
-        C::Update { id, title, party, kind, reference, check, on, dir } => {
+        C::Update { id, title, party, kind, reference, check, on, watch, dir } => {
+            if let Err(e) = watch.as_deref().map(super::watch::check_topic).transpose() {
+                return finish(Err(e));
+            }
             let on = match on.as_deref().map(|on| super::who::Subject::parse(on, false)).transpose() {
                 Ok(on) => on.map(|s| s.label()),
                 Err(e) => return finish(Err(e)),
@@ -569,7 +665,14 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 if reference.is_some() {
                     b.reference = reference;
                 }
+                if let Some(topic) = watch.filter(|w| b.watch.as_ref() != Some(w)) {
+                    b.watch_latest = super::watch::head(&topic);
+                    b.watch_seen = b.watch_latest;
+                    b.watch = Some(topic);
+                    b.check = None;
+                }
                 if check.is_some() && check != b.check {
+                    b.watch = None;
                     b.check = check;
                     // A new command's output is not comparable to the old one's.
                     b.seen_hash = None;
@@ -586,15 +689,38 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             let dir = session_dir(dir.as_deref());
             let targets: Vec<Blocker> = load(&dir)
                 .into_iter()
-                .filter(|b| b.is_open() && b.check.is_some())
+                .filter(|b| b.is_open() && (b.check.is_some() || b.watch.is_some()))
                 .filter(|b| id.as_deref().is_none_or(|id| b.id.starts_with(id)))
                 .collect();
             if targets.is_empty() {
-                println!("No open blocker has a check command.");
+                println!("No open blocker has a check command or watches an item.");
                 return 0;
             }
             let mut failed = false;
+            let mut polled = std::collections::HashSet::new();
             for target in targets {
+                if let Some(topic) = target.watch.clone() {
+                    let paths = super::watch::Paths::new(super::watch::state_dir());
+                    if let Err(e) = super::watch::catch_up(&paths, &dir, &target.id) {
+                        eprintln!("Error: {}", e);
+                        failed = true;
+                    }
+                    // One poll per topic, however many blockers here watch it.
+                    if polled.insert(topic.clone()) {
+                        match super::watch::poll_and_deliver(&topic, &dir, true) {
+                            Ok(_) => {}
+                            Err(super::watch::PollError::Refused(why)) => println!("Not polled: {}", why),
+                            Err(super::watch::PollError::Failed(e)) => {
+                                eprintln!("Error: {}", e);
+                                failed = true;
+                            }
+                        }
+                    }
+                    if let Some(b) = load(&dir).into_iter().find(|b| b.id == target.id) {
+                        print_blocker(&b);
+                    }
+                    continue;
+                }
                 let result = run_check(target.check.as_deref().unwrap_or_default(), &dir);
                 match update(&dir, &target.id, |b| b.record_check(result)) {
                     Ok(b) => print_blocker(&b),
@@ -750,6 +876,56 @@ mod tests {
         assert!(load(&dir).is_empty(), "showing still works");
         assert!(update(&dir, "a", |_| {}).is_err());
         assert!(std::fs::read_to_string(path_in(&dir)).unwrap().contains("half-writ"), "the file is left for the user");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn watch_event(seq: u64, notify: bool) -> super::super::watch::Event {
+        serde_json::from_value(serde_json::json!({
+            "seq": seq, "topic": "vendor-case:CASE-1", "at": "2026-10-28T15:02:11+00:00", "status": "Waiting on customer",
+            "changes": [{"field": "status", "from": "Open", "to": "Waiting on customer"}],
+            "entries": [{"id": "9", "author": "Vendor agent", "body": "Which scope?", "notify": notify}],
+            "notify": notify
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_watched_change_marks_the_blocker_and_its_message_carries_the_change() {
+        let mut b = Blocker::new("Vendor to confirm the scope");
+        b.watch = Some("vendor-case:CASE-1".into());
+        b.watch_latest = 4;
+        b.watch_seen = 4;
+        b.record_watched(&watch_event(5, false));
+        assert_eq!(b.status, BlockerStatus::Waiting, "an entry from the waiting side only records");
+        assert_eq!((b.watch_latest, b.watch_seen), (5, 5));
+        b.record_watched(&watch_event(7, true));
+        assert_eq!(b.status, BlockerStatus::Updated);
+        assert_eq!((b.watch_latest, b.watch_seen), (7, 5));
+        assert_eq!(b.history.last().unwrap().by.as_deref(), Some("vendor-case:CASE-1"));
+        let text = b.message_with(vec![watch_event(7, true)]);
+        assert!(text.contains("vendor-case:CASE-1 changed:\n\n- status: Open -> Waiting on customer\n- New entry by Vendor agent:\n  > Which scope?"), "{}", text);
+        b.mark_seen();
+        assert_eq!((b.status, b.watch_seen), (BlockerStatus::Waiting, 7));
+        b.resolve(None);
+        b.record_watched(&watch_event(8, true));
+        assert_eq!(b.status, BlockerStatus::Resolved, "a resolved blocker stays resolved");
+    }
+
+    #[test]
+    fn delivery_reaches_each_open_watcher_once() {
+        let (dir, id) = wait_dir(None);
+        update(&dir, &id, |b| b.watch = Some("vendor-case:CASE-1".into())).unwrap();
+        let mut other = Blocker::new("other item");
+        other.watch = Some("vendor-case:CASE-2".into());
+        let mut all = load(&dir);
+        all.push(other);
+        save(&dir, &all).unwrap();
+        let reached = super::super::watch::deliver(&watch_event(3, true), std::slice::from_ref(&dir));
+        assert_eq!(reached, vec![(dir.clone(), vec!["Reply in the thread".to_string()])]);
+        assert!(super::super::watch::deliver(&watch_event(3, true), std::slice::from_ref(&dir)).is_empty(), "already delivered");
+        let after = load(&dir);
+        assert_eq!(after[0].status, BlockerStatus::Updated);
+        assert_eq!(after[1].status, BlockerStatus::Waiting, "watches another item");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
