@@ -765,8 +765,14 @@ mod tests {
         let writer = {
             let dir = dir.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(300));
-                std::fs::write(dir.join("state.txt"), "replies: 1\n").unwrap();
+                // Changed only once the first check has set the baseline,
+                // which a slow first process start can delay past any fixed
+                // sleep.
+                while load(&dir)[0].seen_hash.is_none() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                std::fs::write(dir.join("state.tmp"), "replies: 1\n").unwrap();
+                std::fs::rename(dir.join("state.tmp"), dir.join("state.txt")).unwrap();
             })
         };
         let text = wait(&dir, &id, Duration::from_millis(50), Some(Duration::from_secs(10))).unwrap();
