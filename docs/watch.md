@@ -1,7 +1,6 @@
 # Watching external items
 
-Status: built, except the window's views of watched blockers and sources
-(step 4's second half) and waking idle sessions, which are design.
+Status: built, except waking idle sessions, which is design.
 
 Sessions wait on things outside twapp: a vendor support case, a merge request
 on another forge, a ticket in a tracker, an email thread. Today each waiting
@@ -252,7 +251,15 @@ conversation, as with `twapp blocker approve`. Because `{id}` must match
 topic of the source and nothing else. A changed file (a plugin update that
 edits the command, the interval or the pattern) is a new hash and polls
 nothing until approved again; `twapp watch sources` names the sources not
-approved.
+approved. In the window, a watched blocker's Check now shows the source's
+command and id pattern while the source is not approved, with Check once and
+Allow; Allow approves the file as it was shown (the window passes its
+digest, and a file changed since is refused) and polls the item.
+
+The window shows each watched blocker with its topic, the item's status at
+the last poll, when it was polled, the last change's summary, and what stops
+it: a source not approved, not installed or not loading, a paused source or
+a failing poll.
 
 Approval governs what the window runs unattended. `twapp watch poll`, run
 by the user or an agent in a terminal, runs the source as that caller, as

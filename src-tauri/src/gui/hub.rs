@@ -2339,6 +2339,35 @@ pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
     Ok(())
 }
 
+/// Approve a source for the window to poll unattended, as the user saw it:
+/// refused when the file changed since (`digest`).
+#[tauri::command]
+pub fn hub_watch_approve(source: String, digest: String) -> Result<(), String> {
+    let found = crate::cli::watch::find_source(&crate::cli::watch::sources_dir(), &source)?;
+    if found.digest != digest {
+        return Err(format!("the {} source changed since it was shown; look at it again", source));
+    }
+    crate::cli::watch::approve_source(&found)?;
+    require_hub()?.refresh_blockers();
+    Ok(())
+}
+
+/// Poll a watched blocker's item now, at the user's request, and deliver
+/// what changed to every hosted session. Returns whether it changed;
+/// refused within the source's limits.
+#[tauri::command]
+pub async fn hub_watch_poll(topic: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let hub = require_hub()?;
+        let dirs: Vec<std::path::PathBuf> = hub.hosted_keys().into_iter().map(std::path::PathBuf::from).collect();
+        let found = crate::cli::watch::poll_and_deliver_to(&topic, &dirs, true).map_err(String::from)?;
+        hub.refresh_blockers();
+        Ok(found.is_some())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Run a blocker's check now. `approve` first adds its command to the
 /// commands the window may run on its own; `once` runs a command that is not
 /// approved this one time, at the user's request, without approving it.

@@ -129,6 +129,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_ask_close,
             hub::hub_ask_start_session,
             hub::hub_blocker_check,
+            hub::hub_watch_approve,
+            hub::hub_watch_poll,
             hub::hub_pulls_refresh,
             hub::hub_pull_hide,
             hub::hub_blocker_set,

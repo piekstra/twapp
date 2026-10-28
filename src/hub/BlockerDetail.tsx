@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Linkify, { ExternalLink } from "./Linkify";
 import CheckButton from "./CheckButton";
+import WatchButton, { watchProblem, watchSummary } from "./WatchButton";
 import { hubApi, sendToSession, sinceLabel, type Blocker, type SessionView } from "./api";
 
 const EVENT: Record<string, string> = {
@@ -86,6 +87,20 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
             </dd>
             <dt>Recorded</dt>
             <dd>{new Date(blocker.created_at).toLocaleString()} ({sinceLabel(blocker.created_at, now)} ago)</dd>
+            {blocker.watch && (
+              <>
+                <dt>Watching</dt>
+                <dd>
+                  <code className="blocker-detail-code">{blocker.watch}</code>
+                  <div className="blocker-checked">{watchSummary(blocker, (at) => sinceLabel(at, now))}</div>
+                  {blocker.watched?.source && (
+                    <div className="blocker-checked">
+                      {blocker.watched.source.name} runs <code className="blocker-detail-code">{blocker.watched.source.command}</code>
+                    </div>
+                  )}
+                </dd>
+              </>
+            )}
             {blocker.check && (
               <>
                 <dt>Check</dt>
@@ -100,6 +115,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
             )}
           </dl>
           {blocker.check_error && <div className="blocker-error">Last check failed: <Linkify text={blocker.check_error} /></div>}
+          {watchProblem(blocker) && <div className="blocker-error"><Linkify text={watchProblem(blocker) ?? ""} /></div>}
           {blocker.excerpt && (
             <>
               <div className="eyebrow">Last check output</div>
@@ -135,6 +151,7 @@ export default function BlockerDetail({ blocker, session, now, onClose, onSelect
           {error && <div className="blocker-error">{error}</div>}
           <div className="fork-actions">
             <CheckButton blocker={blocker} sessionKey={session.key} className="fork-cancel" onError={setError} onResult={(t) => setCheckResult(t || null)} />
+            <WatchButton blocker={blocker} className="fork-cancel" onError={setError} onResult={(t) => setCheckResult(t || null)} />
             {blocker.status === "updated" && (
               <button className="fork-cancel" disabled={busy} onClick={() => run(() => hubApi.blockerSet(session.key, blocker.id, "seen"))}>Mark seen</button>
             )}

@@ -181,7 +181,33 @@ export interface Blocker {
   excerpt?: string | null;
   check_error?: string | null;
   check_approved: boolean;
+  /** The external item the blocker watches (`twapp blocker add --watch`), `<source>:<id>`. */
+  watch?: string | null;
+  /** The item and its source as the watcher last saw them, for a watching blocker. */
+  watched?: Watched | null;
   history?: { at: string; kind: string; text?: string; by?: string | null }[];
+}
+
+export interface Watched {
+  /** The item's status at the last poll; none before the first. */
+  status?: string | null;
+  terminal: boolean;
+  last_polled_at?: string | null;
+  last_error?: string | null;
+  source?: WatchSource | null;
+  /** Why the source cannot be used: missing or not loading. */
+  source_error?: string | null;
+}
+
+export interface WatchSource {
+  name: string;
+  command: string;
+  id_pattern: string;
+  /** The source file's SHA-256, which an approval names. */
+  digest: string;
+  approved: boolean;
+  /** The error that paused it, while paused. */
+  paused?: string | null;
 }
 
 /** What a session said happened to a pull request, ticket or repository (`twapp report`). */
@@ -285,6 +311,8 @@ export const hubApi = {
   pullsRefresh: (key: string) => invoke("hub_pulls_refresh", { key }),
   pullHide: (key: string, url: string) => invoke("hub_pull_hide", { key, url }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
+  watchApprove: (source: string, digest: string) => invoke("hub_watch_approve", { source, digest }),
+  watchPoll: (topic: string) => invoke<boolean>("hub_watch_poll", { topic }),
   blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
   blockerSend: (key: string, id: string) => invoke("hub_blocker_send", { key, id }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),

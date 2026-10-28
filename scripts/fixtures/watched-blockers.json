@@ -1,0 +1,249 @@
+{
+  "sessions": [
+    {
+      "key": "/work/source",
+      "name": "Long retained conversation with spaces",
+      "provider": "claude",
+      "color": "#ffe0e0",
+      "session_id": "source-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "running": false
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-10-01T12:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": true,
+      "lane": "priority",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [
+        {
+          "party": "Vendor support with a long party name",
+          "kind": "ticket",
+          "reference": "https://support.example.com/cases/CASE-4411",
+          "check": null,
+          "on": null,
+          "resolved_at": null,
+          "last_checked_at": null,
+          "changed_at": "2026-10-28T15:02:11Z",
+          "excerpt": null,
+          "check_error": null,
+          "check_approved": false,
+          "watch_latest": 0,
+          "watch_seen": 0,
+          "id": "w1",
+          "title": "Vendor to confirm which token scope the integration needs for the account history call",
+          "status": "updated",
+          "created_at": "2026-10-27T14:00:00Z",
+          "watch": "vendor-case:CASE-4411",
+          "watched": {
+            "status": "Waiting on customer",
+            "terminal": false,
+            "last_polled_at": "2026-10-28T15:02:11Z",
+            "last_error": null,
+            "source": {
+              "name": "vendor-case",
+              "command": "vendor-cli cases get {id} -o json | jq -c '{status, terminal: .resolved, fields: {status, priority}, entries: [.comments[] | {id, at: .timestamp, author, body}]}'",
+              "id_pattern": "[A-Z]+-[0-9]+",
+              "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "approved": false,
+              "paused": null
+            },
+            "source_error": null
+          },
+          "history": [
+            {
+              "at": "2026-10-27T14:00:00Z",
+              "kind": "recorded"
+            },
+            {
+              "at": "2026-10-28T15:02:11Z",
+              "kind": "watched",
+              "text": "status Open -> Waiting on customer; edited entry by Vendor agent; new entry by Vendor agent with a long name",
+              "by": "vendor-case:CASE-4411"
+            }
+          ]
+        },
+        {
+          "party": "Partner team",
+          "kind": "ticket",
+          "reference": "https://forge.example.com/group/repo/-/merge_requests/275",
+          "check": null,
+          "on": null,
+          "resolved_at": null,
+          "last_checked_at": null,
+          "changed_at": null,
+          "excerpt": null,
+          "check_error": null,
+          "check_approved": false,
+          "watch_latest": 0,
+          "watch_seen": 0,
+          "id": "w2",
+          "title": "Review of the merge request on the other forge",
+          "status": "waiting",
+          "created_at": "2026-10-26T10:00:00Z",
+          "watch": "merge-request:group/repo!275",
+          "watched": {
+            "status": "opened",
+            "terminal": false,
+            "last_polled_at": "2026-10-28T14:30:00Z",
+            "last_error": "exited with 1: the login expired; run forge-cli auth login and try again",
+            "source": {
+              "name": "merge-request",
+              "command": "forge-cli mr view {id} --json | jq -c '{status: .state, fields: {state, approvals}}'",
+              "id_pattern": "[a-z0-9/-]+![0-9]+",
+              "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "approved": true,
+              "paused": "exited with 1: the login expired; run forge-cli auth login and try again"
+            },
+            "source_error": null
+          },
+          "history": [
+            {
+              "at": "2026-10-26T10:00:00Z",
+              "kind": "recorded"
+            }
+          ]
+        },
+        {
+          "party": null,
+          "kind": "ticket",
+          "reference": null,
+          "check": null,
+          "on": null,
+          "resolved_at": null,
+          "last_checked_at": null,
+          "changed_at": null,
+          "excerpt": null,
+          "check_error": null,
+          "check_approved": false,
+          "watch_latest": 0,
+          "watch_seen": 0,
+          "id": "w3",
+          "title": "Ticket in a tracker with no source installed",
+          "status": "waiting",
+          "created_at": "2026-10-25T10:00:00Z",
+          "watch": "tracker:OPS-81",
+          "watched": {
+            "status": null,
+            "terminal": false,
+            "last_polled_at": null,
+            "last_error": null,
+            "source": null,
+            "source_error": "no source tracker is installed"
+          },
+          "history": []
+        },
+        {
+          "party": null,
+          "kind": "ticket",
+          "reference": null,
+          "check": "vendor-cli cases get CASE-1 --field status",
+          "on": null,
+          "resolved_at": null,
+          "last_checked_at": "2026-10-28T14:00:00Z",
+          "changed_at": null,
+          "excerpt": null,
+          "check_error": null,
+          "check_approved": true,
+          "watch_latest": 0,
+          "watch_seen": 0,
+          "id": "c1",
+          "title": "Check-based blocker for comparison",
+          "status": "waiting",
+          "created_at": "2026-10-24T10:00:00Z",
+          "history": []
+        }
+      ],
+      "asks": []
+    },
+    {
+      "key": "/work/other",
+      "name": "Other conversation",
+      "provider": "codex",
+      "color": "#ffe0e0",
+      "session_id": "other-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Codex",
+          "running": false
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-10-01T12:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": []
+    },
+    {
+      "key": "/work/retained",
+      "name": "A session kept for later",
+      "provider": "claude",
+      "color": "#e0ffe0",
+      "session_id": "retained-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "running": false
+        }
+      ],
+      "status": {
+        "state": "needs_approval",
+        "since": "2026-10-01T12:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "parked",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": []
+    }
+  ],
+  "selected": "/work/source",
+  "host_error": null
+}

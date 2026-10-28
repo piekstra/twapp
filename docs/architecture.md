@@ -562,6 +562,8 @@ A blocker can instead watch an external item through a source a plugin
 installs (`twapp blocker add --watch <source>:<id>`); the window's watch loop
 (`gui/watch.rs`) polls those items for sources the user approved, within
 each source's policy, and delivers each change to every blocker watching it.
+`BlockerView.watched` carries the item and its source as the watcher last saw
+them; `hub_watch_approve` and `hub_watch_poll` back the panel's Check now.
 [watch.md](watch.md) describes sources, the store, the policy and delivery.
 
 ## Ticket history
