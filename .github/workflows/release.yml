@@ -77,6 +77,11 @@ jobs:
   publish:
     needs: release
     runs-on: macos-latest
+    # Runs on main can overlap, and an older one can finish last; publishing
+    # one at a time lets each see whether a newer release already went out.
+    concurrency:
+      group: publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,6 +93,21 @@ jobs:
           BASE_VERSION=$(cat version.txt | tr -d '\n')
           VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check for a newer release
+        id: newest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>/dev/null | sed 's/^v//' || true)
+          HIGHEST=$(printf '%s\n%s\n' "$VERSION" "$LATEST" | sort -V | tail -1)
+          if [ -n "$LATEST" ] && [ "$HIGHEST" != "$VERSION" ]; then
+            echo "v${LATEST} is newer; v${VERSION} is published but not marked latest or sent to Homebrew"
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -105,9 +125,11 @@ jobs:
             artifacts/twapp-macos-aarch64/twapp-macos-aarch64.tar.gz \
             artifacts/twapp-macos-x86_64/twapp-macos-x86_64.tar.gz \
             --title "v${VERSION}" \
-            --generate-notes
+            --generate-notes \
+            --latest=${{ steps.newest.outputs.newest }}
 
       - name: Update Homebrew formula
+        if: steps.newest.outputs.newest == 'true'
         env:
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
