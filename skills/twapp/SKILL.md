@@ -70,7 +70,7 @@ A blocker without a check still shows in the window; the user checks it by hand.
 
 ### Waiting in the session
 
-The window checks a blocker about once an hour and leaves sending the update to the session to the user. When the session's own work should carry on as soon as the answer arrives, wait for it in the background:
+The window checks a blocker about once an hour. When an update arrives and nothing in the session picked it up within a minute, the window sends it to the session as a message once the session is idle and not the one the user is looking at, unless the user turned that off. When the session's own work should carry on as soon as the answer arrives, wait for it in the background:
 
 ```bash
 twapp blocker wait <id>                 # a check that calls a service

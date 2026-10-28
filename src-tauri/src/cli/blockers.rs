@@ -288,6 +288,19 @@ impl Blocker {
         }
     }
 
+    /// When the newest news arrived that has not reached the session: its
+    /// check output changed, a report or a watched change was recorded, and
+    /// no `wait` delivered it or Send sent it since. None when not updated.
+    pub fn undelivered_since(&self) -> Option<String> {
+        if self.status != BlockerStatus::Updated {
+            return None;
+        }
+        let news = |kind: &str| matches!(kind, "check_changed" | "reported" | "watched");
+        let latest = self.history.iter().rev().find(|e| news(&e.kind)).map(|e| e.at.clone()).or_else(|| self.changed_at.clone())?;
+        let reached = self.history.iter().any(|e| matches!(e.kind.as_str(), "delivered" | "sent") && e.at >= latest);
+        (!reached).then_some(latest)
+    }
+
     /// The update was seen as it stood with event `through` the newest watched
     /// one shown: a watched change recorded after that stays unseen.
     pub fn mark_seen_through(&mut self, through: u64) {
@@ -549,6 +562,9 @@ pub fn wait(dir: &Path, id: &str, every: Duration, timeout: Option<Duration>) ->
         match blocker.status {
             BlockerStatus::Resolved => return Ok(format!("The blocker \"{}\" was resolved.", blocker.title)),
             BlockerStatus::Updated => {
+                // The session has the update from here, so the window does
+                // not send it as well.
+                update(dir, &blocker.id, |b| b.log("delivered", "", Some("agent")))?;
                 // `--through` marks seen only the watched changes this message
                 // shows; one recorded meanwhile stays for the next wait.
                 let through = if blocker.watch.is_some() { format!(" --through {}", blocker.watch_latest) } else { String::new() };

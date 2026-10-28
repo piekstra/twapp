@@ -558,6 +558,14 @@ same approval from the terminal, for the check text the blocker holds when it
 runs. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
+The same thread sends updates that nothing delivered. An updated blocker
+whose news (a changed check, a report, a watched change) no `twapp blocker
+wait` delivered (`delivered`) and no Send sent (`sent`) within a minute is
+pasted into its session and submitted, as Send pastes it plus Enter, when
+the session's turn has ended and it is not the selected session; one per
+session per minute, oldest first, then marked seen with `sent` by `window`.
+`blockers.wake_sessions: false` in `config.yaml` turns this off.
+
 A blocker can instead watch an external item through a source a plugin
 installs (`twapp blocker add --watch <source>:<id>`); the window's watch loop
 (`gui/watch.rs`) polls those items for sources the user approved, within

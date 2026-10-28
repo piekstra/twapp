@@ -23,7 +23,7 @@ use crate::ptyd::{ClientEvent, PtydClient, SpawnRequest};
 use crate::status::{PollContext, SessionProbe, SessionStatus, State, StatusRoots, StatusTracker};
 use crate::summary::{Summarizer, SummarizerConfig, Summary, SummaryRequest};
 
-const MAIN_TAB: &str = "main";
+pub const MAIN_TAB: &str = "main";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Journal entries written per catch-up, most recent days first.
 const JOURNAL_CATCH_UP: usize = 3;
@@ -967,6 +967,21 @@ impl Hub {
         }
         self.emit_changed();
         self.update_badge();
+    }
+
+    /// Running sessions whose turn has ended, other than the one in view:
+    /// those the window may send a blocker's update to without cutting into
+    /// work or into the user's typing.
+    pub fn idle_out_of_view(&self) -> Vec<String> {
+        let inner = self.inner.lock();
+        inner
+            .sessions
+            .iter()
+            .filter(|s| inner.selected.as_deref() != Some(s.key.as_str()))
+            .filter(|s| s.status.state == State::YourTurn)
+            .filter(|s| s.tabs.iter().any(|t| t.pty.is_some()))
+            .map(|s| s.key.clone())
+            .collect()
     }
 
     pub fn is_hosted_running(&self, directory: &str) -> bool {

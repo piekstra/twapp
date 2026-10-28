@@ -1,6 +1,6 @@
 # Watching external items
 
-Status: built, except waking idle sessions, which is design.
+Status: built.
 
 Sessions wait on things outside twapp: a vendor support case, a merge request
 on another forge, a ticket in a tracker, an email thread. Today each waiting
@@ -219,12 +219,13 @@ The agent is woken in one of two ways:
   (its turn ended) and is not the session in view. The session in view is
   left to the user, who may be typing in it; it is sent when the user moves
   away. A session that is not running is not started; it sees the update in
-  the window. Sending logs `sent`, so an update is delivered once.
-  `blockers.wake_sessions: false` in `config.yaml` turns this off and leaves
-  delivery to the panel's Send.
+  the window. `wait` logs `delivered` when it hands an update to its
+  session, and sending logs `sent` and marks the update seen, so an update
+  reaches a session once; a session gets one update per minute, the oldest
+  first. `blockers.wake_sessions: false` in `config.yaml` turns this off and
+  leaves delivery to the panel's Send.
 
-Waking applies to every blocker, not only watched ones, so it lands
-separately from the watcher.
+Waking applies to every blocker, not only watched ones.
 
 `twapp blocker check <id>` on a watched blocker polls its topic by hand
 (once per topic, however many blockers it covers) and delivers the result.
@@ -314,8 +315,7 @@ Each step lands separately and is validated before the next starts.
 4. The scheduler in the window and source approval; then the window's
    views.
 
-Waking idle sessions on any blocker update is independent of these and
-lands on its own.
+5. Waking idle sessions on any blocker update, independent of the others.
 
 The first sources ship outside twapp, in the plugins that already carry the
 CLIs they call.
