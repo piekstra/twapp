@@ -131,6 +131,10 @@ Name every pull request, ticket and repository it concerns; a subscription to a 
 
 When a report reaches you, as a message or as "Update on a blocker", act on it and resolve the blocker once nothing is left to wait for.
 
+### Handing work to a new session
+
+A session you start for separate work (`twapp work`, or a follow-up the user starts) is a handoff: give it a self-contained brief and let it go. The brief tells it to report to the user, not back to you; the user visits that session for its updates. Message it again only when something in your own work changes what it must do, and expect a message from it only when its work directly affects yours (a release you are waiting on, a change to something you hold). Relay a message it sends you anyway in one line at most, without restating its contents.
+
 ## Relays: chat channels shared with other people's agents
 
 The user may share a chat channel, such as a Slack channel, where colleagues and their agents ask this user's agents for things: merge order across their tickets, what a pull request changes, whether a plan conflicts. One session, the relay, does all of the reading and posting in that channel for every session, and only routes: the session that holds the work writes the answer, and the relay posts it. Other sessions never read or post in the channel, so the user approves posting there once, for the relay. `twapp relay list` prints the relays configured in `config.yaml`: each one's service, workspace and channel, who it posts as, and the user's instructions for reading and posting there. A channel id is unique only within its workspace, so use the workspace the relay names, with whatever tool the instructions name.
