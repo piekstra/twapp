@@ -216,9 +216,9 @@ The agent is woken in one of two ways:
   changed, another session reported, a watched topic changed) that no `wait`
   delivered within a minute is submitted to the session as its update
   message, the same text the panel's Send pastes, once the session is idle
-  (its turn ended) and is not the session in view. The session in view is
-  left to the user, who may be typing in it; it is sent when the user moves
-  away. A session that is not running is not started; it sees the update in
+  (its turn ended), is not the session in view, is not parked, and holds no
+  draft the user typed. The session in view is left to the user, who may be
+  typing in it; it is sent when the user moves away. A session that is not running is not started; it sees the update in
   the window. `wait` logs `delivered` when it hands an update to its
   session, and sending logs `sent` and marks the update seen, so an update
   reaches a session once; a session gets one update per minute, the oldest

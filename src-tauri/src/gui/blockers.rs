@@ -250,17 +250,22 @@ fn wake_sessions(hub: &super::hub::Hub) -> bool {
         let Some(id) = to_wake(&open, chrono::Utc::now()) else { continue };
         let Some(blocker) = open.iter().find(|b| b.id == id) else { continue };
         let shown = blocker.watch_latest;
-        let paste = format!("\x1b[200~{}\x1b[201~", blocker.update_message());
-        hub.write(&key, super::hub::MAIN_TAB, paste.into_bytes());
-        // A pause lets the harness take the paste before the Enter submits it.
-        std::thread::sleep(Duration::from_millis(300));
-        hub.write(&key, super::hub::MAIN_TAB, b"\r".to_vec());
+        let message = blocker.update_message();
+        // Recorded first: if it cannot be, nothing is sent, rather than the
+        // same update every minute.
         if let Err(e) = blockers::update(dir, &id, |b| {
-            b.mark_seen_through(shown);
+            b.mark_seen_through(shown, "window");
             b.log("sent", "", Some("window"));
         }) {
-            log::warn!("recording the update sent for blocker {} in {}: {}", id, key, e);
+            log::warn!("not sending blocker {} in {}: {}", id, key, e);
+            continue;
         }
+        // The user may have switched to it, typed in it or the agent started
+        // since the list was taken.
+        if !hub.idle_out_of_view().contains(&key) {
+            continue;
+        }
+        hub.send_blocker_update(&key, &message, true);
         sent = true;
     }
     sent
