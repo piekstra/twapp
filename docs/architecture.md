@@ -558,6 +558,12 @@ same approval from the terminal, for the check text the blocker holds when it
 runs. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
+A blocker can instead watch an external item through a source a plugin
+installs (`twapp blocker add --watch <source>:<id>`); the window's watch loop
+(`gui/watch.rs`) polls those items for sources the user approved, within
+each source's policy, and delivers each change to every blocker watching it.
+[watch.md](watch.md) describes sources, the store, the policy and delivery.
+
 ## Ticket history
 
 `.twapp-ticket.json` is the session's current ticket; `.twapp-tickets.json`

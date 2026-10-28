@@ -231,6 +231,22 @@ impl Blocker {
         self.log("watched", &event.summary(), Some(&event.topic));
     }
 
+    /// The watched topic changed up to event `seq`, whose details are no
+    /// longer kept.
+    pub fn record_unlogged_change(&mut self, seq: u64) {
+        if seq <= self.watch_latest {
+            return;
+        }
+        self.watch_latest = seq;
+        if self.is_open() {
+            if self.status == BlockerStatus::Waiting {
+                self.changed_at = Some(chrono::Utc::now().to_rfc3339());
+            }
+            self.status = BlockerStatus::Updated;
+        }
+        self.log("watched", "changed while this session was away; the details are no longer kept", self.watch.clone().as_deref());
+    }
+
     pub fn resolve(&mut self, by: Option<&str>) {
         self.status = BlockerStatus::Resolved;
         self.resolved_at = Some(chrono::Utc::now().to_rfc3339());

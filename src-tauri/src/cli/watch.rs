@@ -833,10 +833,17 @@ impl From<PollError> for String {
 /// Poll one topic now: run its source's command and record the result.
 /// Refused when the source's policy does not allow a poll now (`refusal`).
 pub fn poll(sources: &Path, paths: &Paths, topic: &str, by_hand: bool) -> Result<Option<Event>, PollError> {
-    let (name, id) = parse_topic(topic).map_err(PollError::Failed)?;
+    let (name, _) = parse_topic(topic).map_err(PollError::Failed)?;
     let source = find_source(sources, name).map_err(PollError::Failed)?;
+    poll_with(&source, paths, topic, by_hand)
+}
+
+/// Poll with a source already loaded: the window passes the one whose
+/// digest it checked, so a file edited since runs nothing unattended.
+pub fn poll_with(source: &Source, paths: &Paths, topic: &str, by_hand: bool) -> Result<Option<Event>, PollError> {
+    let (_, id) = parse_topic(topic).map_err(PollError::Failed)?;
     let command = source.command_for(id).map_err(PollError::Failed)?;
-    paths.claim(&source, topic, by_hand).map_err(PollError::Refused)?;
+    paths.claim(source, topic, by_hand).map_err(PollError::Refused)?;
     paths.log_poll(topic, &command);
     // A source usually pipes a CLI into jq; without pipefail a CLI that
     // failed (an expired login) would read as jq's empty success.
@@ -860,7 +867,18 @@ fn approvals_path() -> PathBuf {
 }
 
 pub fn source_approvals() -> Vec<SourceApproval> {
-    std::fs::read_to_string(approvals_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    read_approvals().unwrap_or_default()
+}
+
+/// No file is no approvals; one that does not parse is an error, so an
+/// approval never replaces approvals it could not read.
+fn read_approvals() -> Result<Vec<SourceApproval>, String> {
+    let path = approvals_path();
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("reading {}: {}", path.display(), e)),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{} does not parse ({}); fix or remove it", path.display(), e)),
+    }
 }
 
 pub fn approved_in(approvals: &[SourceApproval], source: &Source) -> bool {
@@ -870,14 +888,16 @@ pub fn approved_in(approvals: &[SourceApproval], source: &Source) -> bool {
 /// Approve the source file as it is now; an earlier approval of the same
 /// name is replaced.
 pub fn approve_source(source: &Source) -> Result<(), String> {
-    let mut all: Vec<SourceApproval> = source_approvals().into_iter().filter(|a| a.name != source.name).collect();
-    all.push(SourceApproval { name: source.name.clone(), sha256: source.digest.clone() });
-    let path = approvals_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
-    super::fsutil::write_atomic(&path, json).map_err(|e| e.to_string())
+    super::blockers::with_lock(|| {
+        let mut all: Vec<SourceApproval> = read_approvals()?.into_iter().filter(|a| a.name != source.name).collect();
+        all.push(SourceApproval { name: source.name.clone(), sha256: source.digest.clone() });
+        let path = approvals_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+        super::fsutil::write_atomic(&path, json).map_err(|e| e.to_string())
+    })
 }
 
 // --- Scheduling --------------------------------------------------------------
@@ -909,7 +929,7 @@ pub fn due_topics(
             let Some(source) = parse_topic(topic).ok().and_then(|(n, _)| sources.get(n)) else { return false };
             approved_in(approvals, source)
                 && store.refusal(source, topic, false, now, local).is_none()
-                && (elapsed >= source.min_interval || elapsed >= start_offset(topic, source.min_interval))
+                && elapsed >= start_offset(topic, source.min_interval)
         })
         .cloned()
         .collect()
@@ -958,13 +978,22 @@ pub fn deliver(event: &Event, dirs: &[PathBuf]) -> Reached {
 
 /// Record on one blocker the events of its topic it has not had: those a
 /// poll elsewhere made while delivery to it failed or it was not hosted.
-pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<(), String> {
-    let Some(blocker) = super::blockers::load(dir).into_iter().find(|b| b.id == id) else { return Ok(()) };
-    let Some(topic) = blocker.watch.as_deref() else { return Ok(()) };
-    for event in paths.events_since(Some(topic), blocker.watch_latest) {
-        super::blockers::update(dir, id, |b| b.record_watched(&event))?;
+/// Returns whether the blocker changed.
+pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<bool, String> {
+    let Some(blocker) = super::blockers::load(dir).into_iter().find(|b| b.id == id) else { return Ok(false) };
+    let Some(topic) = blocker.watch.as_deref() else { return Ok(false) };
+    let events = paths.events_since(Some(topic), blocker.watch_latest);
+    for event in &events {
+        super::blockers::update(dir, id, |b| b.record_watched(event))?;
     }
-    Ok(())
+    let head = paths.load()?.topics.get(topic).map_or(0, |t| t.head);
+    if head > blocker.watch_latest && events.iter().all(|e| e.seq < head) {
+        // The events it missed were dropped from the log: say it changed,
+        // without the details, rather than looking for them every pass.
+        super::blockers::update(dir, id, |b| b.record_unlogged_change(head))?;
+        return Ok(true);
+    }
+    Ok(!events.is_empty())
 }
 
 /// Each session directory an event reached, with the blockers' titles.
@@ -1027,11 +1056,16 @@ fn human(d: Duration) -> String {
 pub fn cmd_sources(json: bool) -> i32 {
     let dir = sources_dir();
     let loaded = load_sources(&dir);
+    let approvals = source_approvals();
     if json {
         let rows: Vec<serde_json::Value> = loaded
             .iter()
             .map(|(path, s)| match s {
-                Ok(s) => serde_json::to_value(s).unwrap_or_default(),
+                Ok(s) => {
+                    let mut row = serde_json::to_value(s).unwrap_or_default();
+                    row["approved"] = approved_in(&approvals, s).into();
+                    row
+                }
                 Err(e) => serde_json::json!({ "path": path, "error": e }),
             })
             .collect();
@@ -1039,7 +1073,6 @@ pub fn cmd_sources(json: bool) -> i32 {
         return 0;
     }
     let paused = Paths::new(state_dir()).load().map(|s| s.paused).unwrap_or_default();
-    let approvals = source_approvals();
     if loaded.is_empty() {
         println!("No sources. Plugins install them as YAML files in {}.", dir.display());
         return 0;

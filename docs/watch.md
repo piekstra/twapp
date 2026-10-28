@@ -174,8 +174,13 @@ The window runs the watcher as one more loop beside the blocker and pull
 request loops (`gui/watch.rs`). Every minute it collects the subscribed
 topics (the `watch` of every open blocker in every hosted session), catches
 up any of those blockers that missed an event, and polls the topics of
-approved sources that the policy allows, one claim at a time, delivering to
-the hosted sessions. A topic with no
+approved sources that the policy allows, delivering to the hosted sessions.
+A pass polls at most one topic per source, since its spacing would refuse
+the rest, and runs sources side by side, so a source whose command hangs
+delays only its own topics. It polls with the source file it checked
+against the approval, so a file edited meanwhile runs nothing. A source
+file that does not load, or a store that does not parse, is logged once
+when the problem appears. A topic with no
 subscribers is not polled. Its state is kept for 30 days, so a new
 subscriber within that time starts from the known state. After the window
 starts, due topics are spread across the first `min_interval` of each source
@@ -191,8 +196,9 @@ records the event's `seq` as `watch_latest`, so an event is delivered to a
 blocker once. An event with `notify: true` marks the blocker `updated`, as a
 report from another session does; one without only records. A blocker whose
 delivery failed, or whose session was not hosted when the event was made,
-catches up from `events.jsonl` the next time its session checks or waits on
-it.
+catches up from `events.jsonl` on the window's next pass, or when its session
+checks or waits on it; one whose missed events were dropped from the log is
+marked updated with a note that the details are gone.
 
 The update message a blocker sends (`update_message`) carries every event
 after `watch_seen` through `watch_latest`: each changed value and each new
