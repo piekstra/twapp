@@ -23,6 +23,7 @@ pub mod theme;
 pub mod ticket;
 pub mod ticket_history;
 pub mod transcript;
+pub mod watch;
 
 use clap::Subcommand;
 use session::{
@@ -238,6 +239,12 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// External items (a vendor case, a merge request, a ticket elsewhere) polled through sources that plugins install
+    #[command(after_help = "Examples:\n  twapp watch sources\n  twapp watch poll vendor-case:CASE-4411\n  twapp watch show vendor-case:CASE-4411\n  twapp watch log --since 120\n\nA source is a YAML file in ~/.config/twapp/sources.d/ naming a command that prints\none item's state as JSON. docs/watch.md in the twapp repository describes the format.")]
+    Watch {
+        #[command(subcommand)]
+        command: WatchCommands,
+    },
     /// Chat channels shared with other people's agents, which one relay session reads and posts in for every session
     Relay {
         #[command(subcommand)]
@@ -361,6 +368,37 @@ pub enum TicketCommands {
         /// Target directory
         #[arg(long)]
         dir: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WatchCommands {
+    /// The configured sources, with their polling policy, or why one does not load
+    Sources {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Poll a topic (<source>:<id>) now and print what changed since its last poll
+    Poll {
+        topic: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// A topic's last state and its latest events
+    Show {
+        topic: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Events, oldest first: what changed, with new entries in full
+    Log {
+        /// Only this topic's events
+        topic: Option<String>,
+        /// Only events after this sequence number
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -681,6 +719,12 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::Unarchive { dir } => archive::cmd_archive(dir.as_deref(), None, true),
         Commands::Close { dir } => cmd_close(dir.as_deref()),
         Commands::Relay { command: RelayCommands::List { json } } => relay::cmd_relay_list(json),
+        Commands::Watch { command } => match command {
+            WatchCommands::Sources { json } => watch::cmd_sources(json),
+            WatchCommands::Poll { topic, json } => watch::cmd_poll(&topic, json),
+            WatchCommands::Show { topic, json } => watch::cmd_show(&topic, json),
+            WatchCommands::Log { topic, since, json } => watch::cmd_log(topic.as_deref(), since, json),
+        },
         Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),
         Commands::Delete { dir, everything, yes } => cmd_delete(dir.as_deref(), everything, yes),
         Commands::Models { command } => match command {
