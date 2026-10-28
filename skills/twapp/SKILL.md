@@ -23,6 +23,16 @@ The window lists open blockers across every session, so the user can see what ea
 - Record one blocker per thing waited on, not per session. A title says what is needed, not what was done ("Vendor to confirm the token scope", not "Emailed the vendor").
 - `--party` names who is outside the session, so the user can see what one vendor or team owes across sessions.
 
+### Watching an item through a source
+
+When `twapp watch sources` lists a source for the system the item lives in (a vendor's support cases, merge requests on another forge), watch the item instead of writing a check:
+
+```bash
+twapp blocker add "Vendor to confirm the token scope" --party "Vendor support" --kind ticket --watch vendor-case:CASE-4411
+```
+
+The topic is `<source>:<id>`. One poll serves every session watching the item, within the limits the source sets (how often, how many at once), and the update carries what changed: the new status, and each new comment's author and text. `twapp watch show <topic>` prints the item's last state and recent changes, and `twapp watch log <topic>` every change. Do not also poll the item yourself; the source's limits exist because the system behind it must not be read more often.
+
 ### Writing a check command
 
 The window runs a check now and then, only after the user approves that exact command, and marks the blocker **Updated** when the command's output changes. So a check prints the blocker's state and nothing else:
@@ -65,7 +75,7 @@ twapp blocker wait <id>                 # a check that calls a service
 twapp blocker wait <id> --every 5       # a local check, such as slck watch status
 ```
 
-Run it as a background command (in Claude Code, Bash with `run_in_background`), never in the foreground. It runs the check every two minutes (`--every <seconds>`), rereads the blocker for reports from other sessions and a resolve from the window, and exits when the blocker is updated or resolved, printing what changed, so the session is woken by its exit instead of polling. It exits with an error after three failed checks in a row (an expired login, for example) or after `--timeout <minutes>`. The blocker stays marked updated, so the user still sees it in the window. Once you have handled the change, resolve the blocker, or run `twapp blocker seen <id>` and wait again when you still need a further answer.
+Run it as a background command (in Claude Code, Bash with `run_in_background`), never in the foreground. For a watched blocker it asks for a poll every two minutes, and the source allows one per its interval across every session waiting on the item. Otherwise it runs the check every two minutes (`--every <seconds>`), rereads the blocker for reports from other sessions and a resolve from the window, and exits when the blocker is updated or resolved, printing what changed, so the session is woken by its exit instead of polling. It exits with an error after three failed checks in a row (an expired login, for example) or after `--timeout <minutes>`. The blocker stays marked updated, so the user still sees it in the window. Once you have handled the change, resolve the blocker, or run `twapp blocker seen <id>` and wait again when you still need a further answer.
 
 ## Decisions, actions and follow-ups: what the session needs from the user
 

@@ -119,7 +119,7 @@ pub enum Commands {
     },
     /// Track what the session waits on outside itself (a vendor ticket, an
     /// email, a review), with an optional command that shows its state
-    #[command(after_help = "Examples:\n  twapp blocker add \"Vendor reply on case 4411\" --party Vendor --kind ticket --ref 4411 \\\n      --check \"vendor-cli cases view 4411 --field status\"\n  twapp blocker list\n  twapp blocker check\n  twapp blocker resolve 3f2a\n\nA check command prints the blocker's state, and only that: the window flags the\nblocker when the output changes, so timestamps or counters in it read as updates.\nThe window runs a check on its own only after you approve that command there.")]
+    #[command(after_help = "Examples:\n  twapp blocker add \"Vendor reply on case 4411\" --party Vendor --kind ticket --ref 4411 \\\n      --check \"vendor-cli cases view 4411 --field status\"\n  twapp blocker add \"Vendor reply on case 4411\" --party Vendor --kind ticket --watch vendor-case:4411\n  twapp blocker list\n  twapp blocker check\n  twapp blocker resolve 3f2a\n\nA check command prints the blocker's state, and only that: the window flags the\nblocker when the output changes, so timestamps or counters in it read as updates.\nThe window runs a check on its own only after you approve that command there.\n\n--watch follows an item through a source (twapp watch sources) instead: one poll\nserves every blocker watching it, and the update carries what changed.")]
     Blocker {
         #[command(subcommand)]
         command: BlockerCommands,
@@ -494,8 +494,11 @@ pub enum BlockerCommands {
         #[arg(long = "ref")]
         reference: Option<String>,
         /// Shell command, run in the session directory, that prints the blocker's state
-        #[arg(long)]
+        #[arg(long, conflicts_with = "watch")]
         check: Option<String>,
+        /// An external item to watch, `<source>:<id>` with a source from `twapp watch sources`; polled once for every blocker watching it, within the source's limits
+        #[arg(long)]
+        watch: Option<String>,
         /// Another session's work this waits on: a pull request URL, ticket key or repository (owner/repo); `twapp report` on it reaches this blocker
         #[arg(long)]
         on: Option<String>,
@@ -541,11 +544,14 @@ pub enum BlockerCommands {
         kind: Option<String>,
         #[arg(long = "ref")]
         reference: Option<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "watch")]
         check: Option<String>,
         /// A pull request URL, ticket key or repository whose reports reach the blocker
         #[arg(long)]
         on: Option<String>,
+        /// An external item to watch instead of running a check, `<source>:<id>`
+        #[arg(long)]
+        watch: Option<String>,
         #[arg(long)]
         dir: Option<String>,
     },
@@ -584,6 +590,9 @@ pub enum BlockerCommands {
     /// Mark an update as seen: its output becomes the baseline
     Seen {
         id: String,
+        /// The newest watched change the session was shown (the number `wait` prints); later ones stay unseen
+        #[arg(long)]
+        through: Option<u64>,
         #[arg(long)]
         dir: Option<String>,
     },

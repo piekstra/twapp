@@ -474,6 +474,11 @@ impl Event {
     /// One line for a terminal.
     pub fn line(&self) -> String {
         let when = self.at.get(..16).unwrap_or(&self.at).replace('T', " ");
+        format!("#{} {} UTC  {}  {}", self.seq, when, self.topic, self.summary())
+    }
+
+    /// What changed, in one line.
+    pub fn summary(&self) -> String {
         let mut parts: Vec<String> = self
             .changes
             .iter()
@@ -486,7 +491,27 @@ impl Event {
         for id in &self.removed {
             parts.push(format!("entry {} removed", id));
         }
-        format!("#{} {} UTC  {}  {}", self.seq, when, self.topic, parts.join("; "))
+        parts.join("; ")
+    }
+
+    /// The event in full, for an agent: each change and each entry's text.
+    pub fn details(&self) -> String {
+        let mut out = String::new();
+        for c in &self.changes {
+            out.push_str(&format!("- {}: {} -> {}\n", c.field, plain(&c.from), plain(&c.to)));
+        }
+        for e in &self.entries {
+            let what = if e.edited { "Edited" } else { "New" };
+            let at = e.at.as_deref().map(|a| format!(" at {}", a)).unwrap_or_default();
+            out.push_str(&format!("- {} entry by {}{}:\n", what, e.author.as_deref().unwrap_or("unknown"), at));
+            for line in e.body.lines() {
+                out.push_str(&format!("  > {}\n", line));
+            }
+        }
+        for id in &self.removed {
+            out.push_str(&format!("- Entry {} was removed\n", id));
+        }
+        out
     }
 }
 
@@ -781,19 +806,119 @@ fn open_private(path: &Path, append: bool) -> Result<std::fs::File, String> {
         .map_err(|e| format!("opening {}: {}", path.display(), e))
 }
 
+/// Why a poll did not record a state.
+#[derive(Debug, PartialEq)]
+pub enum PollError {
+    /// The source's policy does not allow a poll now; nothing ran.
+    Refused(String),
+    /// The topic or source is unusable, or the command failed.
+    Failed(String),
+}
+
+impl From<PollError> for String {
+    fn from(e: PollError) -> String {
+        match e {
+            PollError::Refused(why) | PollError::Failed(why) => why,
+        }
+    }
+}
+
 /// Poll one topic now: run its source's command and record the result.
 /// Refused when the source's policy does not allow a poll now (`refusal`).
-pub fn poll(sources: &Path, paths: &Paths, topic: &str) -> Result<Option<Event>, String> {
-    let (name, id) = parse_topic(topic)?;
-    let source = find_source(sources, name)?;
-    let command = source.command_for(id)?;
-    paths.claim(&source, topic, true)?;
+pub fn poll(sources: &Path, paths: &Paths, topic: &str, by_hand: bool) -> Result<Option<Event>, PollError> {
+    let (name, id) = parse_topic(topic).map_err(PollError::Failed)?;
+    let source = find_source(sources, name).map_err(PollError::Failed)?;
+    let command = source.command_for(id).map_err(PollError::Failed)?;
+    paths.claim(&source, topic, by_hand).map_err(PollError::Refused)?;
     paths.log_poll(topic, &command);
     // A source usually pipes a CLI into jq; without pipefail a CLI that
     // failed (an expired login) would read as jq's empty success.
     let result = super::blockers::run_check(&format!("set -o pipefail; {}", command), &paths.dir)
         .and_then(|out| parse_state(&out));
-    paths.record(topic, result)
+    paths.record(topic, result).map_err(PollError::Failed)
+}
+
+// --- Delivery ----------------------------------------------------------------
+
+/// The session directories whose blockers may watch a topic: every session
+/// the window hosts, and `here`.
+pub fn subscriber_dirs(here: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = super::hub_link::snapshot()
+        .and_then(|s| s.get("sessions").and_then(serde_json::Value::as_array).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| s.get("key").and_then(serde_json::Value::as_str).map(PathBuf::from))
+        .collect();
+    if !dirs.iter().any(|d| d == here) {
+        dirs.push(here.to_path_buf());
+    }
+    dirs
+}
+
+/// Record `event` on every open blocker in `dirs` that watches its topic
+/// and has not had it yet. Returns each reached directory with the titles.
+pub fn deliver(event: &Event, dirs: &[PathBuf]) -> Reached {
+    let mut reached = Vec::new();
+    for dir in dirs {
+        let ids: Vec<String> = super::blockers::load(dir)
+            .into_iter()
+            .filter(|b| b.is_open() && b.watch.as_deref() == Some(event.topic.as_str()) && b.watch_latest < event.seq)
+            .map(|b| b.id)
+            .collect();
+        let mut titles = Vec::new();
+        for id in ids {
+            match super::blockers::update(dir, &id, |b| b.record_watched(event)) {
+                Ok(b) => titles.push(b.title),
+                Err(e) => log::warn!("delivering {} to {} in {}: {}", event.topic, id, dir.display(), e),
+            }
+        }
+        if !titles.is_empty() {
+            reached.push((dir.clone(), titles));
+        }
+    }
+    reached
+}
+
+/// Record on one blocker the events of its topic it has not had: those a
+/// poll elsewhere made while delivery to it failed or it was not hosted.
+pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<(), String> {
+    let Some(blocker) = super::blockers::load(dir).into_iter().find(|b| b.id == id) else { return Ok(()) };
+    let Some(topic) = blocker.watch.as_deref() else { return Ok(()) };
+    for event in paths.events_since(Some(topic), blocker.watch_latest) {
+        super::blockers::update(dir, id, |b| b.record_watched(&event))?;
+    }
+    Ok(())
+}
+
+/// Each session directory an event reached, with the blockers' titles.
+pub type Reached = Vec<(PathBuf, Vec<String>)>;
+
+/// Poll `topic` and deliver what changed to every subscribed blocker.
+pub fn poll_and_deliver(topic: &str, here: &Path, by_hand: bool) -> Result<Option<(Event, Reached)>, PollError> {
+    let paths = Paths::new(state_dir());
+    let Some(event) = poll(&sources_dir(), &paths, topic, by_hand)? else { return Ok(None) };
+    let reached = deliver(&event, &subscriber_dirs(here));
+    super::hub_link::notify_changed();
+    Ok(Some((event, reached)))
+}
+
+/// Whether the topic's last state reported the item terminal.
+pub fn is_terminal(topic: &str) -> bool {
+    Paths::new(state_dir()).load().ok().and_then(|s| s.topics.get(topic).map(|t| t.terminal)).unwrap_or(false)
+}
+
+/// The newest event number of a topic, 0 before any.
+pub fn head(topic: &str) -> u64 {
+    Paths::new(state_dir()).load().ok().and_then(|s| s.topics.get(topic).map(|t| t.head)).unwrap_or(0)
+}
+
+/// Check a topic a blocker is about to watch: its source must load and the
+/// id must be one of its ids. Returns the item's URL, if the source has one.
+pub fn check_topic(topic: &str) -> Result<Option<String>, String> {
+    let (name, id) = parse_topic(topic)?;
+    let source = find_source(&sources_dir(), name)?;
+    source.command_for(id)?;
+    Ok(source.url_for(id))
 }
 
 // --- CLI ---------------------------------------------------------------------
@@ -932,13 +1057,17 @@ pub fn cmd_resume(source: &str) -> i32 {
 
 pub fn cmd_poll(topic: &str, json: bool) -> i32 {
     let paths = Paths::new(state_dir());
-    match poll(&sources_dir(), &paths, topic) {
-        Ok(event) if json => {
-            print_json(&event);
+    let here = std::env::current_dir().unwrap_or_default();
+    match poll_and_deliver(topic, &here, true) {
+        Ok(found) if json => {
+            print_json(&found.map(|(event, _)| event));
             0
         }
-        Ok(Some(event)) => {
+        Ok(Some((event, reached))) => {
             println!("{}", event.line());
+            for (dir, titles) in reached {
+                println!("  reached {}: {}", dir.display(), titles.join(", "));
+            }
             0
         }
         Ok(None) => {
@@ -947,10 +1076,16 @@ pub fn cmd_poll(topic: &str, json: bool) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {}", String::from(e));
             1
         }
     }
+}
+
+/// Whether `topic`'s source is paused, so polling it waits on the user.
+pub fn paused(topic: &str) -> Option<Paused> {
+    let (name, _) = parse_topic(topic).ok()?;
+    Paths::new(state_dir()).load().ok()?.paused.get(name).cloned()
 }
 
 pub fn cmd_show(topic: &str, json: bool) -> i32 {
@@ -1332,20 +1467,20 @@ mod tests {
         )
         .unwrap();
         let paths = Paths::new(temp("e2e-state"));
-        assert_eq!(poll(&sources, &paths, "local:open").unwrap(), None);
+        assert_eq!(poll(&sources, &paths, "local:open", true).unwrap(), None);
         let topics = paths.load().unwrap();
         assert_eq!(topics.topics["local:open"].status.as_deref(), Some("Open"));
-        let again = poll(&sources, &paths, "local:open").unwrap_err();
+        let again = String::from(poll(&sources, &paths, "local:open", true).unwrap_err());
         assert!(again.contains("allows the next poll of local:open at"), "{}", again);
-        assert!(poll(&sources, &paths, "local:missing").is_err(), "a failing command is an error");
-        assert!(poll(&sources, &paths, "../local:open").unwrap_err().contains("not a source name"));
+        assert!(poll(&sources, &paths, "local:missing", true).is_err(), "a failing command is an error");
+        assert!(String::from(poll(&sources, &paths, "../local:open", true).unwrap_err()).contains("not a source name"));
         std::fs::write(
             sources.join("piped.yaml"),
             "name: piped\nid_pattern: '[a-z]+'\nmin_interval: 1m\ncommand: cat /nonexistent/{id} | cat\n",
         )
         .unwrap();
-        assert!(poll(&sources, &paths, "piped:x").unwrap_err().contains("exited with"), "a failure early in a pipeline fails the poll");
-        assert!(poll(&sources, &paths, "nope:1").unwrap_err().contains("no source"));
+        assert!(String::from(poll(&sources, &paths, "piped:x", true).unwrap_err()).contains("exited with"), "a failure early in a pipeline fails the poll");
+        assert!(String::from(poll(&sources, &paths, "nope:1", true).unwrap_err()).contains("no source"));
         let log = std::fs::read_to_string(paths.log()).unwrap();
         assert!(log.contains("local:open cat ") && log.contains("'open'.json"), "{}", log);
         std::fs::remove_dir_all(&sources).unwrap();
