@@ -389,6 +389,10 @@ pub enum WatchCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Approve a source, as its file is now, for the window to poll unattended. Only when the user asked for it
+    Approve {
+        source: String,
+    },
     /// Let a source paused after failed polls (an expired login) poll again
     Resume {
         source: String,
@@ -755,6 +759,7 @@ pub fn run(cmd: Commands) -> i32 {
             WatchCommands::Show { topic, json } => watch::cmd_show(&topic, json),
             WatchCommands::List { json } => watch::cmd_list(json),
             WatchCommands::Resume { source } => watch::cmd_resume(&source),
+            WatchCommands::Approve { source } => watch::cmd_approve(&source),
             WatchCommands::Log { topic, since, json } => watch::cmd_log(topic.as_deref(), since, json),
         },
         Commands::Effort { name, clear, dir } => cmd_effort(name, clear, dir.as_deref()),

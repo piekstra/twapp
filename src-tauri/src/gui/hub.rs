@@ -712,6 +712,8 @@ impl Hub {
         std::thread::spawn(move || listener.socket_loop());
         let checker = Arc::clone(&hub);
         std::thread::spawn(move || super::blockers::check_loop(checker));
+        let watcher = Arc::clone(&hub);
+        std::thread::spawn(move || super::watch::watch_loop(watcher));
         let pulls = Arc::clone(&hub);
         std::thread::spawn(move || super::pulls::pull_loop(pulls));
         let journal = Arc::clone(&hub);

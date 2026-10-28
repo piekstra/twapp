@@ -1,4 +1,5 @@
 pub mod blockers;
+pub mod watch;
 pub mod config;
 pub mod files;
 pub mod hub;
