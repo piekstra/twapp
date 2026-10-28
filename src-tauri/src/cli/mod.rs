@@ -569,6 +569,18 @@ pub enum BlockerCommands {
         #[arg(long)]
         dir: Option<String>,
     },
+    /// Approve a blocker's check command so the window runs it on its own, as its "Run now and
+    /// every hour" button does. Run it only when the user asked for the approval. The approval holds
+    /// for the exact command text in the session directory: a changed check needs approving again
+    Approve {
+        #[arg(required_unless_present = "all")]
+        id: Option<String>,
+        /// Approve the check of every open blocker in the session directory
+        #[arg(long, conflicts_with = "id")]
+        all: bool,
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Mark an update as seen: its output becomes the baseline
     Seen {
         id: String,

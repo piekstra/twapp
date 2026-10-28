@@ -553,7 +553,9 @@ commands the user approved, matched exactly and per session directory (Run
 check's "Run now and every hour"; "Run once" runs a command one time without
 approving it; both refuse a command that changed in the file since it was
 shown), from
-`~/.config/twapp/approved-checks.json`. `twapp blocker check` runs checks
+`~/.config/twapp/approved-checks.json`. `twapp blocker approve` writes the
+same approval from the terminal, for the check text the blocker holds when it
+runs. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
 ## Ticket history
