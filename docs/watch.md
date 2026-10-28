@@ -1,9 +1,7 @@
 # Watching external items
 
-Status: steps 1 to 3 of the delivery plan are built (sources, the state
-contract, the store, the polling policy, `twapp watch
-sources|list|poll|show|log|resume`, and blockers that watch a topic); the
-window's scheduler and views, and waking idle sessions, are design.
+Status: built, except the window's views of watched blockers and sources
+(step 4's second half) and waking idle sessions, which are design.
 
 Sessions wait on things outside twapp: a vendor support case, a merge request
 on another forge, a ticket in a tracker, an email thread. Today each waiting
@@ -173,9 +171,16 @@ sessions resolve them.
 ## Scheduler
 
 The window runs the watcher as one more loop beside the blocker and pull
-request loops. Every minute it collects the subscribed topics (the `watch`
-of every open blocker in every hosted session) and polls those of approved
-sources that the policy allows, one claim at a time. A topic with no
+request loops (`gui/watch.rs`). Every minute it collects the subscribed
+topics (the `watch` of every open blocker in every hosted session), catches
+up any of those blockers that missed an event, and polls the topics of
+approved sources that the policy allows, delivering to the hosted sessions.
+A pass polls at most one topic per source, since its spacing would refuse
+the rest, and runs sources side by side, so a source whose command hangs
+delays only its own topics. It polls with the source file it checked
+against the approval, so a file edited meanwhile runs nothing. A source
+file that does not load, or a store that does not parse, is logged once
+when the problem appears. A topic with no
 subscribers is not polled. Its state is kept for 30 days, so a new
 subscriber within that time starts from the known state. After the window
 starts, due topics are spread across the first `min_interval` of each source
@@ -191,8 +196,9 @@ records the event's `seq` as `watch_latest`, so an event is delivered to a
 blocker once. An event with `notify: true` marks the blocker `updated`, as a
 report from another session does; one without only records. A blocker whose
 delivery failed, or whose session was not hosted when the event was made,
-catches up from `events.jsonl` the next time its session checks or waits on
-it.
+catches up from `events.jsonl` on the window's next pass, or when its session
+checks or waits on it; one whose missed events were dropped from the log is
+marked updated with a note that the details are gone.
 
 The update message a blocker sends (`update_message`) carries every event
 after `watch_seen` through `watch_latest`: each changed value and each new
@@ -237,14 +243,16 @@ them without changing the store.
 
 ## Approval
 
-The user approves a source, not each topic. Approving a source records the
-SHA-256 of its YAML file in `~/.config/twapp/approved-checks.json`, next to
-today's command approvals. Because `{id}` must match `id_pattern` and is
-shell-quoted, approving the template approves every topic of the source and
-nothing else. A changed file (a plugin update that edits the command, the
-interval or the pattern) is a new hash and polls nothing until approved
-again. The window asks for approval the first time a blocker watches an
-unapproved source, showing the whole file.
+The user approves a source, not each topic. `twapp watch approve <source>`
+records the SHA-256 of its YAML file in
+`~/.config/twapp/approved-sources.json` and prints the command and id
+pattern it approved; an agent runs it only when the user asked it to in the
+conversation, as with `twapp blocker approve`. Because `{id}` must match
+`id_pattern` and is shell-quoted, approving the template approves every
+topic of the source and nothing else. A changed file (a plugin update that
+edits the command, the interval or the pattern) is a new hash and polls
+nothing until approved again; `twapp watch sources` names the sources not
+approved.
 
 Approval governs what the window runs unattended. `twapp watch poll`, run
 by the user or an agent in a terminal, runs the source as that caller, as
@@ -277,6 +285,7 @@ twapp watch show <topic>               # current state and recent events
 twapp watch log [<topic>] [--since <seq>] [--json]
 twapp watch poll <topic>               # poll now, if min_interval allows
 twapp watch resume <source>            # unpause after fixing a login
+twapp watch approve <source>           # let the window poll it unattended
 twapp blocker add ... --watch <topic>
 twapp blocker show <id>                # includes events since watch_seen
 ```
@@ -290,7 +299,8 @@ Each step lands separately and is validated before the next starts.
 2. The polling policy in the store, with `twapp watch list|resume`.
 3. `--watch` on blockers, delivery to subscribed blockers, `check`, `wait`
    and the update message.
-4. The scheduler in the window, source approval, and the window's views.
+4. The scheduler in the window and source approval; then the window's
+   views.
 
 Waking idle sessions on any blocker update is independent of these and
 lands on its own.

@@ -82,6 +82,8 @@ mod hhmm {
 #[derive(Debug, Clone, Serialize)]
 pub struct Source {
     pub name: String,
+    /// SHA-256 of the file as read: an approval holds for these exact bytes.
+    pub digest: String,
     pub description: Option<String>,
     pub path: PathBuf,
     pub id_pattern: String,
@@ -113,6 +115,10 @@ impl Source {
     pub fn load(path: &Path) -> Result<Source, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let file: SourceFile = serde_yaml::from_str(&text).map_err(|e| e.to_string())?;
+        let digest = {
+            use sha2::Digest;
+            sha2::Sha256::digest(text.as_bytes()).iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        };
         if !valid_name(&file.name) {
             return Err(format!("name {:?} must be lowercase letters, digits and hyphens", file.name));
         }
@@ -150,6 +156,7 @@ impl Source {
         }
         Ok(Source {
             name: file.name,
+            digest,
             description: file.description,
             path: path.to_path_buf(),
             id_pattern: file.id_pattern,
@@ -826,16 +833,106 @@ impl From<PollError> for String {
 /// Poll one topic now: run its source's command and record the result.
 /// Refused when the source's policy does not allow a poll now (`refusal`).
 pub fn poll(sources: &Path, paths: &Paths, topic: &str, by_hand: bool) -> Result<Option<Event>, PollError> {
-    let (name, id) = parse_topic(topic).map_err(PollError::Failed)?;
+    let (name, _) = parse_topic(topic).map_err(PollError::Failed)?;
     let source = find_source(sources, name).map_err(PollError::Failed)?;
+    poll_with(&source, paths, topic, by_hand)
+}
+
+/// Poll with a source already loaded: the window passes the one whose
+/// digest it checked, so a file edited since runs nothing unattended.
+pub fn poll_with(source: &Source, paths: &Paths, topic: &str, by_hand: bool) -> Result<Option<Event>, PollError> {
+    let (_, id) = parse_topic(topic).map_err(PollError::Failed)?;
     let command = source.command_for(id).map_err(PollError::Failed)?;
-    paths.claim(&source, topic, by_hand).map_err(PollError::Refused)?;
+    paths.claim(source, topic, by_hand).map_err(PollError::Refused)?;
     paths.log_poll(topic, &command);
     // A source usually pipes a CLI into jq; without pipefail a CLI that
     // failed (an expired login) would read as jq's empty success.
     let result = super::blockers::run_check(&format!("set -o pipefail; {}", command), &paths.dir)
         .and_then(|out| parse_state(&out));
     paths.record(topic, result).map_err(PollError::Failed)
+}
+
+// --- Approval ----------------------------------------------------------------
+
+/// A source the user approved for the window to poll unattended, as the
+/// file was when approved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceApproval {
+    pub name: String,
+    pub sha256: String,
+}
+
+fn approvals_path() -> PathBuf {
+    super::config::config_dir().join("approved-sources.json")
+}
+
+pub fn source_approvals() -> Vec<SourceApproval> {
+    read_approvals().unwrap_or_default()
+}
+
+/// No file is no approvals; one that does not parse is an error, so an
+/// approval never replaces approvals it could not read.
+fn read_approvals() -> Result<Vec<SourceApproval>, String> {
+    let path = approvals_path();
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("reading {}: {}", path.display(), e)),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{} does not parse ({}); fix or remove it", path.display(), e)),
+    }
+}
+
+pub fn approved_in(approvals: &[SourceApproval], source: &Source) -> bool {
+    approvals.iter().any(|a| a.name == source.name && a.sha256 == source.digest)
+}
+
+/// Approve the source file as it is now; an earlier approval of the same
+/// name is replaced.
+pub fn approve_source(source: &Source) -> Result<(), String> {
+    super::blockers::with_lock(|| {
+        let mut all: Vec<SourceApproval> = read_approvals()?.into_iter().filter(|a| a.name != source.name).collect();
+        all.push(SourceApproval { name: source.name.clone(), sha256: source.digest.clone() });
+        let path = approvals_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+        super::fsutil::write_atomic(&path, json).map_err(|e| e.to_string())
+    })
+}
+
+// --- Scheduling --------------------------------------------------------------
+
+/// Where in its source's first interval after the window starts a topic
+/// first falls due, so a window that starts with many due topics spreads
+/// them out instead of running them back to back.
+fn start_offset(topic: &str, interval: Duration) -> Duration {
+    let secs = interval.as_secs().max(1);
+    Duration::from_secs(u64::from_str_radix(&body_hash(topic)[..12], 16).unwrap_or(0) % secs)
+}
+
+/// The subscribed topics the window should poll now: their source loads and
+/// is approved, its policy allows a poll, and, within a source's first
+/// interval after `started`, the topic's turn in the start-up spread came.
+pub fn due_topics(
+    subscribed: &std::collections::BTreeSet<String>,
+    sources: &BTreeMap<String, Source>,
+    approvals: &[SourceApproval],
+    store: &Store,
+    started: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+    local: chrono::NaiveTime,
+) -> Vec<String> {
+    let elapsed = (now - started).to_std().unwrap_or_default();
+    subscribed
+        .iter()
+        .filter(|topic| {
+            let Some(source) = parse_topic(topic).ok().and_then(|(n, _)| sources.get(n)) else { return false };
+            approved_in(approvals, source)
+                && store.refusal(source, topic, false, now, local).is_none()
+                && elapsed >= start_offset(topic, source.min_interval)
+        })
+        .cloned()
+        .collect()
 }
 
 // --- Delivery ----------------------------------------------------------------
@@ -881,13 +978,22 @@ pub fn deliver(event: &Event, dirs: &[PathBuf]) -> Reached {
 
 /// Record on one blocker the events of its topic it has not had: those a
 /// poll elsewhere made while delivery to it failed or it was not hosted.
-pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<(), String> {
-    let Some(blocker) = super::blockers::load(dir).into_iter().find(|b| b.id == id) else { return Ok(()) };
-    let Some(topic) = blocker.watch.as_deref() else { return Ok(()) };
-    for event in paths.events_since(Some(topic), blocker.watch_latest) {
-        super::blockers::update(dir, id, |b| b.record_watched(&event))?;
+/// Returns whether the blocker changed.
+pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<bool, String> {
+    let Some(blocker) = super::blockers::load(dir).into_iter().find(|b| b.id == id) else { return Ok(false) };
+    let Some(topic) = blocker.watch.as_deref() else { return Ok(false) };
+    let events = paths.events_since(Some(topic), blocker.watch_latest);
+    for event in &events {
+        super::blockers::update(dir, id, |b| b.record_watched(event))?;
     }
-    Ok(())
+    let head = paths.load()?.topics.get(topic).map_or(0, |t| t.head);
+    if head > blocker.watch_latest && events.iter().all(|e| e.seq < head) {
+        // The events it missed were dropped from the log: say it changed,
+        // without the details, rather than looking for them every pass.
+        super::blockers::update(dir, id, |b| b.record_unlogged_change(head))?;
+        return Ok(true);
+    }
+    Ok(!events.is_empty())
 }
 
 /// Each session directory an event reached, with the blockers' titles.
@@ -895,10 +1001,19 @@ pub type Reached = Vec<(PathBuf, Vec<String>)>;
 
 /// Poll `topic` and deliver what changed to every subscribed blocker.
 pub fn poll_and_deliver(topic: &str, here: &Path, by_hand: bool) -> Result<Option<(Event, Reached)>, PollError> {
-    let paths = Paths::new(state_dir());
-    let Some(event) = poll(&sources_dir(), &paths, topic, by_hand)? else { return Ok(None) };
-    let reached = deliver(&event, &subscriber_dirs(here));
+    let found = poll_and_deliver_to(topic, &subscriber_dirs(here), by_hand)?;
     super::hub_link::notify_changed();
+    Ok(found)
+}
+
+/// Poll `topic` and deliver what changed to the blockers in `dirs`.
+pub fn poll_and_deliver_to(topic: &str, dirs: &[PathBuf], by_hand: bool) -> Result<Option<(Event, Reached)>, PollError> {
+    poll_and_deliver_in(&sources_dir(), &Paths::new(state_dir()), topic, dirs, by_hand)
+}
+
+pub fn poll_and_deliver_in(sources: &Path, paths: &Paths, topic: &str, dirs: &[PathBuf], by_hand: bool) -> Result<Option<(Event, Reached)>, PollError> {
+    let Some(event) = poll(sources, paths, topic, by_hand)? else { return Ok(None) };
+    let reached = deliver(&event, dirs);
     Ok(Some((event, reached)))
 }
 
@@ -941,11 +1056,16 @@ fn human(d: Duration) -> String {
 pub fn cmd_sources(json: bool) -> i32 {
     let dir = sources_dir();
     let loaded = load_sources(&dir);
+    let approvals = source_approvals();
     if json {
         let rows: Vec<serde_json::Value> = loaded
             .iter()
             .map(|(path, s)| match s {
-                Ok(s) => serde_json::to_value(s).unwrap_or_default(),
+                Ok(s) => {
+                    let mut row = serde_json::to_value(s).unwrap_or_default();
+                    row["approved"] = approved_in(&approvals, s).into();
+                    row
+                }
                 Err(e) => serde_json::json!({ "path": path, "error": e }),
             })
             .collect();
@@ -961,6 +1081,9 @@ pub fn cmd_sources(json: bool) -> i32 {
         match source {
             Ok(s) => {
                 println!("{}  {}", s.name, s.description.as_deref().unwrap_or(""));
+                if !approved_in(&approvals, s) {
+                    println!("  not approved: the window polls it only once the user approves it (`twapp watch approve {}`)", s.name);
+                }
                 if let Some(p) = paused.get(&s.name) {
                     println!("  PAUSED since {}: {} (`twapp watch resume {}` once fixed)", p.at, p.error, s.name);
                 }
@@ -1028,6 +1151,21 @@ pub fn cmd_list(json: bool) -> i32 {
         println!("source {} PAUSED since {}: {}", source, p.at, p.error);
     }
     0
+}
+
+pub fn cmd_approve(name: &str) -> i32 {
+    match find_source(&sources_dir(), name).and_then(|s| approve_source(&s).map(|_| s)) {
+        Ok(source) => {
+            println!("{} approved as it is now ({}):", source.name, source.path.display());
+            println!("  ids {}", source.id_pattern);
+            println!("  command: {}", source.command);
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
 }
 
 pub fn cmd_resume(source: &str) -> i32 {
@@ -1433,6 +1571,25 @@ mod tests {
         assert!(store.paused.is_empty());
         assert_eq!(store.source_failures["p"], vec!["p:1".to_string()]);
         std::fs::remove_dir_all(&paths.dir).unwrap();
+    }
+
+    #[test]
+    fn the_window_polls_approved_due_topics_spread_after_it_starts() {
+        let source = policy_source("");
+        let sources = BTreeMap::from([("p".to_string(), source.clone())]);
+        let subscribed: std::collections::BTreeSet<String> = ["p:1", "p:2", "x:1"].iter().map(|s| s.to_string()).collect();
+        let approved = vec![SourceApproval { name: "p".into(), sha256: source.digest.clone() }];
+        let noon = chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let store = Store::default();
+        let started = at(0);
+        assert!(due_topics(&subscribed, &sources, &[], &store, started, at(60), noon).is_empty(), "not approved");
+        let stale = vec![SourceApproval { name: "p".into(), sha256: "edited".into() }];
+        assert!(due_topics(&subscribed, &sources, &stale, &store, started, at(60), noon).is_empty(), "the file changed since");
+        assert_eq!(due_topics(&subscribed, &sources, &approved, &store, started, at(30), noon), vec!["p:1", "p:2"], "after one interval all are due");
+        let offsets: Vec<Duration> = ["p:1", "p:2"].iter().map(|t| start_offset(t, source.min_interval)).collect();
+        assert!(offsets.iter().all(|o| *o < source.min_interval) && offsets[0] != offsets[1]);
+        let early = started + chrono::Duration::from_std(offsets[0].min(offsets[1])).unwrap();
+        assert_eq!(due_topics(&subscribed, &sources, &approved, &store, started, early, noon).len(), 1, "one turn came");
     }
 
     #[test]
