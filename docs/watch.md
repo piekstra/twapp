@@ -1,7 +1,8 @@
 # Watching external items
 
-Status: step 1 of the delivery plan is built (sources, the state contract,
-the store and `twapp watch sources|poll|show|log`); the rest is design.
+Status: steps 1 and 2 of the delivery plan are built (sources, the state
+contract, the store, the polling policy and `twapp watch
+sources|list|poll|show|log|resume`); the rest is design.
 
 Sessions wait on things outside twapp: a vendor support case, a merge request
 on another forge, a ticket in a tracker, an email thread. Today each waiting
@@ -100,13 +101,14 @@ least `1m`, and a source whose name differs from its file name does not load.
 
 ## Storage
 
-Under `~/.local/state/twapp/watch/`, written only by the window:
+Under `~/.local/state/twapp/watch/`, changed only under the lock on its `.lock`
+file, by whichever process polls:
 
-- `topics.json`: per topic, its source, the last state (`status`,
-  `terminal`, `fields`, and each entry's id with a hash of its body; entry
-  bodies are not kept here), `last_polled_at`, `next_poll_at`, consecutive
+- `topics.json`: per topic, the last state (`status`, `terminal`, `fields`,
+  and each entry's id with a hash of its body; entry bodies are not kept
+  here), when the last poll started, a running poll's claim, consecutive
   failures and the last error, and `head`, the sequence number of its latest
-  event.
+  event; per source, its failures in a row and whether it is paused.
 - `events.jsonl`: one event per line, oldest first:
 
   ```json
@@ -129,36 +131,52 @@ Both files are mode `0600`, since they hold third-party text.
 A blocker with `watch` keeps `watch_seen`, the `seq` of the last event its
 session saw. The cursor a session asks about is that number.
 
+## Polling policy
+
+Every poll, whoever runs it (`twapp watch poll`, a waiting session, the
+window), first claims the topic in the store under its lock. The claim is
+refused, with the reason and when to try again, when:
+
+- the source is paused;
+- the local time is in the source's quiet hours (which may span midnight);
+- the topic is terminal: its last state reported `terminal: true` (a poll
+  by hand, `twapp watch poll`, still reads it, in case it reopened);
+- the topic is being polled already (a claim expires after 90 seconds, so a
+  poll that died does not hold it);
+- the topic's interval has not passed since its last poll started:
+  `min_interval`, or after failures the backoff, `backoff.start` doubling to
+  `backoff.max`, back to `min_interval` after a success;
+- the source already runs `max_concurrency` polls;
+- another poll of the source started less than `spacing` ago.
+
+A granted claim marks the topic running and starts its interval, so no
+other process polls it meanwhile. Because the policy lives in the store, no
+caller can poll faster than the source allows, and sessions that wait on
+the same topic share its polls.
+
+When three polls of one source fail in a row with no success between them,
+and the failures span three of its topics (or every topic it has, when it
+has fewer), the source pauses: an expired login fails them all, while one
+deleted item fails only its own and just backs off. Nothing of a paused
+source polls until `twapp watch resume <source>`, which also clears its
+topics' backoff; `twapp watch sources` and `list` show it paused with the
+error that paused it. A command that runs past its 60 seconds is stopped
+with its whole process group, so no part of a pipeline keeps calling the
+service after its claim ends.
+
+A terminal topic keeps its last state; its subscribers stay open until their
+sessions resolve them.
+
 ## Scheduler
 
 The window runs the watcher as one more loop beside the blocker and pull
-request loops. Every minute it:
-
-1. Collects the subscribed topics: the `watch` of every open blocker in every
-   hosted session. A topic with no subscribers is not polled. Its state is
-   kept for 30 days, so a new subscriber within that time starts from the
-   known state.
-2. Picks the due topics: approved source, `next_poll_at` reached, not in the
-   source's quiet hours, not terminal, source not paused.
-3. Runs them, at most `max_concurrency` per source at once and `spacing`
-   apart, sources independent of each other.
-
-After a successful poll `next_poll_at` is `min_interval` later. A failed poll
-backs off: `backoff.start`, doubling to `backoff.max`, and the next success
-returns the topic to `min_interval`. When three topics of one source fail in
-a row with no success between them (an expired login fails them all), the
-source pauses: nothing of it polls until `twapp watch resume <source>`, and
-the window shows the source as paused with its last error. On start, the
-window does not run everything due at once: due topics are spread across the
-first `min_interval` of each source.
-
-No caller can poll faster than the source allows. `twapp watch poll <topic>`
-and the window's Check now ask the watcher for an immediate poll and are
-refused, with the time the next poll is allowed, inside `min_interval`.
-
-A topic whose state reports `terminal: true` produces its last event and is
-not polled again. Its subscribers stay open until their sessions resolve
-them.
+request loops. Every minute it collects the subscribed topics (the `watch`
+of every open blocker in every hosted session) and polls those of approved
+sources that the policy allows, one claim at a time. A topic with no
+subscribers is not polled. Its state is kept for 30 days, so a new
+subscriber within that time starts from the known state. After the window
+starts, due topics are spread across the first `min_interval` of each source
+rather than run back to back.
 
 ## Delivery
 
@@ -255,11 +273,10 @@ Each step lands separately and is validated before the next starts.
 
 1. Sources, the state contract, the diff and the store, with
    `twapp watch sources|poll|show|log`, polling by hand only.
-2. The scheduler in the window and source approval.
-3. `--watch` on blockers, delivery to subscribed blockers, `wait` and the
-   update message.
-4. The window's views: topics and sources in the overview, the blocker
-   panel's events.
+2. The polling policy in the store, with `twapp watch list|resume`.
+3. `--watch` on blockers, delivery to subscribed blockers, `check`, `wait`
+   and the update message.
+4. The scheduler in the window, source approval, and the window's views.
 
 Waking idle sessions on any blocker update is independent of these and
 lands on its own.

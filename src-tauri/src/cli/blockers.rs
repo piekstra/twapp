@@ -289,10 +289,14 @@ pub fn update(dir: &Path, id: &str, change: impl FnOnce(&mut Blocker)) -> Result
 /// Run a check command in `dir`. Its standard output is the result; a
 /// command that fails or runs past the timeout is an error.
 pub fn run_check(command: &str, dir: &Path) -> Result<String, String> {
+    use std::os::unix::process::CommandExt;
     let mut child = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
         .current_dir(dir)
+        // Its own process group, so a timeout stops the whole pipeline and
+        // not only the shell: a CLI left running keeps calling its service.
+        .process_group(0)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -317,6 +321,7 @@ pub fn run_check(command: &str, dir: &Path) -> Result<String, String> {
             break status;
         }
         if started.elapsed() > CHECK_TIMEOUT {
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("the check ran longer than {}s", CHECK_TIMEOUT.as_secs()));
