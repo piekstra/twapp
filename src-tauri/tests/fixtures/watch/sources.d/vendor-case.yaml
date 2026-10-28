@@ -1,0 +1,9 @@
+name: vendor-case
+description: Vendor support cases
+id_pattern: '[A-Z]+-[0-9]+'
+url: 'https://support.example.com/cases/{id}'
+command: vendor-cli cases get {id} -o json
+min_interval: 30m
+spacing: 5s
+backoff: { start: 30m, max: 6h }
+quiet_hours: { from: "20:00", to: "07:00" }

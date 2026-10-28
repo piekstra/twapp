@@ -1,0 +1,10 @@
+{
+  "status": "Waiting on customer",
+  "terminal": false,
+  "fields": { "priority": "P3", "assignee": "Vendor agent" },
+  "entries": [
+    { "id": "101", "at": "2026-10-27T14:00:00Z", "author": "Vendor agent", "body": "Looking into it. Escalated to engineering." },
+    { "id": "102", "at": "2026-10-28T09:12:00Z", "author": "Vendor agent", "body": "The token needs the read scope. Can you confirm the app registration?" },
+    { "id": "103", "at": "2026-10-28T10:00:00Z", "author": "Requester", "body": "Confirmed, the read scope is on.", "notify": false }
+  ]
+}
