@@ -212,6 +212,20 @@ pub fn load_sources(dir: &Path) -> Vec<(PathBuf, Result<Source, String>)> {
     }).collect()
 }
 
+/// Every source in `dir` by the name a topic uses, resolved as `find_source`
+/// resolves one (`<name>.yaml` before `<name>.yml`), each loaded or with why
+/// not.
+pub fn sources_by_name(dir: &Path) -> BTreeMap<String, Result<Source, String>> {
+    let mut by_name = BTreeMap::new();
+    for (path, _) in load_sources(dir) {
+        let Some(name) = path.file_stem().and_then(|n| n.to_str()) else { continue };
+        if valid_name(name) && !by_name.contains_key(name) {
+            by_name.insert(name.to_string(), find_source(dir, name));
+        }
+    }
+    by_name
+}
+
 pub fn find_source(dir: &Path, name: &str) -> Result<Source, String> {
     if !valid_name(name) {
         return Err(format!("{:?} is not a source name: lowercase letters, digits and hyphens", name));
@@ -872,7 +886,7 @@ pub fn source_approvals() -> Vec<SourceApproval> {
 
 /// No file is no approvals; one that does not parse is an error, so an
 /// approval never replaces approvals it could not read.
-fn read_approvals() -> Result<Vec<SourceApproval>, String> {
+pub fn read_approvals() -> Result<Vec<SourceApproval>, String> {
     let path = approvals_path();
     match std::fs::read_to_string(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),

@@ -24,9 +24,10 @@ export default function WatchButton({ blocker, className = "button ghost small",
     setAsking(false);
     setBusy(true);
     try {
-      if (approve) await hubApi.watchApprove(source.name, source.digest);
-      const changed = await hubApi.watchPoll(topic);
-      onResult?.(changed ? "Checked just now: the item changed" : "Checked just now: no change");
+      const result = await hubApi.watchPoll(topic, source.digest, approve);
+      const allowed = approve && result.approved ? `${source.name} is allowed. ` : "";
+      if (result.refused) onResult?.(`${allowed}Not checked now: ${result.refused}`);
+      else onResult?.(`${allowed}Checked just now: ${result.changed ? "the item changed" : "no change"}`);
     } catch (e) {
       onError(String(e));
       onResult?.("");
@@ -34,6 +35,29 @@ export default function WatchButton({ blocker, className = "button ghost small",
       setBusy(false);
     }
   };
+  if (source.paused) {
+    return (
+      <button
+        className={className}
+        disabled={busy}
+        title={`Let ${source.name} poll again once whatever failed is fixed (a login, say)`}
+        onClick={async (e) => {
+          e.stopPropagation();
+          setBusy(true);
+          try {
+            await hubApi.watchResume(source.name);
+            onResult?.(`${source.name} polls again.`);
+          } catch (err) {
+            onError(String(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Resume {source.name}
+      </button>
+    );
+  }
   return (
     <>
       <button
@@ -83,6 +107,7 @@ export function watchSummary(blocker: Blocker, ago: (at: string) => string): str
 export function watchProblem(blocker: Blocker): string | null {
   const w = blocker.watched;
   if (!w) return null;
+  if (w.state_error) return `Nothing can be polled: ${w.state_error}`;
   if (w.source?.paused) return `The ${w.source.name} source is paused after failed polls: ${w.source.paused}`;
   if (w.last_error) return `Last poll failed: ${w.last_error}`;
   return null;

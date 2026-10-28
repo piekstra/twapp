@@ -37,6 +37,8 @@ pub struct WatchedView {
     pub source: Option<SourceView>,
     /// Why the source cannot be used: missing or not loading.
     pub source_error: Option<String>,
+    /// Why the watcher's own files cannot be read, which stops every poll.
+    pub state_error: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -59,7 +61,7 @@ pub fn open_blockers(dir: &Path) -> Vec<BlockerView> {
     }
     let approvals = blockers::approvals();
     let open: Vec<Blocker> = blockers::load(dir).into_iter().filter(Blocker::is_open).collect();
-    let watched = if open.iter().any(|b| b.watch.is_some()) { Some(WatchState::read()) } else { None };
+    let watched = if open.iter().any(|b| b.watch.is_some()) { Some(WatchState::cached()) } else { None };
     open.into_iter()
         .map(|blocker| BlockerView {
             check_approved: blocker.check.as_ref().is_some_and(|c| blockers::approved_in(&approvals, c, dir)),
@@ -75,33 +77,54 @@ struct WatchState {
     store: watch::Store,
     sources: std::collections::BTreeMap<String, Result<watch::Source, String>>,
     approvals: Vec<watch::SourceApproval>,
+    error: Option<String>,
 }
 
+/// How long one read of the watcher's files serves every session's
+/// blockers: a snapshot builds them all at once, under the hub's lock.
+const WATCH_STATE_TTL: Duration = Duration::from_secs(5);
+
 impl WatchState {
+    fn cached() -> Arc<Self> {
+        static CACHE: std::sync::Mutex<Option<(std::time::Instant, Arc<WatchState>)>> = std::sync::Mutex::new(None);
+        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, state)) = cache.as_ref().filter(|(at, _)| at.elapsed() < WATCH_STATE_TTL) {
+            return Arc::clone(state);
+        }
+        let state = Arc::new(Self::read());
+        *cache = Some((std::time::Instant::now(), Arc::clone(&state)));
+        state
+    }
+
     fn read() -> Self {
-        let sources = watch::load_sources(&watch::sources_dir())
-            .into_iter()
-            .map(|(path, s)| {
-                let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                (name, s)
-            })
-            .collect();
+        let (store, store_error) = match watch::Paths::new(watch::state_dir()).load() {
+            Ok(store) => (store, None),
+            Err(e) => (watch::Store::default(), Some(e)),
+        };
+        let (approvals, approvals_error) = match watch::read_approvals() {
+            Ok(a) => (a, None),
+            Err(e) => (Vec::new(), Some(e)),
+        };
         Self {
-            store: watch::Paths::new(watch::state_dir()).load().unwrap_or_default(),
-            sources,
-            approvals: watch::source_approvals(),
+            store,
+            sources: watch::sources_by_name(&watch::sources_dir()),
+            approvals,
+            error: store_error.or(approvals_error),
         }
     }
 
     fn view(&self, topic: &str) -> WatchedView {
-        let mut view = WatchedView::default();
+        let mut view = WatchedView { state_error: self.error.clone(), ..Default::default() };
+        let Ok((name, _)) = watch::parse_topic(topic) else {
+            view.source_error = Some(format!("{:?} is not a topic (<source>:<id>)", topic));
+            return view;
+        };
         if let Some(t) = self.store.topics.get(topic) {
             view.status = t.status.clone();
             view.terminal = t.terminal;
             view.last_polled_at = t.last_polled_at.clone();
             view.last_error = t.last_error.clone();
         }
-        let name = watch::parse_topic(topic).map(|(n, _)| n).unwrap_or_default();
         match self.sources.get(name) {
             None => view.source_error = Some(format!("no source {} is installed", name)),
             Some(Err(e)) => view.source_error = Some(format!("the {} source does not load: {}", name, e)),
@@ -245,6 +268,7 @@ mod tests {
             store,
             sources: std::collections::BTreeMap::from([("vendor".to_string(), Ok(source.clone())), ("broken".to_string(), Err("bad yaml".to_string()))]),
             approvals: vec![],
+            error: None,
         };
         let view = state.view("vendor:1");
         assert_eq!((view.status.as_deref(), view.last_error.as_deref()), (Some("Open"), Some("timeout")));
@@ -252,6 +276,7 @@ mod tests {
         assert_eq!((shown.approved, shown.digest, shown.paused.as_deref()), (false, source.digest.clone(), Some("login expired")));
         assert!(state.view("broken:1").source_error.unwrap().contains("does not load: bad yaml"));
         assert_eq!(state.view("other:1").source_error.as_deref(), Some("no source other is installed"));
+        assert!(state.view("nocolon").source_error.unwrap().contains("is not a topic"));
         let approved = WatchState { approvals: vec![watch::SourceApproval { name: "vendor".into(), sha256: source.digest.clone() }], ..state };
         assert!(approved.view("vendor:2").source.unwrap().approved);
         std::fs::remove_dir_all(&dir).unwrap();

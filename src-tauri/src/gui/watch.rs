@@ -78,13 +78,13 @@ fn tick(
     }
     let subscribed: BTreeSet<String> = watching.iter().filter_map(|(_, b)| b.watch.clone()).collect();
     let mut sources = BTreeMap::new();
-    for (path, loaded) in watch::load_sources(sources_dir) {
+    for (name, loaded) in watch::sources_by_name(sources_dir) {
         match loaded {
             Ok(s) => {
-                sources.insert(s.name.clone(), s);
+                sources.insert(name, s);
             }
             Err(e) => {
-                pass.problems.insert(format!("source {} does not load: {}", path.display(), e));
+                pass.problems.insert(format!("source {} does not load: {}", name, e));
             }
         }
     }
@@ -176,7 +176,7 @@ mod tests {
         assert!(!pass.changed);
         std::fs::write(sources.join("broken.yaml"), "name: nope\n").unwrap();
         let pass = tick(&sessions, &sources, &paths, &approved, long_ago, later, noon);
-        assert!(pass.problems.iter().any(|p| p.contains("broken.yaml does not load")), "{:?}", pass.problems);
+        assert!(pass.problems.iter().any(|p| p.contains("broken.yaml") && p.contains("does not load")), "{:?}", pass.problems);
         for dir in sessions.iter().chain([&sources, &items, &state]) {
             let _ = std::fs::remove_dir_all(dir);
         }

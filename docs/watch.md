@@ -253,13 +253,18 @@ edits the command, the interval or the pattern) is a new hash and polls
 nothing until approved again; `twapp watch sources` names the sources not
 approved. In the window, a watched blocker's Check now shows the source's
 command and id pattern while the source is not approved, with Check once and
-Allow; Allow approves the file as it was shown (the window passes its
-digest, and a file changed since is refused) and polls the item.
+Allow. Check now and Allow both run the source file as it was shown: the
+window passes its digest, and a file changed since is refused; Allow
+approves that file, then polls. A refusal by the source's limits is shown as
+such, after the approval is kept. While a source is paused, the card offers
+Resume in place of Check now.
 
 The window shows each watched blocker with its topic, the item's status at
 the last poll, when it was polled, the last change's summary, and what stops
-it: a source not approved, not installed or not loading, a paused source or
-a failing poll.
+it: a source not approved, not installed or not loading, a paused source, a
+failing poll, or watcher files that cannot be read. The window reads the
+watcher's files once for every session's blockers, at most every five
+seconds.
 
 Approval governs what the window runs unattended. `twapp watch poll`, run
 by the user or an agent in a terminal, runs the source as that caller, as

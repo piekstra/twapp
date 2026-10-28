@@ -2339,30 +2339,61 @@ pub fn hub_set_lane(key: String, lane: Lane) -> Result<(), String> {
     Ok(())
 }
 
-/// Approve a source for the window to poll unattended, as the user saw it:
-/// refused when the file changed since (`digest`).
-#[tauri::command]
-pub fn hub_watch_approve(source: String, digest: String) -> Result<(), String> {
-    let found = crate::cli::watch::find_source(&crate::cli::watch::sources_dir(), &source)?;
-    if found.digest != digest {
-        return Err(format!("the {} source changed since it was shown; look at it again", source));
-    }
-    crate::cli::watch::approve_source(&found)?;
-    require_hub()?.refresh_blockers();
-    Ok(())
+#[derive(serde::Serialize)]
+pub struct WatchPollResult {
+    /// The source is now approved (it was, or `approve` approved it).
+    approved: bool,
+    /// The poll found a change.
+    changed: bool,
+    /// Why no poll ran now: the source's limits.
+    refused: Option<String>,
 }
 
-/// Poll a watched blocker's item now, at the user's request, and deliver
-/// what changed to every hosted session. Returns whether it changed;
-/// refused within the source's limits.
+/// Poll a watched blocker's item now, at the user's request, with the
+/// source file the user was shown (`digest`): one changed since is refused,
+/// so what runs is what was shown. `approve` first approves that file for
+/// the window to poll unattended. Delivers what changed to every hosted
+/// session.
 #[tauri::command]
-pub async fn hub_watch_poll(topic: String) -> Result<bool, String> {
+pub async fn hub_watch_poll(topic: String, digest: String, approve: bool) -> Result<WatchPollResult, String> {
+    use crate::cli::watch;
     tauri::async_runtime::spawn_blocking(move || {
         let hub = require_hub()?;
+        let (name, _) = watch::parse_topic(&topic)?;
+        let source = watch::find_source(&watch::sources_dir(), name)?;
+        if source.digest != digest {
+            return Err(format!("the {} source changed since it was shown; look at it again", name));
+        }
+        if approve {
+            watch::approve_source(&source)?;
+        }
+        let approved = watch::approved_in(&watch::source_approvals(), &source);
         let dirs: Vec<std::path::PathBuf> = hub.hosted_keys().into_iter().map(std::path::PathBuf::from).collect();
-        let found = crate::cli::watch::poll_and_deliver_to(&topic, &dirs, true).map_err(String::from)?;
+        let paths = watch::Paths::new(watch::state_dir());
+        let result = match watch::poll_with(&source, &paths, &topic, true) {
+            Ok(event) => {
+                if let Some(event) = &event {
+                    watch::deliver(event, &dirs);
+                }
+                Ok(WatchPollResult { approved, changed: event.is_some(), refused: None })
+            }
+            Err(watch::PollError::Refused(why)) => Ok(WatchPollResult { approved, changed: false, refused: Some(why) }),
+            Err(watch::PollError::Failed(e)) => Err(e),
+        };
         hub.refresh_blockers();
-        Ok(found.is_some())
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Let a source paused after failed polls poll again.
+#[tauri::command]
+pub async fn hub_watch_resume(source: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::cli::watch::Paths::new(crate::cli::watch::state_dir()).resume(&source)?;
+        require_hub()?.refresh_blockers();
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

@@ -33,7 +33,7 @@ try {
           if (cmd === 'plugin:app|version') return '0.0.0';
           if (cmd === 'plugin:event|listen') return ++counter;
           window.__calls.push({ cmd, args });
-          if (cmd === 'hub_watch_poll') return true;
+          if (cmd === 'hub_watch_poll') return { approved: true, changed: true, refused: null };
           return null;
         },
       };
@@ -52,7 +52,7 @@ try {
     assert.match(text, /not polled on its own until you allow vendor-case/);
     assert.match(text, /status Open -> Waiting on customer/);
     assert.match(text, /Watching merge-request:group\/repo!275: opened/);
-    assert.match(text, /the last poll failed/);
+    assert.match(text, /its source is paused/);
     assert.match(text, /no source tracker is installed/);
     const wide = await page.evaluate(() => [...document.querySelectorAll('.blocker-row *')]
       .filter(el => {
@@ -73,16 +73,18 @@ try {
     await page.screenshot({ path: path.join(dir, `ask-${theme}-${width}.png`), fullPage: true });
     const offset = await page.evaluate(() => window.__calls.length);
     await ask.getByRole('button', { name: 'Allow vendor-case' }).click();
-    await first.getByText('Checked just now: the item changed').waitFor();
+    await first.getByText('vendor-case is allowed. Checked just now: the item changed').waitFor();
     const calls = await page.evaluate(o => window.__calls.slice(o).filter(c => c.cmd.startsWith('hub_watch')), offset);
+    // One call approves the file by the digest shown and polls with it.
     assert.deepEqual(calls, [
-      { cmd: 'hub_watch_approve', args: { source: 'vendor-case', digest: 'a'.repeat(64) } },
-      { cmd: 'hub_watch_poll', args: { topic: 'vendor-case:CASE-4411' } },
+      { cmd: 'hub_watch_poll', args: { topic: 'vendor-case:CASE-4411', digest: 'a'.repeat(64), approve: true } },
     ]);
-    // An approved source polls at once; one with no source has no button.
+    // A paused source offers Resume instead; one with no source has no button.
     const second = rows.filter({ hasText: 'Review of the merge request' });
-    await second.getByRole('button', { name: 'Check now' }).click();
-    await second.getByText('Checked just now: the item changed').waitFor();
+    assert.equal(await second.getByRole('button', { name: 'Check now' }).count(), 0);
+    await second.getByRole('button', { name: 'Resume merge-request' }).click();
+    await second.getByText('merge-request polls again.').waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_watch_resume').map(c => c.args)), [{ source: 'merge-request' }]);
     assert.equal(await rows.filter({ hasText: 'Ticket in a tracker' }).getByRole('button', { name: 'Check now' }).count(), 0);
     await page.close();
   }

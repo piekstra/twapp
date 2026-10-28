@@ -109,7 +109,7 @@ function Row({ blocker, session, now, showSession, onSelect }: { blocker: Blocke
       {blocker.watch && !open && (
         <div className="blocker-checked">
           {checkResult ?? `Watching ${blocker.watch}: ${watching ?? "not polled yet"}`}
-          {watchError && !checkResult && " · the last poll failed"}
+          {watchError && !checkResult && (blocker.watched?.source?.paused ? " · its source is paused" : " · the last poll failed")}
         </div>
       )}
       {blocker.check && !open && (

@@ -197,6 +197,15 @@ export interface Watched {
   source?: WatchSource | null;
   /** Why the source cannot be used: missing or not loading. */
   source_error?: string | null;
+  /** Why the watcher's own files cannot be read, which stops every poll. */
+  state_error?: string | null;
+}
+
+export interface WatchPollResult {
+  approved: boolean;
+  changed: boolean;
+  /** Why no poll ran now: the source's limits. */
+  refused?: string | null;
 }
 
 export interface WatchSource {
@@ -311,8 +320,8 @@ export const hubApi = {
   pullsRefresh: (key: string) => invoke("hub_pulls_refresh", { key }),
   pullHide: (key: string, url: string) => invoke("hub_pull_hide", { key, url }),
   blockerSet: (key: string, id: string, action: "seen" | "resolve" | "remove") => invoke("hub_blocker_set", { key, id, action }),
-  watchApprove: (source: string, digest: string) => invoke("hub_watch_approve", { source, digest }),
-  watchPoll: (topic: string) => invoke<boolean>("hub_watch_poll", { topic }),
+  watchPoll: (topic: string, digest: string, approve: boolean) => invoke<WatchPollResult>("hub_watch_poll", { topic, digest, approve }),
+  watchResume: (source: string) => invoke("hub_watch_resume", { source }),
   blockerNote: (key: string, id: string, text: string) => invoke("hub_blocker_note", { key, id, text }),
   blockerSend: (key: string, id: string) => invoke("hub_blocker_send", { key, id }),
   rename: (directory: string, newName: string) => invoke("rename_session", { directory, newName }),
