@@ -379,7 +379,29 @@ pub fn approve(command: &str, dir: &Path) -> Result<(), String> {
         all.push(Approval::In { command: command.to_string(), dir: dir.to_string_lossy().to_string() });
     }
     let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(super::config::config_dir()).map_err(|e| e.to_string())?;
     super::fsutil::write_atomic(&approved_path(), json).map_err(|e| e.to_string())
+}
+
+/// The open blockers whose checks `twapp blocker approve` approves: the one
+/// `id` names, or every open one with a check.
+fn checks_to_approve(blockers: Vec<Blocker>, id: Option<&str>) -> Result<Vec<Blocker>, String> {
+    let Some(id) = id else {
+        return Ok(blockers.into_iter().filter(|b| b.is_open() && b.check.is_some()).collect());
+    };
+    let mut matches: Vec<Blocker> = blockers.into_iter().filter(|b| b.id.starts_with(id)).collect();
+    let blocker = match matches.len() {
+        0 => return Err(format!("no blocker {}", id)),
+        1 => matches.remove(0),
+        _ => return Err(format!("{} matches more than one blocker", id)),
+    };
+    if !blocker.is_open() {
+        return Err(format!("blocker {} is resolved", blocker.id));
+    }
+    if blocker.check.is_none() {
+        return Err(format!("blocker {} has no check command", blocker.id));
+    }
+    Ok(vec![blocker])
 }
 
 // --- Waiting -----------------------------------------------------------------
@@ -443,7 +465,7 @@ fn session_dir(dir: Option<&str>) -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
-fn print_blocker(b: &Blocker) {
+fn print_blocker(b: &Blocker, dir: &Path) {
     let status = match b.status {
         BlockerStatus::Waiting => "waiting",
         BlockerStatus::Updated => "UPDATED",
@@ -458,8 +480,7 @@ fn print_blocker(b: &Blocker) {
         println!("          on: {}", on);
     }
     if let Some(check) = &b.check {
-        let here = std::env::current_dir().unwrap_or_default();
-        let approved = if is_approved(check, &here) { "" } else { " (not approved in the window)" };
+        let approved = if is_approved(check, dir) { "" } else { " (not approved in the window)" };
         println!("          check: {}{}", check, approved);
     }
     if let Some(error) = &b.check_error {
@@ -529,7 +550,8 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             code
         }
         C::List { all, json, dir } => {
-            let blockers: Vec<Blocker> = load(&session_dir(dir.as_deref()))
+            let dir = session_dir(dir.as_deref());
+            let blockers: Vec<Blocker> = load(&dir)
                 .into_iter()
                 .filter(|b| all || b.is_open())
                 .collect();
@@ -538,7 +560,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             } else if blockers.is_empty() {
                 println!("No open blockers.");
             } else {
-                blockers.iter().for_each(print_blocker);
+                blockers.iter().for_each(|b| print_blocker(b, &dir));
             }
             0
         }
@@ -548,7 +570,8 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 Err(e) => return finish(Err(e)),
             };
             let subscribed = on.clone();
-            let code = finish(update(&session_dir(dir.as_deref()), &id, |b| {
+            let dir = session_dir(dir.as_deref());
+            let code = finish(update(&dir, &id, |b| {
                 if on.is_some() {
                     b.on = on;
                 }
@@ -571,7 +594,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                     b.latest_hash = None;
                 }
             })
-            .map(|b| print_blocker(&b)));
+            .map(|b| print_blocker(&b, &dir)));
             if code == 0 {
                 print_reported(subscribed.as_deref());
             }
@@ -592,7 +615,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             for target in targets {
                 let result = run_check(target.check.as_deref().unwrap_or_default(), &dir);
                 match update(&dir, &target.id, |b| b.record_check(result)) {
-                    Ok(b) => print_blocker(&b),
+                    Ok(b) => print_blocker(&b, &dir),
                     Err(e) => {
                         eprintln!("Error: {}", e);
                         failed = true;
@@ -615,13 +638,33 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 }
             }
         }
+        C::Approve { id, all: _, dir } => {
+            let dir = session_dir(dir.as_deref());
+            let targets = match load_for_update(&dir).and_then(|all| checks_to_approve(all, id.as_deref())) {
+                Ok(targets) => targets,
+                Err(e) => return finish(Err(e)),
+            };
+            if targets.is_empty() {
+                println!("No open blocker has a check command.");
+                return 0;
+            }
+            for target in &targets {
+                let check = target.check.as_deref().unwrap_or_default();
+                if let Err(e) = approve(check, &dir) {
+                    return finish(Err(e));
+                }
+                println!("{}  approved: {}", target.id, check);
+            }
+            finish(Ok(()))
+        }
         C::Seen { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, Blocker::mark_seen).map(|_| ())),
         C::Resolve { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, |b| b.resolve(Some("agent"))).map(|_| ())),
         C::Note { id, text, dir } => {
             finish(update(&session_dir(dir.as_deref()), &id, |b| b.log("note", &text, Some("agent"))).map(|_| ()))
         }
         C::Show { id, json, dir } => {
-            let found = load(&session_dir(dir.as_deref())).into_iter().find(|b| b.id.starts_with(&id));
+            let dir = session_dir(dir.as_deref());
+            let found = load(&dir).into_iter().find(|b| b.id.starts_with(&id));
             let Some(b) = found else {
                 eprintln!("Error: no blocker {}", id);
                 return 1;
@@ -630,7 +673,7 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 println!("{}", serde_json::to_string_pretty(&b).unwrap_or_default());
                 return 0;
             }
-            print_blocker(&b);
+            print_blocker(&b, &dir);
             if let Some(excerpt) = &b.excerpt {
                 println!("          last output:\n{}", excerpt.lines().map(|l| format!("            {}", l)).collect::<Vec<_>>().join("\n"));
             }
@@ -746,6 +789,28 @@ mod tests {
         assert!(update(&dir, "a", |_| {}).is_err());
         assert!(std::fs::read_to_string(path_in(&dir)).unwrap().contains("half-writ"), "the file is left for the user");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn approve_picks_the_named_blocker_or_every_open_check() {
+        let with_check = |title: &str, check: Option<&str>| {
+            let mut b = Blocker::new(title);
+            b.check = check.map(str::to_string);
+            b
+        };
+        let open = with_check("Vendor reply", Some("cat status.txt"));
+        let unchecked = with_check("Review", None);
+        let mut resolved = with_check("Deploy", Some("cat deploy.txt"));
+        resolved.resolve(None);
+        let all = vec![open.clone(), unchecked.clone(), resolved.clone()];
+
+        let picked = checks_to_approve(all.clone(), Some(&open.id)).unwrap();
+        assert_eq!(picked.iter().map(|b| &b.id).collect::<Vec<_>>(), vec![&open.id], "an id names one blocker");
+        let picked = checks_to_approve(all.clone(), None).unwrap();
+        assert_eq!(picked.iter().map(|b| &b.id).collect::<Vec<_>>(), vec![&open.id], "--all skips resolved and unchecked");
+        assert!(checks_to_approve(all.clone(), Some(&unchecked.id)).unwrap_err().contains("no check command"));
+        assert!(checks_to_approve(all.clone(), Some(&resolved.id)).unwrap_err().contains("resolved"));
+        assert!(checks_to_approve(all, Some("zzzz")).unwrap_err().contains("no blocker"));
     }
 
     fn wait_dir(check: Option<&str>) -> (PathBuf, String) {
