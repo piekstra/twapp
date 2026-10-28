@@ -578,6 +578,9 @@ pub enum BlockerCommands {
     /// Mark an update as seen: its output becomes the baseline
     Seen {
         id: String,
+        /// The newest watched change the session was shown (the number `wait` prints); later ones stay unseen
+        #[arg(long)]
+        through: Option<u64>,
         #[arg(long)]
         dir: Option<String>,
     },

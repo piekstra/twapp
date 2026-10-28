@@ -160,15 +160,24 @@ impl Blocker {
             text.push_str(&format!(", {}", reference));
         }
         text.push('.');
-        if let Some(report) = self.unseen_report() {
+        let report = self.unseen_report();
+        if let Some(report) = report {
             let from = report.by.as_deref().unwrap_or("Another session");
             text.push_str(&format!("\n\n{} reported: {}\n", from, report.text));
-        } else if let (Some(topic), false) = (&self.watch, watched.is_empty()) {
-            text.push_str(&format!("\n\n{} changed:\n\n", topic));
-            for event in &watched {
-                text.push_str(&event.details());
+        }
+        let unseen_watch = self.watch.as_ref().filter(|_| self.watch_latest > self.watch_seen);
+        if let Some(topic) = unseen_watch {
+            if watched.is_empty() {
+                // The events were dropped from the log since.
+                text.push_str(&format!("\n\n{} changed; `twapp watch show {}` prints its state now.\n", topic, topic));
+            } else {
+                text.push_str(&format!("\n\n{} changed:\n\n", topic));
+                for event in &watched {
+                    text.push_str(&event.details());
+                }
             }
-        } else if let (Some(check), Some(excerpt)) = (&self.check, &self.excerpt) {
+        }
+        if let (None, None, Some(check), Some(excerpt)) = (report, unseen_watch, &self.check, &self.excerpt) {
             text.push_str(&format!("\n\nIts check `{}` now prints:\n\n{}\n", check, excerpt));
         }
         text.push_str(&format!(
@@ -202,7 +211,11 @@ impl Blocker {
     /// A poll of the watched topic found a change. One that only records
     /// (an entry from the waiting side) is logged without marking it updated.
     pub fn record_watched(&mut self, event: &super::watch::Event) {
-        self.watch_latest = self.watch_latest.max(event.seq);
+        // Two processes may deliver the same event; the second does nothing.
+        if event.seq <= self.watch_latest {
+            return;
+        }
+        self.watch_latest = event.seq;
         if !self.is_open() {
             return;
         }
@@ -256,6 +269,16 @@ impl Blocker {
                     Some(_) => {}
                 }
             }
+        }
+    }
+
+    /// The update was seen as it stood with event `through` the newest watched
+    /// one shown: a watched change recorded after that stays unseen.
+    pub fn mark_seen_through(&mut self, through: u64) {
+        self.mark_seen();
+        self.watch_seen = through.min(self.watch_latest);
+        if self.watch_latest > self.watch_seen && self.is_open() {
+            self.status = BlockerStatus::Updated;
         }
     }
 
@@ -317,6 +340,22 @@ pub fn load_for_update(dir: &Path) -> Result<Vec<Blocker>, String> {
     }
 }
 
+/// Run `change` holding the lock every blocker write takes. Other sessions'
+/// polls and reports write a session's blockers file too, so a read, change
+/// and save must not interleave with another.
+pub fn with_lock<T>(change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    use std::os::unix::io::AsRawFd;
+    let path = dirs::home_dir().unwrap_or_default().join(".local/state/twapp/blockers.lock");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let lock = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("opening {}: {}", path.display(), e))?;
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(format!("locking {}: {}", path.display(), std::io::Error::last_os_error()));
+    }
+    change()
+}
+
 pub fn save(dir: &Path, blockers: &[Blocker]) -> Result<(), String> {
     let json = serde_json::to_string_pretty(blockers).map_err(|e| e.to_string())?;
     super::fsutil::write_atomic(&path_in(dir), json).map_err(|e| e.to_string())
@@ -325,6 +364,10 @@ pub fn save(dir: &Path, blockers: &[Blocker]) -> Result<(), String> {
 /// Change one blocker by id (or unique id prefix), re-reading the file first
 /// so a change another process made meanwhile is kept.
 pub fn update(dir: &Path, id: &str, change: impl FnOnce(&mut Blocker)) -> Result<Blocker, String> {
+    with_lock(|| update_locked(dir, id, change))
+}
+
+fn update_locked(dir: &Path, id: &str, change: impl FnOnce(&mut Blocker)) -> Result<Blocker, String> {
     let mut blockers = load_for_update(dir)?;
     let matches: Vec<usize> = blockers
         .iter()
@@ -468,11 +511,14 @@ pub fn wait(dir: &Path, id: &str, every: Duration, timeout: Option<Duration>) ->
         match blocker.status {
             BlockerStatus::Resolved => return Ok(format!("The blocker \"{}\" was resolved.", blocker.title)),
             BlockerStatus::Updated => {
+                // `--through` marks seen only the watched changes this message
+                // shows; one recorded meanwhile stays for the next wait.
+                let through = if blocker.watch.is_some() { format!(" --through {}", blocker.watch_latest) } else { String::new() };
                 return Ok(format!(
-                    "{}\nTo wait for the next change instead: `twapp blocker seen {id} && twapp blocker wait {id}`.",
+                    "{}\nTo wait for the next change instead: `twapp blocker seen {id}{through} && twapp blocker wait {id}`.",
                     blocker.update_message(),
                     id = blocker.id
-                ))
+                ));
             }
             BlockerStatus::Waiting => {}
         }
@@ -485,13 +531,18 @@ pub fn wait(dir: &Path, id: &str, every: Duration, timeout: Option<Duration>) ->
         if let Some(topic) = blocker.watch.as_deref().filter(|_| Instant::now() >= next_check) {
             // Polls only when the source's policy allows, so every session
             // waiting on the topic shares its polls; a refusal is no failure.
-            let paths = super::watch::Paths::new(super::watch::state_dir());
-            super::watch::catch_up(&paths, dir, &blocker.id)?;
             match super::watch::poll_and_deliver(topic, dir, false) {
                 Ok(_) => failures = 0,
                 Err(super::watch::PollError::Refused(why)) => {
+                    // Another session's poll may have made events this
+                    // blocker missed.
+                    let paths = super::watch::Paths::new(super::watch::state_dir());
+                    super::watch::catch_up(&paths, dir, &blocker.id)?;
                     if let Some(p) = super::watch::paused(topic) {
                         return Err(format!("{} ({})", why, p.error));
+                    }
+                    if super::watch::is_terminal(topic) && load(dir).iter().any(|b| b.id == blocker.id && b.status == BlockerStatus::Waiting) {
+                        return Err(why);
                     }
                 }
                 Err(super::watch::PollError::Failed(error)) => {
@@ -614,12 +665,11 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 blocker.watch = Some(topic);
             }
             let id = blocker.id.clone();
-            let mut all = match load_for_update(&dir) {
-                Ok(all) => all,
-                Err(e) => return finish(Err(e)),
-            };
-            all.push(blocker);
-            let code = finish(save(&dir, &all));
+            let code = finish(with_lock(|| {
+                let mut all = load_for_update(&dir)?;
+                all.push(blocker);
+                save(&dir, &all)
+            }));
             if code == 0 {
                 println!("{}", id);
                 print_reported(on.as_deref());
@@ -641,9 +691,10 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
             0
         }
         C::Update { id, title, party, kind, reference, check, on, watch, dir } => {
-            if let Err(e) = watch.as_deref().map(super::watch::check_topic).transpose() {
-                return finish(Err(e));
-            }
+            let url = match watch.as_deref().map(super::watch::check_topic).transpose() {
+                Ok(url) => url.flatten(),
+                Err(e) => return finish(Err(e)),
+            };
             let on = match on.as_deref().map(|on| super::who::Subject::parse(on, false)).transpose() {
                 Ok(on) => on.map(|s| s.label()),
                 Err(e) => return finish(Err(e)),
@@ -669,7 +720,19 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                     b.watch_latest = super::watch::head(&topic);
                     b.watch_seen = b.watch_latest;
                     b.watch = Some(topic);
-                    b.check = None;
+                    // What a check found does not carry over to the watch.
+                    if b.check.take().is_some() {
+                        b.seen_hash = None;
+                        b.latest_hash = None;
+                        b.excerpt = None;
+                        b.check_error = None;
+                        if b.status == BlockerStatus::Updated && b.unseen_report().is_none() {
+                            b.status = BlockerStatus::Waiting;
+                        }
+                    }
+                    if b.reference.is_none() {
+                        b.reference = url;
+                    }
                 }
                 if check.is_some() && check != b.check {
                     b.watch = None;
@@ -746,7 +809,13 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
                 }
             }
         }
-        C::Seen { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, Blocker::mark_seen).map(|_| ())),
+        C::Seen { id, through, dir } => finish(
+            update(&session_dir(dir.as_deref()), &id, |b| match through {
+                Some(seq) => b.mark_seen_through(seq),
+                None => b.mark_seen(),
+            })
+            .map(|_| ()),
+        ),
         C::Resolve { id, dir } => finish(update(&session_dir(dir.as_deref()), &id, |b| b.resolve(Some("agent"))).map(|_| ())),
         C::Note { id, text, dir } => {
             finish(update(&session_dir(dir.as_deref()), &id, |b| b.log("note", &text, Some("agent"))).map(|_| ()))
@@ -774,17 +843,16 @@ pub fn run_command(command: super::BlockerCommands) -> i32 {
         }
         C::Remove { id, dir } => {
             let dir = session_dir(dir.as_deref());
-            let mut all = match load_for_update(&dir) {
-                Ok(all) => all,
-                Err(e) => return finish(Err(e)),
-            };
-            let before = all.len();
-            all.retain(|b| !b.id.starts_with(&id));
-            match before - all.len() {
-                0 => finish(Err(format!("no blocker {}", id))),
-                1 => finish(save(&dir, &all)),
-                _ => finish(Err(format!("{} matches more than one blocker", id))),
-            }
+            finish(with_lock(|| {
+                let mut all = load_for_update(&dir)?;
+                let before = all.len();
+                all.retain(|b| !b.id.starts_with(&id));
+                match before - all.len() {
+                    0 => Err(format!("no blocker {}", id)),
+                    1 => save(&dir, &all),
+                    _ => Err(format!("{} matches more than one blocker", id)),
+                }
+            }))
         }
     }
 }
@@ -909,6 +977,25 @@ mod tests {
         b.resolve(None);
         b.record_watched(&watch_event(8, true));
         assert_eq!(b.status, BlockerStatus::Resolved, "a resolved blocker stays resolved");
+    }
+
+    #[test]
+    fn seen_through_keeps_a_later_change_unseen_and_both_kinds_of_news_show() {
+        let mut b = Blocker::new("Vendor to confirm the scope");
+        b.watch = Some("vendor-case:CASE-1".into());
+        b.record_watched(&watch_event(7, true));
+        b.record_watched(&watch_event(7, true));
+        assert_eq!(b.history.iter().filter(|e| e.kind == "watched").count(), 1, "delivered once");
+        b.record_watched(&watch_event(8, true));
+        b.mark_seen_through(7);
+        assert_eq!((b.status, b.watch_seen), (BlockerStatus::Updated, 7), "#8 was not shown");
+        b.record_report("Other session", "Merged.");
+        let text = b.message_with(vec![watch_event(8, true)]);
+        assert!(text.contains("Other session reported: Merged.") && text.contains("vendor-case:CASE-1 changed:"), "{}", text);
+        let pruned = b.message_with(vec![]);
+        assert!(pruned.contains("`twapp watch show vendor-case:CASE-1` prints its state now"), "{}", pruned);
+        b.mark_seen_through(8);
+        assert_eq!(b.status, BlockerStatus::Waiting);
     }
 
     #[test]

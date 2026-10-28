@@ -2391,8 +2391,9 @@ pub fn hub_blocker_send(key: String, id: String) -> Result<(), String> {
     // Bracketed paste keeps the harness from submitting at each newline.
     let paste = format!("\x1b[200~{}\x1b[201~", blocker.update_message());
     hub.write(&key, MAIN_TAB, paste.into_bytes());
+    let shown = blocker.watch_latest;
     crate::cli::blockers::update(dir, &id, |b| {
-        b.mark_seen();
+        b.mark_seen_through(shown);
         b.log("sent", "", Some("user"));
     })?;
     hub.refresh_blockers();
@@ -2517,11 +2518,11 @@ pub fn hub_blocker_set(key: String, id: String, action: String) -> Result<(), St
     match action.as_str() {
         "seen" => crate::cli::blockers::update(dir, &id, crate::cli::blockers::Blocker::mark_seen).map(|_| ())?,
         "resolve" => crate::cli::blockers::update(dir, &id, |b| b.resolve(Some("user"))).map(|_| ())?,
-        "remove" => {
+        "remove" => crate::cli::blockers::with_lock(|| {
             let mut all = crate::cli::blockers::load_for_update(dir)?;
             all.retain(|b| b.id != id);
-            crate::cli::blockers::save(dir, &all)?
-        }
+            crate::cli::blockers::save(dir, &all)
+        })?,
         other => return Err(format!("unknown blocker action {}", other)),
     }
     require_hub()?.refresh_blockers();

@@ -223,7 +223,13 @@ separately from the watcher.
 
 `twapp blocker check <id>` on a watched blocker polls its topic by hand
 (once per topic, however many blockers it covers) and delivers the result.
-`twapp blocker seen <id>` moves `watch_seen` to `watch_latest`.
+`twapp blocker seen <id> --through <seq>` moves `watch_seen` to the newest
+change the session was shown (`wait` prints the command with it), so a
+change delivered while the session handled the last one stays unseen; the
+window's Send does the same. Writes to a session's blockers file, which
+other sessions' polls and reports now make too, hold one lock
+(`~/.local/state/twapp/blockers.lock`). `wait` exits with an error when the
+watched item is terminal and nothing is left to show.
 
 Messages to other channels (a chat message, a push notification) are not
 part of this design; a later `on_event` command in `config.yaml` could add

@@ -890,15 +890,21 @@ pub fn catch_up(paths: &Paths, dir: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Poll `topic` and deliver what changed to every subscribed blocker.
+/// Each session directory an event reached, with the blockers' titles.
 pub type Reached = Vec<(PathBuf, Vec<String>)>;
 
+/// Poll `topic` and deliver what changed to every subscribed blocker.
 pub fn poll_and_deliver(topic: &str, here: &Path, by_hand: bool) -> Result<Option<(Event, Reached)>, PollError> {
     let paths = Paths::new(state_dir());
     let Some(event) = poll(&sources_dir(), &paths, topic, by_hand)? else { return Ok(None) };
     let reached = deliver(&event, &subscriber_dirs(here));
     super::hub_link::notify_changed();
     Ok(Some((event, reached)))
+}
+
+/// Whether the topic's last state reported the item terminal.
+pub fn is_terminal(topic: &str) -> bool {
+    Paths::new(state_dir()).load().ok().and_then(|s| s.topics.get(topic).map(|t| t.terminal)).unwrap_or(false)
 }
 
 /// The newest event number of a topic, 0 before any.
