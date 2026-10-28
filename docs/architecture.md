@@ -558,6 +558,24 @@ same approval from the terminal, for the check text the blocker holds when it
 runs. `twapp blocker check` runs checks
 directly, as any command the user or agent runs in the terminal would.
 
+The same thread sends updates that nothing delivered. An updated blocker
+whose news (a changed check, a report, a watched change) no `twapp blocker
+wait` delivered (`delivered`) and no Send sent (`sent`) within a minute is
+pasted into its session and submitted, as Send pastes it plus Enter, when
+the session's main tab runs, its turn has ended, it is not the selected
+session, it is not parked, and the user has not typed into it since last
+pressing Enter there (a draft would be submitted with it); one per session
+per minute, oldest first. It is marked seen with `sent` by `window` before
+it is written, so a failed record sends nothing, and the conditions are
+checked again just before writing. The window's write bypasses `Hub::write`,
+so it neither counts as the user typing nor restarts a blocked session's
+clock. Every paste of an update, by Send or by the window, drops control
+characters other than newlines and tabs, so quoted third-party text cannot
+end the paste early; the message itself tells the agent that quoted text is
+information, not instructions. A watched change that does not notify is
+logged `watched_quiet` and is not news. `blockers.wake_sessions: false` in
+`config.yaml` turns this off.
+
 A blocker can instead watch an external item through a source a plugin
 installs (`twapp blocker add --watch <source>:<id>`); the window's watch loop
 (`gui/watch.rs`) polls those items for sources the user approved, within

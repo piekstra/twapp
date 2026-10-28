@@ -23,7 +23,7 @@ use crate::ptyd::{ClientEvent, PtydClient, SpawnRequest};
 use crate::status::{PollContext, SessionProbe, SessionStatus, State, StatusRoots, StatusTracker};
 use crate::summary::{Summarizer, SummarizerConfig, Summary, SummaryRequest};
 
-const MAIN_TAB: &str = "main";
+pub const MAIN_TAB: &str = "main";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Journal entries written per catch-up, most recent days first.
 const JOURNAL_CATCH_UP: usize = 3;
@@ -437,6 +437,9 @@ struct HubSession {
     /// The harness process last checked for the session context, and
     /// whether its arguments lacked it.
     context_check: Option<(u32, bool)>,
+    /// The user typed into the main tab since last pressing Enter there: a
+    /// draft may sit in the harness's input, so the window sends nothing.
+    draft: bool,
 }
 
 impl HubSession {
@@ -458,6 +461,7 @@ impl HubSession {
             ticket_seen: None,
             ticket_failed: Vec::new(),
             blocker_update_at: super::blockers::latest_update(Path::new(&key_for_blockers)),
+            draft: false,
             effort: None,
             launch_kind: None,
             context_check: None,
@@ -967,6 +971,41 @@ impl Hub {
         }
         self.emit_changed();
         self.update_badge();
+    }
+
+    /// Running sessions the window may send a blocker's update to without
+    /// cutting into work or into the user's typing: the main tab runs, the
+    /// turn has ended, no draft sits in the input, the session is not the one
+    /// in view, and it is not parked.
+    pub fn idle_out_of_view(&self) -> Vec<String> {
+        let inner = self.inner.lock();
+        inner
+            .sessions
+            .iter()
+            .filter(|s| inner.selected.as_deref() != Some(s.key.as_str()))
+            .filter(|s| s.status.state == State::YourTurn && s.main_running() && !s.draft)
+            .filter(|s| s.lane.lane != Lane::Parked)
+            .map(|s| s.key.clone())
+            .collect()
+    }
+
+    /// Paste a blocker's update into its session's main tab, as the panel's
+    /// Send does, and with `submit` press Enter after it. The message is
+    /// stripped of control characters first: it quotes third-party text,
+    /// which must not end the paste early or type keys.
+    pub fn send_blocker_update(&self, key: &str, message: &str, submit: bool) {
+        // Written past `write`: a window send is not the user typing, so it
+        // neither marks a draft nor restarts a blocked session's clock.
+        let _ = self.ops.send(TerminalOp::Write {
+            key: key.to_string(),
+            tab: MAIN_TAB.to_string(),
+            data: paste_bytes(message),
+        });
+        if submit {
+            // A pause lets the harness take the paste before Enter submits it.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let _ = self.ops.send(TerminalOp::Write { key: key.to_string(), tab: MAIN_TAB.to_string(), data: b"\r".to_vec() });
+        }
     }
 
     pub fn is_hosted_running(&self, directory: &str) -> bool {
@@ -1483,6 +1522,11 @@ impl Hub {
     }
 
     pub fn write(&self, key: &str, tab: &str, data: Vec<u8>) {
+        if tab == MAIN_TAB {
+            if let Some(s) = self.inner.lock().session(key) {
+                s.draft = !data.contains(&b'\r');
+            }
+        }
         // Sending a blocked session a message (such as asking it to check on
         // the party it waits for) restarts its checked clock; it stays
         // blocked until the user moves it.
@@ -2450,14 +2494,14 @@ pub fn hub_blocker_send(key: String, id: String) -> Result<(), String> {
         .into_iter()
         .find(|b| b.id == id)
         .ok_or_else(|| format!("no blocker {}", id))?;
-    // Bracketed paste keeps the harness from submitting at each newline.
-    let paste = format!("\x1b[200~{}\x1b[201~", blocker.update_message());
-    hub.write(&key, MAIN_TAB, paste.into_bytes());
     let shown = blocker.watch_latest;
     crate::cli::blockers::update(dir, &id, |b| {
-        b.mark_seen_through(shown);
+        b.mark_seen_through(shown, "user");
         b.log("sent", "", Some("user"));
     })?;
+    // Bracketed paste keeps the harness from submitting at each newline;
+    // the user reads it and presses Enter.
+    hub.send_blocker_update(&key, &blocker.update_message(), false);
     hub.refresh_blockers();
     Ok(())
 }
@@ -2623,6 +2667,14 @@ pub async fn hub_start(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// A message as a bracketed paste, with its control characters (other than
+/// newlines and tabs) removed, so quoted text cannot end the paste or type
+/// keys.
+fn paste_bytes(message: &str) -> Vec<u8> {
+    let clean: String = message.chars().filter(|c| !c.is_control() || *c == '\n' || *c == '\t').collect();
+    format!("\x1b[200~{}\x1b[201~", clean).into_bytes()
 }
 
 #[tauri::command]
@@ -2828,6 +2880,13 @@ pub async fn hub_triage() -> Result<crate::summary::Triage, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_pasted_update_cannot_end_its_paste_or_type_keys() {
+        let text = String::from_utf8(paste_bytes("reply\x1b[201~\rrm -rf ~\n\tline\x07")).unwrap();
+        assert_eq!(text, "\x1b[200~reply[201~rm -rf ~\n\tline\x1b[201~");
+    }
+
     use super::*;
 
     #[test]

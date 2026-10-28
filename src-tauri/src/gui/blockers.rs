@@ -220,6 +220,57 @@ fn log_check(dir: &Path, command: &str) {
     }
 }
 
+/// How long an update waits for a `twapp blocker wait` in its session to
+/// deliver it before the window sends it.
+const WAKE_AFTER: chrono::Duration = chrono::Duration::seconds(60);
+
+/// The blocker in a session whose update the window should send now: the
+/// oldest undelivered one past `WAKE_AFTER`.
+fn to_wake(open: &[Blocker], now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    open.iter()
+        .filter_map(|b| {
+            let since = b.undelivered_since()?;
+            let at = chrono::DateTime::parse_from_rfc3339(&since).ok()?.with_timezone(&chrono::Utc);
+            (now - at >= WAKE_AFTER).then(|| (since, b.id.clone()))
+        })
+        .min()
+        .map(|(_, id)| id)
+}
+
+/// Send one undelivered blocker update to each idle session out of view, as
+/// the panel's Send does, and submit it. True when one was sent.
+fn wake_sessions(hub: &super::hub::Hub) -> bool {
+    if !crate::cli::config::get_wake_sessions() {
+        return false;
+    }
+    let mut sent = false;
+    for key in hub.idle_out_of_view() {
+        let dir = Path::new(&key);
+        let open: Vec<Blocker> = blockers::load(dir).into_iter().filter(Blocker::is_open).collect();
+        let Some(id) = to_wake(&open, chrono::Utc::now()) else { continue };
+        let Some(blocker) = open.iter().find(|b| b.id == id) else { continue };
+        let shown = blocker.watch_latest;
+        let message = blocker.update_message();
+        // Recorded first: if it cannot be, nothing is sent, rather than the
+        // same update every minute.
+        if let Err(e) = blockers::update(dir, &id, |b| {
+            b.mark_seen_through(shown, "window");
+            b.log("sent", "", Some("window"));
+        }) {
+            log::warn!("not sending blocker {} in {}: {}", id, key, e);
+            continue;
+        }
+        // The user may have switched to it, typed in it or the agent started
+        // since the list was taken.
+        if !hub.idle_out_of_view().contains(&key) {
+            continue;
+        }
+        hub.send_blocker_update(&key, &message, true);
+        sent = true;
+    }
+    sent
+}
+
 /// Every minute, run the approved checks that are due in the hosted
 /// sessions, one at a time, and tell the hub when anything changed.
 pub fn check_loop(hub: Arc<super::hub::Hub>) {
@@ -244,6 +295,7 @@ pub fn check_loop(hub: Arc<super::hub::Hub>) {
                 std::thread::sleep(SPACING);
             }
         }
+        changed |= wake_sessions(&hub);
         if changed {
             hub.refresh_blockers();
         }
@@ -280,6 +332,29 @@ mod tests {
         let approved = WatchState { approvals: vec![watch::SourceApproval { name: "vendor".into(), sha256: source.digest.clone() }], ..state };
         assert!(approved.view("vendor:2").source.unwrap().approved);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_oldest_update_no_wait_delivered_is_sent_after_a_minute() {
+        let now = chrono::Utc::now();
+        let ago = |s: i64| (now - chrono::Duration::seconds(s)).to_rfc3339();
+        let updated = |id: &str, kind: &str, secs: i64| {
+            let mut b = Blocker::new(id);
+            b.id = id.to_string();
+            b.status = BlockerStatus::Updated;
+            b.history.push(crate::cli::blockers::BlockerEvent { at: ago(secs), kind: kind.into(), ..Default::default() });
+            b
+        };
+        assert_eq!(to_wake(&[updated("fresh", "watched", 30)], now), None, "a wait may still deliver it");
+        assert_eq!(to_wake(&[updated("a", "reported", 90), updated("b", "check_changed", 300)], now).as_deref(), Some("b"), "the oldest first");
+        let mut delivered = updated("c", "watched", 300);
+        delivered.history.push(crate::cli::blockers::BlockerEvent { at: ago(200), kind: "delivered".into(), ..Default::default() });
+        assert_eq!(to_wake(&[delivered.clone()], now), None, "a wait delivered it");
+        delivered.history.push(crate::cli::blockers::BlockerEvent { at: ago(100), kind: "watched".into(), ..Default::default() });
+        assert_eq!(to_wake(&[delivered], now).as_deref(), Some("c"), "news after the delivery");
+        let mut waiting = updated("d", "watched", 300);
+        waiting.status = BlockerStatus::Waiting;
+        assert_eq!(to_wake(&[waiting], now), None);
     }
 
     #[test]

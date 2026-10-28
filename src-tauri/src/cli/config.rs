@@ -174,6 +174,16 @@ pub fn get_summaries_daily_limit() -> Option<u32> {
         .map(|n| n.min(u64::from(u32::MAX)) as u32)
 }
 
+/// `blockers.wake_sessions` from `config.yaml`: whether the window sends a
+/// blocker's update to its idle session on its own. On unless set false.
+pub fn get_wake_sessions() -> bool {
+    std::fs::read_to_string(config_file())
+        .ok()
+        .and_then(|c| serde_yaml::from_str::<serde_yaml::Value>(&c).ok())
+        .and_then(|y| y.get("blockers")?.get("wake_sessions")?.as_bool())
+        .unwrap_or(true)
+}
+
 /// A chat channel the user shares with other people's agents, from the
 /// `relays:` list in `config.yaml`. One session, the relay, reads and posts
 /// in it for every session; see the twapp skill.
