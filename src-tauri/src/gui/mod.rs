@@ -100,6 +100,7 @@ pub fn run(args: GuiArgs) {
             config::save_global_config,
             config::discover_agent_harnesses,
             config::get_font_family_preference,
+            config::get_copy_on_select_preference,
             config::get_session_color_preference,
             config::set_session_color_preference,
             config::get_agent_provider_preference,

@@ -124,6 +124,21 @@ pub fn get_font_family_preference() -> String {
     r#""SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace"#.to_string()
 }
 
+/// `copy_on_select` in config.yaml: whether a selection made with the mouse in a terminal goes to
+/// the clipboard when the button is released. On unless the file sets it to `false`.
+pub fn get_copy_on_select_preference() -> bool {
+    std::fs::read_to_string(config_file())
+        .map(|content| parse_copy_on_select(&content))
+        .unwrap_or(true)
+}
+
+fn parse_copy_on_select(content: &str) -> bool {
+    serde_yaml::from_str::<serde_yaml::Value>(content)
+        .ok()
+        .and_then(|yaml| yaml.get("copy_on_select").and_then(|v| v.as_bool()))
+        .unwrap_or(true)
+}
+
 pub fn get_session_color_preference() -> String {
     let path = config_file();
     if !path.exists() {
@@ -510,6 +525,25 @@ mod agent_provider_tests {
             normalize_agent_providers(Some(Vec::new()), AgentProvider::Codex),
             vec![AgentProvider::Codex]
         );
+    }
+}
+
+#[cfg(test)]
+mod copy_on_select_tests {
+    use super::parse_copy_on_select;
+
+    #[test]
+    fn on_unless_the_config_turns_it_off() {
+        assert!(parse_copy_on_select(""));
+        assert!(parse_copy_on_select("theme: dark\n"));
+        assert!(parse_copy_on_select("copy_on_select: true\n"));
+        assert!(!parse_copy_on_select("copy_on_select: false\n"));
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_boolean_or_a_broken_file_keeps_it_on() {
+        assert!(parse_copy_on_select("copy_on_select: sometimes\n"));
+        assert!(parse_copy_on_select("theme: [broken"));
     }
 }
 

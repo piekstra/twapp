@@ -107,6 +107,11 @@ pub fn get_font_family_preference() -> String {
 }
 
 #[tauri::command]
+pub fn get_copy_on_select_preference() -> bool {
+    crate::cli::config::get_copy_on_select_preference()
+}
+
+#[tauri::command]
 pub fn get_session_color_preference() -> String {
     crate::cli::config::get_session_color_preference()
 }
