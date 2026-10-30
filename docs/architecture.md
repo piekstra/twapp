@@ -160,7 +160,8 @@ itself.
   effort and, when the current work is a detour from it, the tangent, reusing
   the title of a tangent it saw before (the known titles go in the input). For
   a transcript longer than the tail, one pass over its user lines supplies the
-  opening prompt, up to six prompts spread across the session, and the
+  opening prompt (the message from another session, when one started it),
+  up to six prompts spread across the session, and the
   harness's latest compaction summary; when the excerpt budget is tight, the
   newest assistant message outranks them, and the earlier prompts go first,
   then the recap, then the opening prompt. Each model summary is folded into

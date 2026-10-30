@@ -40,7 +40,8 @@ pub struct Condensed {
     /// The harness's latest recap of the session, when it writes one.
     pub away_summary: Option<String>,
     pub last_user_prompt: Option<String>,
-    /// The first prompt the user typed in the session: what it was opened for.
+    /// What the session was opened for: the first prompt the user typed, or
+    /// the message from another session that started it.
     pub opening_prompt: Option<String>,
     /// Prompts before the latest one, oldest first: a spread across the
     /// whole session for Claude, the tail's for Codex.
@@ -145,8 +146,12 @@ fn claude_history(path: &Path) -> Result<ClaudeHistory, String> {
         let Some(text) = text.map(str::trim) else { continue };
         if entry.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
             history.compact_recap = Some(truncate_chars(text, RECAP_CHARS));
-        } else if entry.get("isMeta").and_then(Value::as_bool) != Some(true) && is_typed_prompt(text) {
-            history.prompts.push(truncate_chars(text, OPENING_CHARS));
+        } else if entry.get("isMeta").and_then(Value::as_bool) != Some(true) {
+            if is_typed_prompt(text) {
+                history.prompts.push(truncate_chars(text, OPENING_CHARS));
+            }
+        } else if let Some(body) = peer_message(&entry).filter(|_| history.prompts.is_empty()) {
+            history.prompts.push(truncate_chars(body, OPENING_CHARS));
         }
     }
     Ok(history)
@@ -201,6 +206,9 @@ fn parse_claude(lines: &[String], out: &mut Condensed) {
 
 fn read_claude_user(entry: &Value, out: &mut Condensed) {
     if entry.get("isMeta").and_then(Value::as_bool) == Some(true) {
+        if out.opening_prompt.is_none() {
+            out.opening_prompt = peer_message(entry).map(str::to_string);
+        }
         return;
     }
     let content = &entry["message"]["content"];
@@ -348,6 +356,16 @@ fn message_text(payload: &Value) -> Option<String> {
 /// typed does not start with one.
 fn is_typed_prompt(text: &str) -> bool {
     !text.is_empty() && !text.starts_with('<')
+}
+
+/// The body of a message another Claude session sent, which the harness
+/// records as a meta user entry. A session another one started opens with it.
+fn peer_message(entry: &Value) -> Option<&str> {
+    let origin = &entry["origin"];
+    if origin["kind"] != "peer" {
+        return None;
+    }
+    origin["body"].as_str().map(str::trim).filter(|body| !body.is_empty())
 }
 
 fn str_field<'a>(entry: &'a Value, name: &str) -> Option<&'a str> {
@@ -588,6 +606,39 @@ mod tests {
         assert_eq!(c.last_user_prompt.as_deref(), Some("Now make the linter run in CI too"));
         assert!(c.excerpt.contains("Session opened with: Add CSV export"), "{}", c.excerpt);
         assert!(c.excerpt.contains("- The linter crashes"), "{}", c.excerpt);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_session_another_session_started_opens_with_its_message() {
+        let task = "Task from the user (started for you by the research session): find why the nightly invoice sync fails for one customer, and file a ticket with the evidence.";
+        let c = condense_claude(&fixture("claude_peer_opened.jsonl"), DEFAULT_BUDGET).unwrap();
+        assert_eq!(c.opening_prompt.as_deref(), Some(task));
+        assert_eq!(c.last_user_prompt.as_deref(), Some("you should never be blocked from writing tickets"));
+        assert!(c.excerpt.contains(&format!("Session opened with: {}", task)), "{}", c.excerpt);
+
+        // Past the tail, the opening comes from the pass over the whole file,
+        // whose lines the harness writes without spaces.
+        let dir = std::env::temp_dir().join(format!("twapp-condense-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let mut body: String = std::fs::read_to_string(fixture("claude_peer_opened.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::to_string(&serde_json::from_str::<Value>(l).unwrap()).unwrap() + "\n")
+            .collect();
+        let assistant = format!(
+            "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{}\"}}]}}}}\n",
+            "y".repeat(4000)
+        );
+        while body.len() < (TAIL_BYTES + 200_000) as usize {
+            body.push_str(&assistant);
+        }
+        body.push_str("{\"type\":\"user\",\"message\":{\"content\":\"Promote the fix to every env\"}}\n");
+        std::fs::write(&path, body).unwrap();
+        let c = condense_claude(&path, DEFAULT_BUDGET).unwrap();
+        assert_eq!(c.opening_prompt.as_deref(), Some(task));
+        assert_eq!(c.earlier_prompts, vec!["you should never be blocked from writing tickets"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
