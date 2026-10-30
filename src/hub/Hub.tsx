@@ -120,6 +120,9 @@ export default function Hub() {
     invoke<string>("get_font_family_preference")
       .then((f) => manager.setFontFamily(f))
       .catch(() => {});
+    invoke<boolean>("get_copy_on_select_preference")
+      .then((on) => manager.setCopyOnSelect(on))
+      .catch(() => {});
     manager.setFileOpener((path, directory) => previewRef.current?.open(path, directory));
     return () => {
       un.then((u) => u());

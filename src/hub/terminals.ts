@@ -4,7 +4,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Channel } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { hubApi } from "./api";
+import { copyText, hubApi } from "./api";
 
 const FILE_PATH_REGEX =
   /(?:^|[\s"'`(,])(\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+(?::[0-9]+)?|[a-zA-Z0-9_.][a-zA-Z0-9_./-]*\.[a-zA-Z0-9]+(?::[0-9]+)?)/g;
@@ -58,6 +58,7 @@ export class TerminalManager {
   private theme: ITheme;
   private fontFamily = '"SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace';
   private fontSize = 14;
+  private copyOnSelect = true;
   private openFile: FileOpener = () => {};
   private resizeObserver: ResizeObserver;
   private fitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,6 +96,11 @@ export class TerminalManager {
     this.scheduleFit();
   }
 
+  /** `copy_on_select` in config.yaml; on by default. */
+  setCopyOnSelect(on: boolean) {
+    this.copyOnSelect = on;
+  }
+
   setTheme(theme: ITheme, forKey?: string) {
     if (!forKey) this.theme = theme;
     for (const t of this.terminals.values()) {
@@ -123,6 +129,36 @@ export class TerminalManager {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((_event, uri) => openUrl(uri).catch(console.error)));
+
+    // Copy on select: a selection made with the mouse goes to the clipboard when the button is
+    // released, wherever it is released. Only a selection made during that press counts, so a click
+    // never copies an old one again. xterm reports no change when a press reselects the range it
+    // last cleared, so a selection that moved counts too. Programs that capture the mouse (Claude
+    // Code's fullscreen renderer, vim) make no terminal selection, and copy their own.
+    let selectedDuringPress = false;
+    term.onSelectionChange(() => {
+      selectedDuringPress = true;
+    });
+    element.addEventListener(
+      "mousedown",
+      (e) => {
+        if (e.button !== 0) return;
+        selectedDuringPress = false;
+        const before = JSON.stringify(term.getSelectionPosition() ?? null);
+        window.addEventListener(
+          "mouseup",
+          () =>
+            setTimeout(() => {
+              if (!this.copyOnSelect || !term.hasSelection()) return;
+              if (!selectedDuringPress && JSON.stringify(term.getSelectionPosition() ?? null) === before) return;
+              const text = term.getSelection();
+              if (text.trim()) copyText(text).catch(console.error);
+            }),
+          { once: true, capture: true },
+        );
+      },
+      true,
+    );
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown" || !e.altKey || e.metaKey || e.ctrlKey) return true;

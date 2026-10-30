@@ -240,6 +240,7 @@ Open **All sessions** in the overview and use the import button to adopt convers
 ```yaml
 theme: system            # light | dark | system
 session_color: random    # random | a hex color such as "#ffe0e0"
+copy_on_select: true     # a mouse selection in a terminal goes to the clipboard on release
 defaults:
   work_directory: ~/projects
   jira_project: ABC
