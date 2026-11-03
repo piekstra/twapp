@@ -20,11 +20,15 @@ use tauri::{AppHandle, Emitter};
 use crate::cli::session::{read_session, AgentProvider};
 use crate::gui::types::GuiArgs;
 use crate::ptyd::{ClientEvent, PtydClient, SpawnRequest};
+use crate::status::proctree::Usage;
 use crate::status::{PollContext, SessionProbe, SessionStatus, State, StatusRoots, StatusTracker};
 use crate::summary::{Summarizer, SummarizerConfig, Summary, SummaryRequest};
 
 pub const MAIN_TAB: &str = "main";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Sessions' memory and CPU are refreshed every this many polls. Fresher
+/// numbers would re-render the window every poll for every running session.
+const USAGE_POLLS: u64 = 5;
 /// Journal entries written per catch-up, most recent days first.
 const JOURNAL_CATCH_UP: usize = 3;
 
@@ -157,6 +161,8 @@ pub struct SessionView {
     pub override_terminal_theme: bool,
     pub tabs: Vec<TabView>,
     pub status: SessionStatus,
+    /// Memory and CPU of the processes under the session's terminals.
+    pub usage: Option<Usage>,
     pub summary: Option<Summary>,
     pub last_viewed: Option<String>,
     pub attention: bool,
@@ -216,6 +222,7 @@ pub struct HubSnapshot {
 struct StatusEvent {
     key: String,
     status: SessionStatus,
+    usage: Option<Usage>,
     attention: bool,
 }
 
@@ -440,6 +447,9 @@ struct HubSession {
     /// The user typed into the main tab since last pressing Enter there: a
     /// draft may sit in the harness's input, so the window sends nothing.
     draft: bool,
+    /// Memory and CPU of every process under the session's terminals, as of
+    /// the last usage refresh. `None` while the main tab is not running.
+    usage: Option<Usage>,
 }
 
 impl HubSession {
@@ -465,6 +475,7 @@ impl HubSession {
             effort: None,
             launch_kind: None,
             context_check: None,
+            usage: None,
         }
     }
 
@@ -569,6 +580,7 @@ impl HubSession {
                 })
                 .collect(),
             status: self.status.clone(),
+            usage: self.usage,
             summary: self.summary.clone(),
             last_viewed: self.last_viewed.clone(),
             attention: self.attention(),
@@ -1605,6 +1617,7 @@ impl Hub {
                 let pty = main.pty.take();
                 session.status = SessionStatus::suspended();
                 session.shell_pid = None;
+                session.usage = None;
                 pty
             } else {
                 let pty = session.tabs.iter().find(|t| t.tab == tab).and_then(|t| t.pty);
@@ -1886,6 +1899,7 @@ impl Hub {
             inner.session(key).map(|s| StatusEvent {
                 key: s.key.clone(),
                 status: s.status.clone(),
+                usage: s.usage,
                 attention: s.attention(),
             })
         };
@@ -1896,13 +1910,15 @@ impl Hub {
 
     fn poll_loop(&self) {
         let roots = StatusRoots::from_home();
+        let mut poll: u64 = 0;
         loop {
             std::thread::sleep(POLL_INTERVAL);
-            self.poll_once(&roots);
+            self.poll_once(&roots, poll.is_multiple_of(USAGE_POLLS));
+            poll = poll.wrapping_add(1);
         }
     }
 
-    fn poll_once(&self, roots: &StatusRoots) {
+    fn poll_once(&self, roots: &StatusRoots, refresh_usage: bool) {
         // A host that cannot answer says nothing about the sessions; skip the
         // round rather than reading every one of them as exited.
         let Ok(client) = self.ptyd() else { return };
@@ -1918,6 +1934,7 @@ impl Hub {
         struct Work {
             key: String,
             pty: u64,
+            tab_ptys: Vec<u64>,
             shell_pid: Option<u32>,
             tracker: Arc<Mutex<StatusTracker>>,
             before: State,
@@ -1935,6 +1952,7 @@ impl Hub {
                     s.tabs[0].pty.map(|pty| Work {
                         key: s.key.clone(),
                         pty,
+                        tab_ptys: s.tabs.iter().filter_map(|t| t.pty).collect(),
                         shell_pid: s.shell_pid,
                         tracker: Arc::clone(&s.tracker),
                         before: s.status.state,
@@ -1990,7 +2008,15 @@ impl Hub {
                     .or(w.context_check),
                 (None, _) => w.context_check,
             };
-            results.push((w, status, context_check));
+            let usage = refresh_usage.then(|| {
+                let shells: Vec<u32> = w
+                    .tab_ptys
+                    .iter()
+                    .filter_map(|pty| live.get(pty).and_then(|(pid, _)| *pid))
+                    .collect();
+                ctx.procs.usage(&shells)
+            });
+            results.push((w, status, context_check, usage));
         }
 
         let mut changed: Vec<String> = Vec::new();
@@ -1999,7 +2025,7 @@ impl Hub {
         let mut context_changed = false;
         {
             let mut inner = self.inner.lock();
-            for (w, status, context_check) in results {
+            for (w, status, context_check, usage) in results {
                 let Some(session) = inner.session(&w.key) else { continue };
                 // The main tab was restarted or closed while this round ran.
                 if session.tabs[0].pty != Some(w.pty) {
@@ -2009,10 +2035,14 @@ impl Hub {
                     session.restored = false;
                 }
                 let transitioned = status.state != w.before;
-                if status != session.status {
+                let usage_changed = usage.is_some_and(|u| session.usage != Some(u));
+                if status != session.status || usage_changed {
                     changed.push(session.key.clone());
                 }
                 session.status = status;
+                if usage.is_some() {
+                    session.usage = usage;
+                }
                 if context_check.map(|c| c.1) != session.context_check.map(|c| c.1) {
                     context_changed = true;
                 }
@@ -2923,7 +2953,7 @@ mod tests {
             status_updated_at: None,
         };
         let ctx = PollContext {
-            procs: ProcTable::parse("  100     1 /bin/zsh\n  200   100 claude\n  300     1 claude\n"),
+            procs: ProcTable::parse("  100     1 0 0.0 /bin/zsh\n  200   100 0 0.0 claude\n  300     1 0 0.0 claude\n"),
             claude_files: vec![file(300, "someone-else"), file(200, "after-clear")],
             now: std::time::SystemTime::now(),
             roots: StatusRoots::under(&dir),
@@ -2965,7 +2995,7 @@ mod tests {
             r#"[{"pid": 111, "sessionId": "live-id"}, {"pid": 222, "sessionId": "stale-id"}]"#,
         )
         .unwrap();
-        let procs = crate::status::proctree::ProcTable::parse("  111     1 claude\n");
+        let procs = crate::status::proctree::ProcTable::parse("  111     1 0 0.0 claude\n");
         assert_eq!(live_holder(&files, &procs, "live-id"), Some(111));
         assert_eq!(live_holder(&files, &procs, "stale-id"), None, "its process is gone");
         assert_eq!(live_holder(&files, &procs, "other"), None);
@@ -3139,6 +3169,21 @@ mod tests {
         s.lane.lane = Lane::Blocked;
         assert!(s.attention(), "even in the Blocked lane");
     }
+}
+
+/// The disk each session in the window takes, measured one session at a time.
+#[tauri::command]
+pub async fn hub_disk_usage() -> Result<Vec<super::disk::DiskUsage>, String> {
+    let hub = require_hub()?;
+    let keys: Vec<String> = hub.inner.lock().sessions.iter().map(|s| s.key.clone()).collect();
+    let roots = StatusRoots::from_home();
+    tauri::async_runtime::spawn_blocking(move || {
+        keys.iter()
+            .map(|key| super::disk::measure(key, &roots.claude_projects, Path::new("/tmp")))
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// The latest reports sessions made with `twapp report`, newest first.

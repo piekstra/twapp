@@ -1,0 +1,285 @@
+{
+  "sessions": [
+    {
+      "key": "/work/payments",
+      "name": "Payments retry worker with a deliberately long session name",
+      "provider": "claude",
+      "color": "#ffe0e0",
+      "session_id": "payments-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-11-03T11:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "priority",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": {
+        "rss_kb": 831488,
+        "cpu_tenths": 34,
+        "processes": 9
+      }
+    },
+    {
+      "key": "/work/docs",
+      "name": "Docs refresh",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "docs-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-11-01T09:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "parked",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": {
+        "rss_kb": 552960,
+        "cpu_tenths": 2,
+        "processes": 4
+      }
+    },
+    {
+      "key": "/work/old",
+      "name": "Old investigation",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "old-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-10-28T10:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": "2026-10-29T08:00:00Z",
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": {
+        "rss_kb": 624640,
+        "cpu_tenths": 1,
+        "processes": 5
+      }
+    },
+    {
+      "key": "/work/release",
+      "name": "Release build",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "release-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "working",
+        "since": "2026-11-03T11:50:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "priority",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": {
+        "rss_kb": 1992294,
+        "cpu_tenths": 1450,
+        "processes": 23
+      }
+    },
+    {
+      "key": "/work/approval",
+      "name": "Waiting on a permission prompt",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "approval-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "needs_approval",
+        "since": "2026-11-03T11:58:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": {
+        "rss_kb": 498000,
+        "cpu_tenths": 0,
+        "processes": 3
+      }
+    },
+    {
+      "key": "/work/stopped",
+      "name": "Stopped session",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "stopped-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": false,
+          "alive": false
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-11-02T10:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": null
+    },
+    {
+      "key": "/work/archive",
+      "name": "Archived exploration",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "archive-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": false,
+          "alive": false
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-10-20T10:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "parked",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "usage": null
+    }
+  ],
+  "selected": "/work/payments",
+  "host_error": null
+}

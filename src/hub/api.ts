@@ -31,6 +31,22 @@ export interface SessionStatus {
   background_agents?: string[];
 }
 
+/** Memory and CPU of every process under a session's terminals. */
+export interface SessionUsage {
+  rss_kb: number;
+  /** %CPU in tenths of a percent; one busy core is 1000. */
+  cpu_tenths: number;
+  processes: number;
+}
+
+/** What a session takes on disk, measured on request. */
+export interface DiskUsage {
+  key: string;
+  dir_kb: number | null;
+  /** Claude Code's scratch directory for the session's conversation. */
+  temp_kb: number | null;
+}
+
 export interface Summary {
   headline: string;
   doing: string;
@@ -116,6 +132,8 @@ export interface SessionView {
   override_terminal_theme: boolean;
   tabs: TabView[];
   status: SessionStatus;
+  /** Null while the main tab is not running. */
+  usage?: SessionUsage | null;
   summary: Summary | null;
   last_viewed: string | null;
   attention: boolean;
@@ -339,6 +357,7 @@ export const hubApi = {
   summarize: (key: string) => invoke("hub_summarize", { key }),
   triage: () => invoke<Triage>("hub_triage"),
   usage: (days = 7) => invoke<UsageReport>("hub_usage", { days }),
+  diskUsage: () => invoke<DiskUsage[]>("hub_disk_usage"),
 };
 
 export const STATE_LABELS: Record<SessionState, string> = {

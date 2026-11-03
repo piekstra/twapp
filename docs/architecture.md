@@ -140,6 +140,13 @@ The harness process is found by walking the process tree from the PTY's shell.
 The engine re-reads the process tree and status files every two seconds while
 the GUI is open. It reads transcripts only when their size changes.
 
+The same `ps` call carries each process's resident memory and %CPU. Every
+fifth poll (ten seconds) the hub totals them over the shells of each running
+session's tabs and everything below them, and sends the total as the session's
+`usage` with its status event. A process belongs to the session whose terminal
+started it, so work a harness hands to a daemon outside that tree, such as
+detached background tasks, is not counted.
+
 ## Summaries
 
 Every session carries a headline, a short description of what it is doing, and
@@ -447,7 +454,12 @@ note, when it was archived, and each copy with the path the harness reads.
   refresh); notes; session settings.
 - **Overview.** A card per hosted session with its full summary and what it
   needs, the Triage action, and the list of every known session for opening
-  one that is not hosted.
+  one that is not hosted. Its Resources tab (`hub/Resources.tsx`,
+  `hub/resourcesModel.ts`) lists each session's memory, CPU and processes,
+  flags running sessions that are parked or idle for three days, and stops
+  one's main terminal on request (the session resumes when opened). Disk is
+  measured only when asked (`hub_disk_usage`, `gui/disk.rs`): the session
+  directory plus Claude Code's scratch directory for its conversation.
 
 Keyboard:
 

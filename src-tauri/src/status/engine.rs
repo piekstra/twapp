@@ -801,7 +801,7 @@ mod tests {
     fn tracker_reads_claude_status_file_and_transcript() {
         let roots = StatusRoots::under(&fixture_home());
         let files = claude::read_status_files(&roots.claude_sessions);
-        let ctx = ctx_with("10 1 /bin/zsh\n20 10 claude\n", roots, files);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n20 10 0 0.0 claude\n", roots, files);
         let mut t = StatusTracker::new(Claude);
         let st = t.poll(&probe(Claude, "claude-sess"), &ctx);
         assert_eq!(st.state, State::NeedsApproval);
@@ -823,7 +823,7 @@ mod tests {
         let roots = StatusRoots::under(&fixture_home());
         let files = claude::read_status_files(&roots.claude_sessions);
         // pid 20 is alive but runs under a different shell.
-        let ctx = ctx_with("10 1 /bin/zsh\n11 1 /bin/zsh\n20 11 claude\n21 10 claude\n", roots, files);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n11 1 0 0.0 /bin/zsh\n20 11 0 0.0 claude\n21 10 0 0.0 claude\n", roots, files);
         let mut t = StatusTracker::new(Claude);
         let st = t.poll(&probe(Claude, "claude-sess"), &ctx);
         assert_eq!(st.harness_pid, Some(21));
@@ -840,7 +840,7 @@ mod tests {
         let started = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"t1\"}}\n";
         std::fs::write(&rollout, started).unwrap();
         let roots = StatusRoots::under(&home);
-        let ctx = ctx_with("10 1 /bin/zsh\n30 10 codex\n", roots.clone(), vec![]);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n30 10 0 0.0 codex\n", roots.clone(), vec![]);
 
         let mut t = StatusTracker::new(Codex);
         t.feed_output(b"\x1b]0;my-app\x07\x1b]9;Approval requested\x07");
@@ -850,7 +850,7 @@ mod tests {
         let mut body = started.to_string();
         body.push_str("{\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"Running tests.\"}}\n");
         std::fs::write(&rollout, &body).unwrap();
-        let ctx = ctx_with("10 1 /bin/zsh\n30 10 codex\n", roots, vec![]);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n30 10 0 0.0 codex\n", roots, vec![]);
         let st = t.poll(&probe(Codex, "cx-1"), &ctx);
         assert_eq!(st.state, State::Working);
         assert_eq!(st.last_message.as_deref(), Some("Running tests."));
@@ -861,9 +861,9 @@ mod tests {
     fn tracker_harness_exit_is_shell() {
         let roots = StatusRoots::under(&fixture_home());
         let mut t = StatusTracker::new(Claude);
-        let ctx = ctx_with("10 1 /bin/zsh\n20 10 claude\n", roots.clone(), vec![]);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n20 10 0 0.0 claude\n", roots.clone(), vec![]);
         t.poll(&probe(Claude, "claude-sess"), &ctx);
-        let ctx = ctx_with("10 1 /bin/zsh\n", roots, vec![]);
+        let ctx = ctx_with("10 1 0 0.0 /bin/zsh\n", roots, vec![]);
         assert_eq!(t.poll(&probe(Claude, "claude-sess"), &ctx).state, State::Shell);
     }
 

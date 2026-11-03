@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { hubApi, type HubSnapshot, type SessionStatus, type SessionView, type Summary } from "./api";
+import { hubApi, type HubSnapshot, type SessionStatus, type SessionUsage, type SessionView, type Summary } from "./api";
 
 export interface HubState {
   sessions: SessionView[];
@@ -58,11 +58,11 @@ export function useHub() {
     const unlisteners = [
       listen("hub:changed", () => refresh()),
       listen("session-provider-updated", () => refresh()),
-      listen<{ key: string; status: SessionStatus; attention: boolean }>("hub:status", (e) => {
-        const { key, status, attention } = e.payload;
+      listen<{ key: string; status: SessionStatus; usage: SessionUsage | null; attention: boolean }>("hub:status", (e) => {
+        const { key, status, usage, attention } = e.payload;
         setState((prev) => ({
           ...prev,
-          sessions: prev.sessions.map((s) => (s.key === key ? { ...s, status, attention } : s)),
+          sessions: prev.sessions.map((s) => (s.key === key ? { ...s, status, usage, attention } : s)),
         }));
       }),
       listen<{ key: string; summary: Summary; name_suggestion: string | null }>("hub:summary", (e) => {
