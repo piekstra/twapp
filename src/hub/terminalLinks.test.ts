@@ -49,3 +49,10 @@ it("keeps rows apart when the first one stops short of the edge or ends in a spa
     { text: "readme.md", start: { x: 1, y: 2 }, end: { x: 9, y: 2 } },
   ]);
 });
+
+it("keeps a full-width rule apart from the path below it", () => {
+  const row = buffer("─".repeat(COLS), "  src/hub/terminals.ts");
+  expect(pathLinks(row, 2, COLS)).toEqual([
+    { text: "src/hub/terminals.ts", start: { x: 3, y: 2 }, end: { x: 22, y: 2 } },
+  ]);
+});

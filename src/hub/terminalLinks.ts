@@ -1,5 +1,10 @@
-const FILE_PATH_REGEX =
-  /(?:^|[\s"'`(,])(\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+(?::[0-9]+)?|[a-zA-Z0-9_.][a-zA-Z0-9_./-]*\.[a-zA-Z0-9]+(?::[0-9]+)?)/g;
+const PATH_CHARS = "a-zA-Z0-9_./-";
+const FILE_PATH_REGEX = new RegExp(
+  `(?:^|[\\s"'\`(,])(\\/[${PATH_CHARS}]+\\.[a-zA-Z0-9]+(?::[0-9]+)?|[a-zA-Z0-9_.][${PATH_CHARS}]*\\.[a-zA-Z0-9]+(?::[0-9]+)?)`,
+  "g",
+);
+/** A character a path, or its line number, can contain. */
+const IN_PATH = new RegExp(`[:${PATH_CHARS}]`);
 /** How many rows one path may run across. */
 const MAX_ROWS = 8;
 
@@ -21,13 +26,15 @@ export interface PathLink {
  * Where `next` carries on `prev`: the column its text resumes at, or null
  * when it starts a new line. Claude Code wraps its own output, so a long path
  * reaches the right edge and resumes on the next row after a newline, past
- * the message's indent, rather than in a row xterm marks wrapped.
+ * the message's indent, rather than in a row xterm marks wrapped. Only a
+ * break between two path characters counts, so a full-width rule stays apart
+ * from the path below it.
  */
 function resumesAt(prev: LinkRow, next: LinkRow, cols: number): number | null {
   if (next.wrapped) return 0;
-  if (prev.text.length < cols || prev.text[cols - 1] === " ") return null;
+  if (prev.text.length < cols || !IN_PATH.test(prev.text[cols - 1])) return null;
   const indent = next.text.length - next.text.trimStart().length;
-  return indent < next.text.length ? indent : null;
+  return indent < next.text.length && IN_PATH.test(next.text[indent]) ? indent : null;
 }
 
 /** File paths that touch row `y`, including ones that run onto the rows around it. */
