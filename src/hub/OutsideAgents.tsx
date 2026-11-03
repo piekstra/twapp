@@ -65,11 +65,13 @@ export default function OutsideAgents({ now }: { now: number }) {
     if (!want) return;
     focusNext.current = null;
     const nextStop = () => tableRef.current?.querySelector<HTMLElement>('[data-focus="stop"]');
+    // A stop can take seconds; if the user moved focus meanwhile, leave it.
+    const stillHeld = document.activeElement === headingRef.current || document.activeElement === document.body;
     const target =
       want === "heading"
         ? headingRef.current
         : want === "next-stop"
-          ? nextStop() ?? headingRef.current
+          ? stillHeld ? nextStop() ?? headingRef.current : null
           : tableRef.current?.querySelector<HTMLElement>(`[data-pid="${want.pid}"][data-focus="${want.target}"]`);
     target?.focus();
   });
