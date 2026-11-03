@@ -194,19 +194,40 @@ jobs:
 
           # The tap's main takes changes only through a reviewed pull request.
           # One branch per release, cut from main, so the pull request never
-          # conflicts; an earlier release's PR still open is closed in favour
-          # of this one, leaving at most one formula PR waiting. brew sees the
-          # version once piekstra-dev approves it and it merges. `gh api`
-          # prints a 404's body to stdout, hence `|| VAR=""` outside `$()`.
+          # conflicts. The newest version wins: a run for a version older than
+          # the tap's or than a formula PR already open (a late or re-run
+          # job) changes nothing, and opening this PR closes only older ones.
+          # Fork PRs are ignored, since `--head` matches on the branch name
+          # alone. `gh api` prints a 404's body to stdout, hence `|| VAR=""`
+          # outside `$()`.
           TAP=piekstra/homebrew-tap
           FILE=Formula/twapp.rb
-          BRANCH="formula/twapp-v${VERSION}"
+          PREFIX=formula/twapp-v
+          BRANCH="$PREFIX$VERSION"
+          newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+          MAIN_JSON=$(gh api "repos/$TAP/contents/$FILE" 2>/dev/null) || MAIN_JSON=""
+          MAIN_BLOB=$(printf '%s' "$MAIN_JSON" | jq -r '.sha // empty' 2>/dev/null) || MAIN_BLOB=""
+          MAIN_VERSION=$(printf '%s' "$MAIN_JSON" | jq -r '.content // empty' 2>/dev/null | base64 --decode 2>/dev/null \
+            | sed -n 's/^ *version "\(.*\)"$/\1/p' | head -1)
           NEW_BLOB=$(git hash-object /tmp/twapp.rb)
-          MAIN_BLOB=$(gh api "repos/$TAP/contents/$FILE" --jq .sha 2>/dev/null) || MAIN_BLOB=""
           if [ "$NEW_BLOB" = "$MAIN_BLOB" ]; then
             echo "The tap already has twapp v${VERSION}"
             exit 0
           fi
+          if [ -n "$MAIN_VERSION" ] && newer "$MAIN_VERSION" "$VERSION"; then
+            echo "::notice title=Homebrew::The tap has twapp v$MAIN_VERSION, newer than v$VERSION; left alone."
+            exit 0
+          fi
+          OPEN=$(gh pr list -R "$TAP" --state open --json number,headRefName,isCrossRepository \
+            --jq ".[] | select(.isCrossRepository | not) | select(.headRefName | startswith(\"$PREFIX\")) | \"\(.number) \(.headRefName | ltrimstr(\"$PREFIX\"))\"")
+          while read -r N V; do
+            if [ -n "$V" ] && newer "$V" "$VERSION"; then
+              echo "::notice title=Homebrew::Formula PR #$N carries twapp v$V, newer than v$VERSION; left alone."
+              exit 0
+            fi
+          done <<EOF
+          $OPEN
+          EOF
           if ! gh api "repos/$TAP/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
             MAIN_SHA=$(gh api "repos/$TAP/git/ref/heads/main" --jq .object.sha)
             gh api "repos/$TAP/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$MAIN_SHA" >/dev/null
@@ -222,13 +243,17 @@ jobs:
                 -f content="$CONTENT" -f branch="$BRANCH" >/dev/null
             fi
           fi
-          PR=$(gh pr list -R "$TAP" --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          PR=$(gh pr list -R "$TAP" --head "$BRANCH" --state open --json url,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].url // empty')
           if [ -z "$PR" ]; then
             PR=$(gh pr create -R "$TAP" --head "$BRANCH" --base main --title "twapp ${VERSION}" \
               --body "Moves the twapp formula to https://github.com/piekstra/twapp/releases/tag/v${VERSION}. Opened by the twapp release workflow; each sha256 is that release's tarball.")
           fi
-          for N in $(gh pr list -R "$TAP" --state open --json number,headRefName \
-              --jq ".[] | select(.headRefName | startswith(\"formula/twapp-v\")) | select(.headRefName != \"$BRANCH\") | .number"); do
-            gh pr close "$N" -R "$TAP" --delete-branch --comment "Superseded by $PR."
-          done
+          while read -r N V; do
+            if [ -n "$V" ] && [ "$V" != "$VERSION" ]; then
+              gh pr close "$N" -R "$TAP" --delete-branch --comment "Superseded by $PR."
+            fi
+          done <<EOF
+          $OPEN
+          EOF
           echo "::notice title=Homebrew::$PR moves twapp to v${VERSION}; brew sees it after the piekstra-dev review and merge."
