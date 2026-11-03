@@ -84,7 +84,18 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
   const total = (f: (r: NonNullable<ResourceMap[string]>) => number) => using.reduce((n, s) => n + f(resources[s.key]!), 0);
   const stale = sessions.filter((s) => resources[s.key] && staleReason(s, now));
   const staleKb = stale.reduce((n, s) => n + resources[s.key]!.rss_kb, 0);
-  const diskTotal = disk ? sessions.reduce((n, s) => n + (diskKb(disk.get(s.key)) ?? 0), 0) : null;
+  // The total covers only finished walks, and says how many and how old.
+  const measured = disk ? sessions.filter((s) => diskKb(disk.get(s.key)) !== null) : [];
+  const gaveUp = disk ? sessions.filter((s) => disk.get(s.key)?.gave_up).length : 0;
+  const diskTotal = measured.reduce((n, s) => n + diskKb(disk!.get(s.key))!, 0);
+  const oldest = disk
+    ? sessions.map((s) => disk.get(s.key)?.measured_at).filter((t): t is string => !!t).sort()[0]
+    : undefined;
+  const diskSummary = oldest
+    ? `${formatKb(diskTotal)} on disk across ${measured.length} of ${sessions.length} sessions` +
+      (gaveUp ? `; ${gaveUp} took over two minutes and ${gaveUp === 1 ? "is" : "are"} left out` : "") +
+      `. Measured ${sinceLabel(oldest, now)} ago.`
+    : null;
 
   return (
     <div className="resources">
@@ -110,9 +121,7 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
           <span className="triage-hint" role="status">
             {measuring
               ? "Measuring one session at a time; each total appears as it is done."
-              : diskTotal !== null
-                ? `${formatKb(diskTotal)} on disk across these sessions.`
-                : "Adds up each session's directory and Claude scratch files. It changes nothing."}
+              : diskSummary ?? "Adds up each session's directory and Claude scratch files. It changes nothing."}
           </span>
         </div>
       </div>
@@ -165,9 +174,14 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
                   <td className="num">{r ? r.processes : ""}</td>
                   <td
                     className="num"
-                    title={d ? `Directory ${d.dir_kb === null ? "not measured" : formatKb(d.dir_kb)}, Claude scratch ${d.temp_kb === null ? "none" : formatKb(d.temp_kb)}` : undefined}
+                    title={
+                      d
+                        ? `Directory ${d.dir_kb === null ? (d.gave_up ? "over two minutes to walk" : "none") : formatKb(d.dir_kb)}, ` +
+                          `Claude scratch ${d.temp_kb === null ? "none" : formatKb(d.temp_kb)}; measured ${sinceLabel(d.measured_at, now)} ago`
+                        : undefined
+                    }
                   >
-                    {used !== null ? formatKb(used) : ""}
+                    {d?.gave_up ? "over 2 min" : used !== null ? formatKb(used) : ""}
                   </td>
                   <td className="resources-action">
                     {canStop(s) &&

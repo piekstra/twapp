@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { chromium } = playwright.default || playwright;
 const snapshot = JSON.parse(await fs.readFile(new URL('./fixtures/resources.json', import.meta.url), 'utf8'));
-const disk = snapshot.sessions.map((s, i) => ({ key: s.key, dir_kb: 1024 * 1024 * (i + 1), temp_kb: i % 2 ? null : 300 * 1024 }));
+const disk = snapshot.sessions.map((s, i) => s.key === '/work/archive'
+  ? { key: s.key, dir_kb: null, temp_kb: null, gave_up: true, measured_at: '2026-11-03T11:30:00Z' }
+  : { key: s.key, dir_kb: 1024 * 1024 * (i + 1), temp_kb: i % 2 ? null : 300 * 1024, gave_up: false, measured_at: '2026-11-03T11:30:00Z' });
 const dir = process.env.TWAPP_ARTIFACT_DIR || await fs.mkdtemp(path.join(os.tmpdir(), 'twapp-resources-ui-'));
 await fs.mkdir(dir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
@@ -82,8 +84,12 @@ try {
       for (const session of disk) window.__emit('hub:disk', { session, running: true });
       window.__emit('hub:disk', { session: null, running: false });
     }, disk);
-    await page.getByRole('status').filter({ hasText: 'on disk across these sessions.' }).waitFor();
+    const summary = page.getByRole('status').filter({ hasText: 'on disk across 7 of 8 sessions' });
+    await summary.waitFor();
+    assert.match(await summary.textContent(), /; 1 took over two minutes and is left out\. Measured 30m ago\.$/);
     assert.equal(await rows.filter({ hasText: 'Stopped session' }).locator('td.num').last().textContent(), '6.0 GB');
+    assert.equal(await rows.filter({ hasText: 'Archived exploration' }).locator('td.num').last().textContent(), 'over 2 min',
+      'a walk that was given up says so instead of reading as empty');
     assert.equal((await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_measure_disk'))).length, 1);
 
     const overflow = await page.locator('.overview-body').evaluate(el => {

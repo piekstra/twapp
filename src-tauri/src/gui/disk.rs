@@ -23,6 +23,29 @@ pub struct SessionDisk {
     pub dir_kb: Option<u64>,
     /// Claude Code's scratch directory for the session's conversation, in KiB.
     pub temp_kb: Option<u64>,
+    /// A walk ran past `DU_TIMEOUT` and was given up, so the sizes above
+    /// leave out what it did not finish.
+    pub gave_up: bool,
+    /// When the measurement finished (RFC 3339).
+    pub measured_at: String,
+}
+
+/// How one `du` walk ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Walk {
+    Kb(u64),
+    /// No such directory, or `du` printed nothing usable.
+    Absent,
+    GaveUp,
+}
+
+impl Walk {
+    fn kb(self) -> Option<u64> {
+        match self {
+            Walk::Kb(kb) => Some(kb),
+            _ => None,
+        }
+    }
 }
 
 /// `projects` is `~/.claude/projects`; `tmp` holds Claude Code's
@@ -35,10 +58,14 @@ pub fn measure(key: &str, projects: &Path, tmp: &Path) -> SessionDisk {
         let transcript = locate_transcript(projects, &cwd, &id)?;
         claude_temp_dir(tmp, &transcript)
     });
+    let dir = du_kb(dir, DU_TIMEOUT);
+    let temp = temp.map_or(Walk::Absent, |t| du_kb(&t, DU_TIMEOUT));
     SessionDisk {
         key: key.to_string(),
-        dir_kb: du_kb(dir, DU_TIMEOUT),
-        temp_kb: temp.and_then(|t| du_kb(&t, DU_TIMEOUT)),
+        dir_kb: dir.kb(),
+        temp_kb: temp.kb(),
+        gave_up: dir == Walk::GaveUp || temp == Walk::GaveUp,
+        measured_at: chrono::Utc::now().to_rfc3339(),
     }
 }
 
@@ -53,20 +80,21 @@ fn claude_temp_dir(tmp: &Path, transcript: &Path) -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// `du`'s total for `path`, in KiB, or `None` when it takes longer than
-/// `timeout`. `du` exits non-zero when it cannot read part of the tree but
-/// still prints the total of what it could.
-fn du_kb(path: &Path, timeout: Duration) -> Option<u64> {
+/// `du`'s total for `path`, in KiB. `du` exits non-zero when it cannot read
+/// part of the tree but still prints the total of what it could.
+fn du_kb(path: &Path, timeout: Duration) -> Walk {
     if !path.is_dir() {
-        return None;
+        return Walk::Absent;
     }
-    let mut child = Command::new("nice")
+    let Ok(mut child) = Command::new("nice")
         .args(["-n", "10", "du", "-skx"])
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .ok()?;
+    else {
+        return Walk::Absent;
+    };
     let start = Instant::now();
     loop {
         let finished = if start.elapsed() < timeout { child.try_wait().ok() } else { None };
@@ -75,14 +103,25 @@ fn du_kb(path: &Path, timeout: Duration) -> Option<u64> {
             Some(None) => std::thread::sleep(Duration::from_millis(50)),
             None => {
                 let _ = child.kill();
-                let _ = child.wait();
-                return None;
+                // A walk stuck in uninterruptible I/O (a hard-mounted network
+                // volume) ignores the kill until the I/O returns. Give it a
+                // moment, then move on and leave it unreaped.
+                for _ in 0..40 {
+                    if matches!(child.try_wait(), Ok(Some(_))) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                return Walk::GaveUp;
             }
         }
     }
     let mut out = String::new();
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
-    out.split_whitespace().next()?.parse().ok()
+    let read = child.stdout.take().map(|mut o| o.read_to_string(&mut out));
+    match (read, out.split_whitespace().next().and_then(|kb| kb.parse().ok())) {
+        (Some(Ok(_)), Some(kb)) => Walk::Kb(kb),
+        _ => Walk::Absent,
+    }
 }
 
 #[cfg(test)]
@@ -100,9 +139,9 @@ mod tests {
 
         assert_eq!(claude_temp_dir(&root, transcript), Some(scratch.clone()));
         assert_eq!(claude_temp_dir(&root, Path::new("/p/-work-app/other.jsonl")), None);
-        assert!(du_kb(&scratch, DU_TIMEOUT).is_some_and(|kb| kb >= 64));
-        assert_eq!(du_kb(&root.join("missing"), DU_TIMEOUT), None);
-        assert_eq!(du_kb(&scratch, Duration::ZERO), None, "a walk past its time is given up");
+        assert!(du_kb(&scratch, DU_TIMEOUT).kb().is_some_and(|kb| kb >= 64));
+        assert_eq!(du_kb(&root.join("missing"), DU_TIMEOUT), Walk::Absent);
+        assert_eq!(du_kb(&scratch, Duration::ZERO), Walk::GaveUp, "a walk past its time is given up, not absent");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

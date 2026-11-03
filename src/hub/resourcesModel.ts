@@ -48,14 +48,18 @@ export function staleReason(s: SessionView, now: number): string | null {
   return days >= IDLE_DAYS ? `Idle ${days}d` : null;
 }
 
+/** A session's measured disk, or null when it was not measured or a walk was given up. */
 export function diskKb(d: SessionDisk | undefined): number | null {
-  if (!d || (d.dir_kb === null && d.temp_kb === null)) return null;
+  if (!d || d.gave_up || (d.dir_kb === null && d.temp_kb === null)) return null;
   return (d.dir_kb ?? 0) + (d.temp_kb ?? 0);
 }
 
-/** Sessions using memory, largest first, then the others by disk, then by name. */
+/**
+ * Sessions using memory, largest first, then the others by disk, then by
+ * name. A walk too big to finish ranks above every finished one.
+ */
 export function byResources(sessions: SessionView[], resources: ResourceMap, disk: Map<string, SessionDisk> | null): SessionView[] {
   const mem = (s: SessionView) => resources[s.key]?.rss_kb ?? -1;
-  const used = (s: SessionView) => diskKb(disk?.get(s.key)) ?? -1;
+  const used = (s: SessionView) => (disk?.get(s.key)?.gave_up ? Number.MAX_SAFE_INTEGER : diskKb(disk?.get(s.key)) ?? -1);
   return [...sessions].sort((a, b) => mem(b) - mem(a) || used(b) - used(a) || a.name.localeCompare(b.name));
 }

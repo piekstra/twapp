@@ -60,9 +60,11 @@ describe("staleness", () => {
 
 describe("order", () => {
   it("puts sessions using memory first, largest first, then the rest by disk", () => {
+    const at = "2026-11-03T11:00:00Z";
     const disk = new Map<string, SessionDisk>([
-      ["/work/big-disk", { key: "/work/big-disk", dir_kb: 9_000_000, temp_kb: null }],
-      ["/work/small-disk", { key: "/work/small-disk", dir_kb: 10, temp_kb: 5 }],
+      ["/work/big-disk", { key: "/work/big-disk", dir_kb: 9_000_000, temp_kb: null, gave_up: false, measured_at: at }],
+      ["/work/small-disk", { key: "/work/small-disk", dir_kb: 10, temp_kb: 5, gave_up: false, measured_at: at }],
+      ["/work/too-big", { key: "/work/too-big", dir_kb: null, temp_kb: 5, gave_up: true, measured_at: at }],
     ]);
     const resources = {
       "/work/light": { rss_kb: 100, cpu_tenths: 0, processes: 1 },
@@ -74,11 +76,12 @@ describe("order", () => {
         session("small-disk", { state: "suspended" }),
         session("light"),
         session("big-disk", { state: "suspended" }),
+        session("too-big", { state: "suspended" }),
         session("heavy"),
       ],
       resources,
       disk,
     ).map((s) => s.name);
-    expect(order).toEqual(["heavy", "light", "big-disk", "small-disk"]);
+    expect(order).toEqual(["heavy", "light", "too-big", "big-disk", "small-disk"]);
   });
 });

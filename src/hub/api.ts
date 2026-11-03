@@ -45,6 +45,9 @@ export interface SessionDisk {
   dir_kb: number | null;
   /** Claude Code's scratch directory for the session's conversation. */
   temp_kb: number | null;
+  /** A walk ran past its time limit, so the sizes leave part of the session out. */
+  gave_up: boolean;
+  measured_at: string;
 }
 
 /** The last disk measurement, and whether one is running. */

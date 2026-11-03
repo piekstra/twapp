@@ -478,6 +478,14 @@ impl HubSession {
         }
     }
 
+    /// Forget the resources reading once no tab has a terminal; while one
+    /// does, the next refresh recounts what is left.
+    fn drop_resources_if_idle(&mut self) {
+        if self.tabs.iter().all(|t| t.pty.is_none()) {
+            self.resources = None;
+        }
+    }
+
     fn main(&mut self) -> &mut HubTab {
         &mut self.tabs[0]
     }
@@ -657,6 +665,7 @@ impl HubInner {
                 tab.spawning = false;
             }
             session.shell_pid = None;
+            session.resources = None;
             if had_main {
                 session.status = SessionStatus::in_state_now(State::Exited);
             }
@@ -820,6 +829,9 @@ impl Hub {
                         if let Some(t) = inner.tab(&key, &tab) {
                             t.pty = None;
                             t.exited = true;
+                        }
+                        if let Some(session) = inner.session(&key) {
+                            session.drop_resources_if_idle();
                         }
                     }
                 }
@@ -1628,6 +1640,7 @@ impl Hub {
                 session.tabs.retain(|t| t.tab != tab);
                 pty
             };
+            session.drop_resources_if_idle();
             if let Some(p) = pty {
                 inner.pty_index.remove(&p);
             }
@@ -1878,6 +1891,7 @@ impl Hub {
                                 session.shell_pid = None;
                                 session.status = SessionStatus::in_state_now(State::Exited);
                             }
+                            session.drop_resources_if_idle();
                         }
                     }
                     entry
@@ -3008,6 +3022,7 @@ mod tests {
         shell.pty = Some(2);
         session.tabs.push(shell);
         session.shell_pid = Some(42);
+        session.resources = Some(Resources { rss_kb: 1, cpu_tenths: 0, processes: 1 });
         inner.sessions.push(session);
         inner.pty_index.insert(1, ("/w/a".into(), "main".into()));
         inner.pty_index.insert(2, ("/w/a".into(), "tab-1".into()));
@@ -3018,7 +3033,23 @@ mod tests {
         let s = &inner.sessions[0];
         assert!(s.tabs.iter().all(|t| t.pty.is_none() && t.exited));
         assert_eq!(s.shell_pid, None);
+        assert_eq!(s.resources, None, "nothing of the session runs");
         assert_eq!(s.status.state, State::Exited);
+    }
+
+    #[test]
+    fn resources_go_with_the_last_live_terminal() {
+        let mut session = HubSession::new("/w/a".into(), AgentProvider::Claude);
+        let mut shell = HubTab::new("tab-1", "Shell 1");
+        shell.pty = Some(2);
+        session.tabs.push(shell);
+        session.resources = Some(Resources { rss_kb: 1, cpu_tenths: 0, processes: 1 });
+
+        session.drop_resources_if_idle();
+        assert!(session.resources.is_some(), "a second tab still runs; the next refresh recounts it");
+        session.tabs[1].pty = None;
+        session.drop_resources_if_idle();
+        assert_eq!(session.resources, None);
     }
 
     #[test]
@@ -3230,8 +3261,16 @@ impl Hub {
             let roots = StatusRoots::from_home();
             for key in keys {
                 let row = super::disk::measure(&key, &roots.claude_projects, Path::new("/tmp"));
-                self.disk.lock().insert(key, row.clone());
-                let _ = self.app.emit("hub:disk", DiskEvent { session: Some(row), running: true });
+                let kept = {
+                    let mut disk = self.disk.lock();
+                    // A rerun that gave up keeps the earlier full reading,
+                    // which carries its own time.
+                    if !(row.gave_up && disk.get(&key).is_some_and(|old| !old.gave_up)) {
+                        disk.insert(key.clone(), row);
+                    }
+                    disk.get(&key).cloned()
+                };
+                let _ = self.app.emit("hub:disk", DiskEvent { session: kept, running: true });
             }
             self.disk_running.store(false, Ordering::SeqCst);
             let _ = self.app.emit("hub:disk", DiskEvent { session: None, running: false });

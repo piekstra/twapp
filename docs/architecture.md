@@ -145,8 +145,9 @@ fifth poll (ten seconds) the hub totals them over the shells of every live tab
 of each session, main or not, and everything below them, and sends the totals
 that changed as one `hub:resources` event (key to `resources`). The frontend
 keeps them apart from the session list, so a refresh re-renders only what
-reads them. A session with no live tab has none; a live shell missing from the
-table (a failed `ps`) keeps the last reading rather than reading as zero. A
+reads them. A session loses its reading as soon as its last terminal goes
+(closed, exited or a terminal host gone); a live shell missing from the table
+(a failed `ps`) keeps the last reading rather than reading as zero. A
 process belongs to the session whose terminal started it, so work a harness
 hands to a daemon outside that tree, such as detached background tasks, is not
 counted.
@@ -468,7 +469,10 @@ note, when it was archived, and each copy with the path the harness reads.
   at a time on its own thread, gives up a walk after two minutes, sends each
   result as `hub:disk`, and keeps the last results (`hub_session_disk`), so a
   second request while one runs starts nothing and closing the tab loses
-  nothing.
+  nothing. A given-up walk is marked (`gave_up`) and reads "over 2 min"; the
+  total counts only finished sessions, says how many of the open sessions it
+  covers and how old the oldest reading is, and a rerun that gives up keeps
+  the earlier full reading.
 
 Keyboard:
 
