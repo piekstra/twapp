@@ -260,11 +260,15 @@ jobs:
           done <<EOF
           $OPEN
           EOF
-          REFS=$(gh api "repos/$TAP/git/matching-refs/heads/$PREFIX" --jq '.[].ref' 2>/dev/null) || REFS=""
-          for REF in $REFS; do
-            V=${REF#refs/heads/"$PREFIX"}
-            if [ "$V" != "$VERSION" ] && newer "$VERSION" "$V"; then
-              gh api -X DELETE "repos/$TAP/git/$REF" >/dev/null 2>&1 || true
-            fi
-          done
+          if REFS=$(gh api "repos/$TAP/git/matching-refs/heads/$PREFIX" --jq '.[].ref' 2>/dev/null); then
+            for REF in $REFS; do
+              V=${REF#refs/heads/"$PREFIX"}
+              if [ "$V" != "$VERSION" ] && newer "$VERSION" "$V"; then
+                gh api -X DELETE "repos/$TAP/git/$REF" >/dev/null 2>&1 \
+                  || echo "::warning title=Homebrew::Could not delete the stale branch $REF"
+              fi
+            done
+          else
+            echo "::warning title=Homebrew::Could not list formula branches on $TAP; stale ones were not cleaned up"
+          fi
           echo "::notice title=Homebrew::$PR moves twapp to v${VERSION}; brew sees it after the piekstra-dev review and merge."
