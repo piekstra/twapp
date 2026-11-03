@@ -658,6 +658,7 @@ impl HubInner {
                 tab.spawning = false;
             }
             session.shell_pid = None;
+            session.usage = None;
             if had_main {
                 session.status = SessionStatus::in_state_now(State::Exited);
             }
@@ -815,6 +816,11 @@ impl Hub {
                         if let Some(t) = inner.tab(&key, &tab) {
                             t.pty = None;
                             t.exited = true;
+                        }
+                        if tab == MAIN_TAB {
+                            if let Some(session) = inner.session(&key) {
+                                session.usage = None;
+                            }
                         }
                     }
                 }
@@ -1872,6 +1878,7 @@ impl Hub {
                             }
                             if tab == MAIN_TAB {
                                 session.shell_pid = None;
+                                session.usage = None;
                                 session.status = SessionStatus::in_state_now(State::Exited);
                             }
                         }
@@ -2976,6 +2983,7 @@ mod tests {
         shell.pty = Some(2);
         session.tabs.push(shell);
         session.shell_pid = Some(42);
+        session.usage = Some(Usage { rss_kb: 1, cpu_tenths: 0, processes: 1 });
         inner.sessions.push(session);
         inner.pty_index.insert(1, ("/w/a".into(), "main".into()));
         inner.pty_index.insert(2, ("/w/a".into(), "tab-1".into()));
@@ -2986,6 +2994,7 @@ mod tests {
         let s = &inner.sessions[0];
         assert!(s.tabs.iter().all(|t| t.pty.is_none() && t.exited));
         assert_eq!(s.shell_pid, None);
+        assert_eq!(s.usage, None, "an exited session uses nothing");
         assert_eq!(s.status.state, State::Exited);
     }
 
