@@ -466,8 +466,10 @@ note, when it was archived, and each copy with the path the harness reads.
   other tabs keep running). Disk is measured only when asked
   (`hub_measure_disk`, `gui/disk.rs`): the session directory plus Claude
   Code's scratch directory for its conversation. The hub measures one session
-  at a time on its own thread, gives up a walk after two minutes, sends each
-  result as `hub:disk`, and keeps the last results (`hub_session_disk`), so a
+  at a time on its own thread and sends each result as `hub:disk`. A walk is
+  given up after two minutes, and a session's whole measurement, reading its
+  files included, after both walks' time, so an unreachable volume never
+  stalls the run. The hub keeps the last results (`hub_session_disk`), so a
   second request while one runs starts nothing and closing the tab loses
   nothing. A given-up walk is marked (`gave_up`) and reads "over 2 min"; the
   total counts only finished sessions, says how many of the open sessions it

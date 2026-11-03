@@ -15,6 +15,10 @@ use crate::status::claude::locate_transcript;
 /// A walk still running after this is given up, so one slow or unreachable
 /// volume costs only its own session's number.
 const DU_TIMEOUT: Duration = Duration::from_secs(120);
+/// The bound on one session's whole measurement: both walks, plus reading the
+/// session file and checking the directories, which can block just as long
+/// on an unreachable volume before any walk starts.
+pub const MEASURE_TIMEOUT: Duration = Duration::from_secs(2 * 120 + 15);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionDisk {
@@ -67,6 +71,26 @@ pub fn measure(key: &str, projects: &Path, tmp: &Path) -> SessionDisk {
         gave_up: dir == Walk::GaveUp || temp == Walk::GaveUp,
         measured_at: chrono::Utc::now().to_rfc3339(),
     }
+}
+
+/// `measure` on a worker thread, given up after `timeout`. A worker blocked
+/// for good is left behind so the caller can move on to the next session.
+pub fn measure_bounded(
+    key: &str,
+    timeout: Duration,
+    measure: impl FnOnce() -> SessionDisk + Send + 'static,
+) -> SessionDisk {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(measure());
+    });
+    rx.recv_timeout(timeout).unwrap_or_else(|_| SessionDisk {
+        key: key.to_string(),
+        dir_kb: None,
+        temp_kb: None,
+        gave_up: true,
+        measured_at: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
 /// Claude Code keeps a conversation's scratch files in
@@ -143,5 +167,23 @@ mod tests {
         assert_eq!(du_kb(&root.join("missing"), DU_TIMEOUT), Walk::Absent);
         assert_eq!(du_kb(&scratch, Duration::ZERO), Walk::GaveUp, "a walk past its time is given up, not absent");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_measurement_that_never_returns_is_given_up() {
+        let row = measure_bounded("/w/stuck", Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_secs(5));
+            SessionDisk { key: "/w/stuck".into(), dir_kb: Some(1), temp_kb: None, gave_up: false, measured_at: String::new() }
+        });
+        assert_eq!((row.key.as_str(), row.gave_up, row.dir_kb, row.temp_kb), ("/w/stuck", true, None, None));
+
+        let quick = measure_bounded("/w/a", Duration::from_secs(5), || SessionDisk {
+            key: "/w/a".into(),
+            dir_kb: Some(1),
+            temp_kb: None,
+            gave_up: false,
+            measured_at: String::new(),
+        });
+        assert_eq!(quick.dir_kb, Some(1));
     }
 }

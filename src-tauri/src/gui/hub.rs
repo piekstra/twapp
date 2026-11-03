@@ -3260,7 +3260,10 @@ impl Hub {
         std::thread::spawn(move || {
             let roots = StatusRoots::from_home();
             for key in keys {
-                let row = super::disk::measure(&key, &roots.claude_projects, Path::new("/tmp"));
+                let (k, projects) = (key.clone(), roots.claude_projects.clone());
+                let row = super::disk::measure_bounded(&key, super::disk::MEASURE_TIMEOUT, move || {
+                    super::disk::measure(&k, &projects, Path::new("/tmp"))
+                });
                 let kept = {
                     let mut disk = self.disk.lock();
                     // A rerun that gave up keeps the earlier full reading,
