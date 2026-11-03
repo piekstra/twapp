@@ -27,12 +27,12 @@ export interface PathLink {
  * when it starts a new line. Claude Code wraps its own output, so a long path
  * reaches the right edge and resumes on the next row after a newline, past
  * the message's indent, rather than in a row xterm marks wrapped. Only a
- * break between two path characters counts, so a full-width rule stays apart
- * from the path below it.
+ * break between two path characters counts, and a row of one repeated
+ * character is a rule, so a full-width rule stays apart from the path below it.
  */
 function resumesAt(prev: LinkRow, next: LinkRow, cols: number): number | null {
   if (next.wrapped) return 0;
-  if (prev.text.length < cols || !IN_PATH.test(prev.text[cols - 1])) return null;
+  if (prev.text.length < cols || !IN_PATH.test(prev.text[cols - 1]) || /^(.)\1*$/.test(prev.text)) return null;
   const indent = next.text.length - next.text.trimStart().length;
   return indent < next.text.length && IN_PATH.test(next.text[indent]) ? indent : null;
 }
