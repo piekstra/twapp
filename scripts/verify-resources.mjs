@@ -108,14 +108,19 @@ try {
     assert.equal(overflow, 0, 'nothing runs past the overview');
     await page.screenshot({ path: path.join(dir, `resources-${theme}-${width}.png`) });
 
-    // A session that starts working while its confirm is open loses it, and
-    // it does not come back when the session is idle again.
+    // A session that starts working while its confirm is open loses it, focus
+    // moves from Cancel to the session's name, and the confirm does not come
+    // back when the session is idle again.
     const docs = rows.filter({ hasText: 'Docs refresh' });
     const docsStatus = snapshot.sessions.find(s => s.key === '/work/docs').status;
     await docs.getByRole('button', { name: 'Stop Docs refresh' }).click();
     await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor();
     await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status: { ...status, state: 'working' }, attention: false }), docsStatus);
     await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor({ state: 'detached' });
+    await page.waitForFunction(() => {
+      const focused = document.activeElement;
+      return focused?.classList.contains('board-session') && focused.querySelector('.resources-session')?.textContent === 'Docs refresh';
+    });
     assert.equal(await table.getByRole('button', { name: 'Stop Docs refresh' }).count(), 0, 'a working session offers no Stop');
     await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status, attention: false }), docsStatus);
     await docs.getByRole('button', { name: 'Stop Docs refresh' }).waitFor();

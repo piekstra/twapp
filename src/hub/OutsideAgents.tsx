@@ -79,9 +79,12 @@ export default function OutsideAgents({ now }: { now: number }) {
     target?.focus();
   });
 
-  // One that stops being a leftover while its confirm is open loses it.
+  // One that stops being a leftover while its confirm is open loses it;
+  // focus that was in it goes to the heading.
   useEffect(() => {
-    if (confirming !== null && !agents?.some((a) => a.pid === confirming && a.leftover)) setConfirming(null);
+    if (confirming === null || agents?.some((a) => a.pid === confirming && a.leftover)) return;
+    if (document.activeElement === document.body) focusNext.current = "heading";
+    setConfirming(null);
   }, [confirming, agents]);
 
   const ask = (pid: number) => {

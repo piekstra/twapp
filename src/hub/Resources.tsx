@@ -36,9 +36,12 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
   });
 
   // A session that starts working or stops running while its confirm is
-  // open loses it, as it loses its Stop.
+  // open loses it, as it loses its Stop; focus that was in it goes to the
+  // session's name.
   useEffect(() => {
-    if (confirming && !sessions.some((s) => s.key === confirming && canStop(s))) setConfirming(null);
+    if (!confirming || sessions.some((s) => s.key === confirming && canStop(s))) return;
+    if (document.activeElement === document.body) focusNext.current = { key: confirming, target: "name" };
+    setConfirming(null);
   }, [confirming, sessions]);
 
   // The hub keeps the measurement, so leaving this tab mid-walk loses nothing.
