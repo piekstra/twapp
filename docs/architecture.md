@@ -475,6 +475,35 @@ note, when it was archived, and each copy with the path the harness reads.
   total counts only finished sessions, says how many of the open sessions it
   covers and how old the oldest reading is, and a rerun that gives up keeps
   the earlier full reading.
+  The tab also lists agent processes outside every session
+  (`hub/OutsideAgents.tsx`, `hub_outside_agents`, `status/outside.rs`):
+  processes whose `ps` name is a harness binary (`proctree::harness_of`, the
+  same test that finds a session's harness, so Claude Code's native
+  `claude/versions/<version>` path and its `claude <role>` helpers count for
+  both) and that are neither the terminal host nor below it. Every process
+  belongs to one group: a group starts at such a process with no harness
+  above it, or whose nearest harness above it is an `<agent> daemon`, or that
+  is a daemon; a harness started further down (through a shell another
+  harness runs) stays in its ancestor's group, and a group stops at any
+  daemon below it. A daemon's row counts only itself, since it hosts
+  unrelated work for many sessions, some of it started by sessions in this
+  window. A failed `ps` is an error, not an empty list.
+  A group is a leftover when it is hosted by a daemon, or is a background
+  host (`bg-pty-host`, `bg-spare`) whose parent is gone, everything in it is
+  an agent process and no daemon is below it, it uses under 10% CPU, and it
+  is at least 30 minutes old. One CPU sample cannot tell a run that is
+  waiting from a finished one, so the rule rests on those forms:
+  interactive, desktop-app and headless runs are listed but never
+  leftovers, whatever their parent (pid 1 may be launchd starting a job
+  itself). A hosted task waiting on a response can still match, and the
+  section and its confirm say so. Only leftovers can be
+  stopped (`hub_stop_outside_agent`, SIGTERM deepest first): the hub scans
+  again and asks `outside::stop_target` first, so one that started working,
+  joined a session or whose pid was reused is refused, a signal the process
+  refuses is an error, and only "no such process" counts as stopped. A row
+  shows the harness and, when it is a flag (without its value) or a known
+  subcommand, its first argument; anything else could be prompt text. The
+  tab refreshes the list every ten seconds while the window is visible.
 
 Keyboard:
 

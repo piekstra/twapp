@@ -3297,6 +3297,39 @@ pub fn hub_session_disk() -> Result<DiskReport, String> {
     })
 }
 
+/// Agent processes no session's terminal started, heaviest first.
+#[tauri::command]
+pub async fn hub_outside_agents() -> Result<Vec<crate::status::outside::OutsideAgent>, String> {
+    let inside = terminal_host_pid()?;
+    tauri::async_runtime::spawn_blocking(move || crate::status::outside::scan(inside).map(|(_, agents)| agents))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// End a leftover group of agent processes outside every session, checked
+/// against a fresh scan first (`outside::stop_target`). True when it is gone.
+#[tauri::command]
+pub async fn hub_stop_outside_agent(pid: u32) -> Result<bool, String> {
+    let inside = terminal_host_pid()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::status::outside;
+        let (table, agents) = outside::scan(inside)?;
+        outside::stop_target(&agents, pid).map_err(|refused| refused.message().to_string())?;
+        outside::terminate(&table, pid)?;
+        Ok(outside::wait_gone(pid, Duration::from_secs(3)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The terminal host's pid: every session's processes run below it.
+fn terminal_host_pid() -> Result<u32, String> {
+    match require_hub()?.daemon_pid.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => Err("The terminal host is not connected.".to_string()),
+        pid => Ok(pid),
+    }
+}
+
 /// The latest reports sessions made with `twapp report`, newest first.
 #[tauri::command]
 pub async fn hub_reports(limit: Option<usize>) -> Result<Vec<crate::cli::reports::Report>, String> {

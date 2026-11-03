@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod engine;
 pub mod osc;
+pub mod outside;
 pub mod proctree;
 
 pub use engine::{PollContext, SessionProbe, SessionStatus, Signals, State, StatusTracker, decide};

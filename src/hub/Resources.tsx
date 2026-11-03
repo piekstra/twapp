@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { STATE_LABELS, hubApi, sinceLabel, type DiskEvent, type SessionDisk, type SessionView } from "./api";
 import { StateDot } from "./SessionRail";
+import OutsideAgents from "./OutsideAgents";
 import { byResources, canStop, diskKb, formatCpu, formatKb, staleReason, type ResourceMap } from "./resourcesModel";
 
 interface Props {
@@ -209,6 +210,8 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
           </tbody>
         </table>
       )}
+
+      <OutsideAgents now={now} />
     </div>
   );
 }
