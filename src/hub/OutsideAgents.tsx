@@ -129,8 +129,9 @@ export default function OutsideAgents({ now }: { now: number }) {
       <p className="board-muted resources-explain">
         Claude, Codex and Antigravity processes that no session's terminal started: a harness's daemon and the background work it
         hosts, which can belong to one of your sessions, desktop-app conversations, and runs other tools start. A leftover is what
-        finished background work leaves behind: hosted by a daemon or orphaned, with nothing but agent processes under it, not busy,
-        and at least half an hour old. Only leftovers can be stopped; a conversation or run that may be waiting never is.
+        finished background work usually leaves behind: hosted by a daemon, or a background host whose parent is gone, with nothing
+        but agent processes under it, not busy, and at least half an hour old. Only leftovers can be stopped. Conversations,
+        desktop-app sessions and headless runs never are, but a hosted task waiting on a response can look like a leftover.
       </p>
       <div className="sr-only" role="status">{status}</div>
       {actionError && (
@@ -173,7 +174,7 @@ export default function OutsideAgents({ now }: { now: number }) {
                   {a.leftover &&
                     (confirming === a.pid ? (
                       <span className="resources-confirm" role="group" aria-label={`Stop ${a.command} ${a.pid}?`}>
-                        <span className="board-muted">Ends it and everything under it.</span>
+                        <span className="board-muted">Ends it and everything under it, including a task still waiting on a response.</span>
                         <button className="button ghost small" data-pid={a.pid} data-focus="cancel" onClick={() => cancel(a.pid)} aria-label={`Cancel stopping ${a.command} ${a.pid}`}>
                           Cancel
                         </button>

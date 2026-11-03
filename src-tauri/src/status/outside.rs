@@ -20,6 +20,10 @@ const LEFTOVER_AGE_SECS: u64 = 30 * 60;
 const QUIET_CPU_TENTHS: u32 = 100;
 /// Harness subcommands and process roles shown as they are. Any other first
 /// argument that is not a flag could be the start of a prompt.
+/// The roles a harness gives the processes that host its background work.
+/// Only these count as left behind when their parent is gone: a headless or
+/// interactive run whose launcher exited is still a run.
+const HOST_ROLES: &[&str] = &["bg-pty-host", "--bg-pty-host", "bg-spare", "--bg-spare"];
 const KNOWN_WORDS: &[&str] = &["daemon", "bg-pty-host", "bg-spare", "mcp", "exec", "app-server", "proto", "resume", "update", "doctor"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -38,12 +42,14 @@ pub struct OutsideAgent {
     /// has a row of its own; a daemon's own process only, since its
     /// children are listed on their own.
     pub resources: Resources,
-    /// What finished background work leaves behind: hosted by a daemon, or
-    /// orphaned (its parent gone), with nothing but agent processes below
-    /// it and no daemon among them, under 10% CPU and at least half an hour
-    /// old. One CPU sample cannot tell a waiting conversation or job from a
-    /// finished one, so only these forms count; interactive, desktop-app and
-    /// headless runs never do. Only leftovers can be stopped.
+    /// What finished background work usually leaves behind: hosted by a
+    /// daemon, or a background host whose parent is gone, with nothing but
+    /// agent processes below it and no daemon among them, under 10% CPU and
+    /// at least half an hour old. One CPU sample cannot tell a waiting run
+    /// from a finished one, so only these forms count: interactive,
+    /// desktop-app and headless runs never do, whoever their parent is. A
+    /// hosted task waiting on a response can still match. Only leftovers can
+    /// be stopped.
     pub leftover: bool,
     /// Runs as `<agent> daemon` and hosts work for many sessions; listed so
     /// its memory shows, never offered for stopping.
@@ -156,8 +162,9 @@ pub fn outside_agents(table: &ProcTable, inside: u32, info: &HashMap<u32, ProcIn
         let only_agents = group.iter().all(|p| table.get(*p).is_some_and(|e| harness_of(&e.comm).is_some()));
         let daemon_below = table.descendants(pid).into_iter().any(is_daemon);
         let parent = table.get(entry.ppid);
-        // Its parent is gone: re-parented to launchd or init.
-        let orphaned = entry.ppid == 1;
+        // A background host whose parent is gone (re-parented to launchd or
+        // init). Pid 1 alone proves nothing: launchd also starts jobs itself.
+        let orphaned_host = entry.ppid == 1 && first_arg(&entry.comm, &me.args).is_some_and(|a| HOST_ROLES.contains(&a));
         let binary = provider.binaries()[0];
         agents.push(OutsideAgent {
             pid,
@@ -174,7 +181,7 @@ pub fn outside_agents(table: &ProcTable, inside: u32, info: &HashMap<u32, ProcIn
             age_secs: me.age_secs,
             resources,
             leftover: !daemon
-                && (hosted || orphaned)
+                && (hosted || orphaned_host)
                 && only_agents
                 && !daemon_below
                 && resources.cpu_tenths < QUIET_CPU_TENTHS
@@ -360,6 +367,8 @@ mod tests {
   800     1  90000   0.0 claude
   810   800   2000   0.0 /bin/zsh
   820   810  30000   0.0 claude
+  900     1  80000   0.0 claude bg-pty-host
+  901   900 120000   0.0 claude bg-spare
 ";
 
     fn info(entries: &[(u32, u64, &str)]) -> HashMap<u32, ProcInfo> {
@@ -387,6 +396,8 @@ mod tests {
             (720, HOUR, "claude bg-pty-host --bg-pty-host /tmp/c.sock"),
             (800, 5 * HOUR, "claude --resume abc"),
             (820, HOUR, "claude -p hello"),
+            (900, 17 * HOUR, "claude bg-pty-host --bg-pty-host /tmp/d.sock"),
+            (901, 17 * HOUR, "claude bg-spare --bg-spare /tmp/d.claim.sock"),
         ]);
         (ProcTable::parse(PS), info)
     }
@@ -403,7 +414,7 @@ mod tests {
         let by_pid = by_pid(&found);
         let mut pids: Vec<u32> = by_pid.keys().copied().collect();
         pids.sort_unstable();
-        assert_eq!(pids, vec![200, 210, 220, 310, 410, 420, 500, 600, 610, 700, 710, 720, 800], "one entry per group");
+        assert_eq!(pids, vec![200, 210, 220, 310, 410, 420, 500, 600, 610, 700, 710, 720, 800, 900], "one entry per group");
 
         let daemon = by_pid[&200];
         assert!(daemon.daemon && !daemon.leftover, "a daemon is never offered for stopping");
@@ -422,8 +433,11 @@ mod tests {
         let headless = by_pid[&410];
         assert_eq!((headless.command.as_str(), headless.started_by.as_str()), ("claude -p", "reviewer"));
         assert!(!by_pid[&420].leftover, "a quiet, old headless run may be waiting on a response; it is never a leftover");
-        let orphan = by_pid[&500];
-        assert_eq!((orphan.provider, orphan.command.as_str(), orphan.leftover), (AgentProvider::Codex, "codex exec", true));
+        let launched = by_pid[&500];
+        assert_eq!((launched.provider, launched.command.as_str()), (AgentProvider::Codex, "codex exec"));
+        assert!(!launched.leftover, "a run under pid 1 may be a job launchd started, still waiting");
+        let orphan = by_pid[&900];
+        assert_eq!((orphan.started_by.as_str(), orphan.resources.processes, orphan.leftover), ("launchd", 2, true));
         assert_eq!(found[0].pid, 310, "heaviest first");
     }
 
@@ -443,9 +457,9 @@ mod tests {
         assert!(!above.leftover, "never stopped while a daemon runs below it");
         assert!(by_pid[&710].daemon);
         assert_eq!(by_pid[&720].started_by, "claude daemon");
-        // 20 processes sit in agent trees outside the host; each is in one row.
+        // 22 processes sit in agent trees outside the host; each is in one row.
         let rows: u32 = found.iter().map(|a| a.resources.processes).sum();
-        assert_eq!(rows, 20, "every process is counted exactly once");
+        assert_eq!(rows, 22, "every process is counted exactly once");
     }
 
     #[test]
@@ -476,11 +490,11 @@ mod tests {
     fn only_a_leftover_may_be_stopped() {
         let (t, info) = fixture();
         let agents = outside_agents(&t, 100, &info);
-        for pid in [210, 500, 610, 720] {
+        for pid in [210, 610, 720, 900] {
             assert_eq!(stop_target(&agents, pid), Ok(()), "{pid}");
         }
         assert_eq!(stop_target(&agents, 200), Err(StopRefused::Daemon));
-        for pid in [220, 310, 410, 420, 700, 800] {
+        for pid in [220, 310, 410, 420, 500, 700, 800] {
             assert_eq!(stop_target(&agents, pid), Err(StopRefused::NotLeftover), "{pid}");
         }
         for pid in [211, 820, 111, 9999] {

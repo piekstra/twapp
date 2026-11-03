@@ -66,9 +66,9 @@ export interface OutsideAgent {
   age_secs: number;
   resources: SessionResources;
   /**
-   * What finished background work leaves behind: hosted by a daemon or
-   * orphaned, nothing but agent processes under it, not busy, at least half
-   * an hour old. Only these can be stopped.
+   * What finished background work usually leaves behind: hosted by a daemon,
+   * or a background host whose parent is gone, nothing but agent processes
+   * under it, not busy, at least half an hour old. Only these can be stopped.
    */
   leftover: boolean;
   /** Hosts background work for many sessions; never stopped from here. */
@@ -395,7 +395,7 @@ export const hubApi = {
   /** False when a measurement is already running. */
   measureDisk: () => invoke<boolean>("hub_measure_disk"),
   outsideAgents: () => invoke<OutsideAgent[]>("hub_outside_agents"),
-  /** True when it ended; refused unless it is still an idle group outside every session. */
+  /** True when it ended; refused unless it is still a leftover outside every session. */
   stopOutsideAgent: (pid: number) => invoke<boolean>("hub_stop_outside_agent", { pid }),
 };
 

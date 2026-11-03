@@ -1,8 +1,9 @@
 [
-  { "pid": 70353, "provider": "claude", "command": "claude bg-pty-host", "started_by": "launchd", "age_secs": 580697, "resources": { "rss_kb": 1043456, "cpu_tenths": 84, "processes": 12 }, "leftover": false, "daemon": false },
-  { "pid": 24982, "provider": "claude", "command": "claude --bg-pty-host", "started_by": "claude daemon", "age_secs": 46007, "resources": { "rss_kb": 815104, "cpu_tenths": 3, "processes": 2 }, "leftover": true, "daemon": false },
-  { "pid": 24099, "provider": "claude", "command": "claude --bg-pty-host", "started_by": "claude daemon", "age_secs": 46067, "resources": { "rss_kb": 780288, "cpu_tenths": 5, "processes": 2 }, "leftover": true, "daemon": false },
-  { "pid": 21980, "provider": "claude", "command": "claude daemon", "started_by": "launchd", "age_secs": 46251, "resources": { "rss_kb": 331776, "cpu_tenths": 0, "processes": 1 }, "leftover": false, "daemon": true },
-  { "pid": 410, "provider": "claude", "command": "claude -p", "started_by": "reviewer", "age_secs": 60, "resources": { "rss_kb": 389120, "cpu_tenths": 300, "processes": 1 }, "leftover": false, "daemon": false },
-  { "pid": 500, "provider": "codex", "command": "codex exec", "started_by": "launchd", "age_secs": 10800, "resources": { "rss_kb": 51200, "cpu_tenths": 0, "processes": 1 }, "leftover": true, "daemon": false }
+  {"pid": 70353, "provider": "claude", "command": "claude bg-pty-host", "started_by": "launchd", "age_secs": 580697, "resources": {"rss_kb": 1043456, "cpu_tenths": 84, "processes": 12}, "leftover": false, "daemon": false},
+  {"pid": 24982, "provider": "claude", "command": "claude --bg-pty-host", "started_by": "claude daemon", "age_secs": 46007, "resources": {"rss_kb": 815104, "cpu_tenths": 3, "processes": 2}, "leftover": true, "daemon": false},
+  {"pid": 24099, "provider": "claude", "command": "claude --bg-pty-host", "started_by": "claude daemon", "age_secs": 46067, "resources": {"rss_kb": 780288, "cpu_tenths": 5, "processes": 2}, "leftover": true, "daemon": false},
+  {"pid": 98549, "provider": "claude", "command": "claude --bg-pty-host", "started_by": "launchd", "age_secs": 68172, "resources": {"rss_kb": 411648, "cpu_tenths": 6, "processes": 2}, "leftover": true, "daemon": false},
+  {"pid": 410, "provider": "claude", "command": "claude -p", "started_by": "reviewer", "age_secs": 60, "resources": {"rss_kb": 389120, "cpu_tenths": 300, "processes": 1}, "leftover": false, "daemon": false},
+  {"pid": 21980, "provider": "claude", "command": "claude daemon", "started_by": "launchd", "age_secs": 46251, "resources": {"rss_kb": 331776, "cpu_tenths": 0, "processes": 1}, "leftover": false, "daemon": true},
+  {"pid": 500, "provider": "codex", "command": "codex exec", "started_by": "launchd", "age_secs": 10800, "resources": {"rss_kb": 51200, "cpu_tenths": 0, "processes": 1}, "leftover": false, "daemon": false}
 ]

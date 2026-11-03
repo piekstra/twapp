@@ -47,7 +47,7 @@ try {
           window.__calls.push({ cmd, args });
           if (cmd === 'hub_measure_disk') return true;
           if (cmd === 'hub_stop_outside_agent') {
-            if (args.pid === 500) throw 'It no longer looks like a leftover, so nothing was stopped.';
+            if (args.pid === 98549) throw 'It no longer looks like a leftover, so nothing was stopped.';
             window.__outside = window.__outside.filter(a => a.pid !== args.pid);
             return true;
           }
@@ -132,10 +132,10 @@ try {
     const strays = page.getByRole('table', { name: 'Agent processes outside your sessions' });
     await strays.waitFor();
     assert.equal(await strays.locator('tbody tr').count(), outside.length);
-    assert.match(await page.locator('#resources-outside-head .count').textContent(), /^3\.3 GB in 6 · 1\.6 GB in 3 leftover$/);
+    assert.match(await page.locator('#resources-outside-head .count').textContent(), /^3\.6 GB in 7 · 1\.9 GB in 3 leftover$/);
     assert.deepEqual(
       (await strays.getByRole('button', { name: /^Stop / }).evaluateAll(els => els.map(e => e.getAttribute('aria-label')))).sort(),
-      ['Stop claude --bg-pty-host 24099', 'Stop claude --bg-pty-host 24982', 'Stop codex exec 500'],
+      ['Stop claude --bg-pty-host 24099', 'Stop claude --bg-pty-host 24982', 'Stop claude --bg-pty-host 98549'],
     );
     assert.equal(await strays.locator('tbody tr').filter({ hasText: '21980' }).locator('.resources-flag').textContent(), 'Daemon');
     await page.screenshot({ path: path.join(dir, `outside-${theme}-${width}.png`), fullPage: true });
@@ -154,9 +154,9 @@ try {
     await page.waitForFunction(() => !document.querySelector('.resources-outside tbody')?.textContent?.includes('24982'));
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Stop claude --bg-pty-host 24099');
     // A refused stop says why, and a refresh does not clear it.
-    const codex = strays.locator('tbody tr').filter({ hasText: 'codex exec' });
-    await codex.getByRole('button', { name: 'Stop codex exec 500' }).click();
-    await codex.getByRole('group').getByRole('button', { name: 'Stop codex exec 500' }).click();
+    const orphan = strays.locator('tbody tr').filter({ hasText: '98549' });
+    await orphan.getByRole('button', { name: 'Stop claude --bg-pty-host 98549' }).click();
+    await orphan.getByRole('group').getByRole('button', { name: 'Stop claude --bg-pty-host 98549' }).click();
     const refused = page.locator('.resources-outside [role="alert"]').filter({ hasText: 'no longer looks like a leftover' });
     await refused.waitFor();
     await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
