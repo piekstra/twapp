@@ -12,10 +12,12 @@ use serde::Serialize;
 use super::proctree::{harness_of, ProcTable, Resources};
 use crate::cli::session::AgentProvider;
 
-/// How long a group must have existed before it can count as idle.
-const IDLE_AGE_SECS: u64 = 30 * 60;
-/// Below 1% CPU (in tenths of a percent) counts as doing nothing.
-const IDLE_CPU_TENTHS: u32 = 10;
+/// How long a group must have existed before it can count as a leftover.
+const LEFTOVER_AGE_SECS: u64 = 30 * 60;
+/// Under 10% CPU (in tenths of a percent) counts as not busy. A finished
+/// host's single `ps` sample still swings between 0 and several percent, so
+/// the structure of the group, not this number, is what marks a leftover.
+const QUIET_CPU_TENTHS: u32 = 100;
 /// Harness subcommands and process roles shown as they are. Any other first
 /// argument that is not a flag could be the start of a prompt.
 const KNOWN_WORDS: &[&str] = &["daemon", "bg-pty-host", "bg-spare", "mcp", "exec", "app-server", "proto", "resume", "update", "doctor"];
@@ -32,12 +34,17 @@ pub struct OutsideAgent {
     /// daemon hosts.
     pub started_by: String,
     pub age_secs: u64,
-    /// The process and everything below it; a daemon's own process only,
-    /// since its children are listed on their own.
+    /// The process and everything below it, up to any daemon below it, which
+    /// has a row of its own; a daemon's own process only, since its
+    /// children are listed on their own.
     pub resources: Resources,
-    /// Nothing but agent processes runs under it, it uses no CPU and it is
-    /// at least half an hour old.
-    pub idle: bool,
+    /// What finished background work leaves behind: hosted by a daemon, or
+    /// orphaned (its parent gone), with nothing but agent processes below
+    /// it and no daemon among them, under 10% CPU and at least half an hour
+    /// old. One CPU sample cannot tell a waiting conversation or job from a
+    /// finished one, so only these forms count; interactive, desktop-app and
+    /// headless runs never do. Only leftovers can be stopped.
+    pub leftover: bool,
     /// Runs as `<agent> daemon` and hosts work for many sessions; listed so
     /// its memory shows, never offered for stopping.
     pub daemon: bool,
@@ -56,7 +63,7 @@ pub enum StopRefused {
     /// It ended, joined a session, or its pid now belongs to something else.
     Gone,
     Daemon,
-    NotIdle,
+    NotLeftover,
 }
 
 impl StopRefused {
@@ -64,49 +71,93 @@ impl StopRefused {
         match self {
             Self::Gone => "That process has ended or is no longer outside a session.",
             Self::Daemon => "A daemon hosts work for many sessions and is not stopped from here.",
-            Self::NotIdle => "It is no longer idle, so nothing was stopped.",
+            Self::NotLeftover => "It no longer looks like a leftover, so nothing was stopped.",
         }
     }
 }
 
 /// Read the process table and list the agent processes outside `inside`,
-/// the terminal host every session runs under.
-pub fn scan(inside: u32) -> (ProcTable, Vec<OutsideAgent>) {
+/// the terminal host every session runs under. A `ps` that fails is an
+/// error, never an empty list: nothing running and nothing readable must
+/// not look alike.
+pub fn scan(inside: u32) -> Result<(ProcTable, Vec<OutsideAgent>), String> {
     let table = ProcTable::snapshot();
-    let info = read_info(&candidates(&table, inside));
+    if table.is_empty() {
+        return Err("Could not read the process table.".to_string());
+    }
+    let pids = candidates(&table, inside);
+    let info = read_info(&pids);
+    if !pids.is_empty() && info.is_empty() {
+        return Err("Could not read the agent processes' details.".to_string());
+    }
     let agents = outside_agents(&table, inside, &info);
-    (table, agents)
+    Ok((table, agents))
 }
 
 /// Agent processes in `table` that are not `inside` or below it, one entry
 /// per group. `info` holds the age and arguments of the candidates; one
 /// missing from it (it ended between the two `ps` calls) is skipped.
+///
+/// Every process belongs to one group. A group starts at a harness process
+/// with no harness above it, or whose nearest harness above it is a daemon,
+/// or that is a daemon itself; a harness started further down (say through
+/// a shell another harness runs) stays in its ancestor's group. A group's
+/// members stop at any daemon below it, which is a group of its own.
 pub fn outside_agents(table: &ProcTable, inside: u32, info: &HashMap<u32, ProcInfo>) -> Vec<OutsideAgent> {
     let is_daemon = |pid: u32| match (table.get(pid), info.get(&pid)) {
         (Some(e), Some(i)) => first_arg(&e.comm, &i.args) == Some("daemon"),
         _ => false,
     };
+    let nearest_harness_above = |pid: u32| {
+        let mut current = table.get(pid)?.ppid;
+        for _ in 0..64 {
+            let entry = table.get(current)?;
+            if harness_of(&entry.comm).is_some() {
+                return Some(current);
+            }
+            if entry.ppid == current || entry.ppid == 0 {
+                return None;
+            }
+            current = entry.ppid;
+        }
+        None
+    };
+    // The group below `root`, not entering any daemon below it.
+    let members = |root: u32| {
+        let mut out = vec![root];
+        let mut i = 0;
+        while i < out.len() {
+            for &child in table.children(out[i]) {
+                if !is_daemon(child) {
+                    out.push(child);
+                }
+            }
+            i += 1;
+        }
+        out
+    };
     let mut agents = Vec::new();
     for pid in candidates(table, inside) {
         let (Some(entry), Some(me)) = (table.get(pid), info.get(&pid)) else { continue };
         let Some(provider) = harness_of(&entry.comm) else { continue };
-        let parent = table.get(entry.ppid);
-        let parent_is_daemon = is_daemon(entry.ppid);
-        // A group starts at an agent process whose parent is not one, or
-        // whose parent is a daemon hosting unrelated work.
-        if parent.is_some_and(|p| harness_of(&p.comm).is_some()) && !parent_is_daemon {
+        let daemon = is_daemon(pid);
+        let above = nearest_harness_above(pid);
+        let hosted = above.is_some_and(is_daemon);
+        if !daemon && above.is_some() && !hosted {
             continue;
         }
-        let daemon = is_daemon(pid);
-        let resources = if daemon {
-            Resources { rss_kb: entry.rss_kb, cpu_tenths: entry.cpu_tenths, processes: 1 }
-        } else {
-            table.resources(&[pid]).unwrap_or_default()
-        };
-        let only_agents = table
-            .descendants(pid)
-            .iter()
-            .all(|p| table.get(*p).is_some_and(|e| harness_of(&e.comm).is_some()));
+        let group = if daemon { vec![pid] } else { members(pid) };
+        let mut resources = Resources::default();
+        for e in group.iter().filter_map(|p| table.get(*p)) {
+            resources.rss_kb += e.rss_kb;
+            resources.cpu_tenths += e.cpu_tenths;
+            resources.processes += 1;
+        }
+        let only_agents = group.iter().all(|p| table.get(*p).is_some_and(|e| harness_of(&e.comm).is_some()));
+        let daemon_below = table.descendants(pid).into_iter().any(is_daemon);
+        let parent = table.get(entry.ppid);
+        // Its parent is gone: re-parented to launchd or init.
+        let orphaned = entry.ppid == 1;
         let binary = provider.binaries()[0];
         agents.push(OutsideAgent {
             pid,
@@ -115,14 +166,19 @@ pub fn outside_agents(table: &ProcTable, inside: u32, info: &HashMap<u32, ProcIn
                 Some(arg) => format!("{binary} {arg}"),
                 None => binary.to_string(),
             },
-            started_by: match (parent_is_daemon, parent) {
+            started_by: match (hosted && above == Some(entry.ppid), parent) {
                 (true, _) => format!("{binary} daemon"),
                 (false, Some(p)) => name_of(&p.comm),
                 (false, None) => String::new(),
             },
             age_secs: me.age_secs,
             resources,
-            idle: !daemon && only_agents && resources.cpu_tenths < IDLE_CPU_TENTHS && me.age_secs >= IDLE_AGE_SECS,
+            leftover: !daemon
+                && (hosted || orphaned)
+                && only_agents
+                && !daemon_below
+                && resources.cpu_tenths < QUIET_CPU_TENTHS
+                && me.age_secs >= LEFTOVER_AGE_SECS,
             daemon,
         });
     }
@@ -137,25 +193,49 @@ pub fn stop_target(agents: &[OutsideAgent], pid: u32) -> Result<(), StopRefused>
     let agent = agents.iter().find(|a| a.pid == pid).ok_or(StopRefused::Gone)?;
     if agent.daemon {
         Err(StopRefused::Daemon)
-    } else if !agent.idle {
-        Err(StopRefused::NotIdle)
+    } else if !agent.leftover {
+        Err(StopRefused::NotLeftover)
     } else {
         Ok(())
     }
 }
 
-/// Ask `pid` and everything below it to end (SIGTERM), deepest first.
-pub fn terminate(table: &ProcTable, pid: u32) {
-    for p in table.descendants(pid).into_iter().rev().chain(std::iter::once(pid)) {
-        unsafe { libc::kill(p as i32, libc::SIGTERM) };
+/// Send `signal` to `pid`. `Ok(false)` when there is no such process.
+fn signal(pid: u32, signal: i32) -> Result<bool, std::io::Error> {
+    let pid = i32::try_from(pid).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    if pid <= 0 {
+        // 0 and negative pids address process groups, never one process.
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    // SAFETY: kill(2) takes two integers and touches no memory of ours; the
+    // pid is positive, so it names exactly one process.
+    if unsafe { libc::kill(pid, signal) } == 0 {
+        return Ok(true);
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ESRCH) {
+        Ok(false)
+    } else {
+        Err(err)
     }
 }
 
-/// Whether `pid` is gone within `timeout`.
+/// Ask `pid` and everything below it to end (SIGTERM), deepest first. A
+/// process that already ended is fine; one that refuses the signal (EPERM)
+/// is an error, so the stop is never reported as done.
+pub fn terminate(table: &ProcTable, pid: u32) -> Result<(), String> {
+    for p in table.descendants(pid).into_iter().rev().chain(std::iter::once(pid)) {
+        signal(p, libc::SIGTERM).map_err(|e| format!("Could not signal process {p}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Whether `pid` is gone within `timeout`. Only "no such process" counts as
+/// gone; a process that cannot be signalled still exists.
 pub fn wait_gone(pid: u32, timeout: Duration) -> bool {
     let start = Instant::now();
     loop {
-        if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        if matches!(signal(pid, 0), Ok(false)) {
             return true;
         }
         if start.elapsed() >= timeout {
@@ -270,9 +350,16 @@ mod tests {
   312   311  80000   0.0 node
   400     1   5000   0.0 reviewer
   410   400 380000  30.0 claude
+  420   400 100000   0.0 claude
   500     1  50000   0.0 /usr/local/bin/codex-aarch64-apple-darwin
   600     1  70000   0.0 /Applications/My Tools/agy
   610   600  20000   0.0 /Applications/My Tools/agy
+  700     1  50000   0.0 claude
+  710   700  60000   0.0 /Users/u/.local/bin/claude
+  720   710  70000   0.0 claude bg-pty-host
+  800     1  90000   0.0 claude
+  810   800   2000   0.0 /bin/zsh
+  820   810  30000   0.0 claude
 ";
 
     fn info(entries: &[(u32, u64, &str)]) -> HashMap<u32, ProcInfo> {
@@ -291,79 +378,114 @@ mod tests {
             (310, 5 * HOUR, "/Users/u/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude --resume abc"),
             (311, 5 * HOUR, "/Users/u/.local/share/claude/versions/2.1.317 --resume abc"),
             (410, 60, "claude -p --output-format json --append-system-prompt secret words"),
+            (420, 2 * HOUR, "claude -p --output-format json"),
             (500, 3 * HOUR, "/usr/local/bin/codex-aarch64-apple-darwin exec"),
             (600, 4 * HOUR, "/Applications/My Tools/agy daemon"),
             (610, 4 * HOUR, "/Applications/My Tools/agy rotate the signing key for prod"),
+            (700, 5 * HOUR, "claude --resume xyz"),
+            (710, 5 * HOUR, "/Users/u/.local/bin/claude daemon run"),
+            (720, HOUR, "claude bg-pty-host --bg-pty-host /tmp/c.sock"),
+            (800, 5 * HOUR, "claude --resume abc"),
+            (820, HOUR, "claude -p hello"),
         ]);
         (ProcTable::parse(PS), info)
+    }
+
+    fn by_pid(found: &[OutsideAgent]) -> HashMap<u32, &OutsideAgent> {
+        found.iter().map(|a| (a.pid, a)).collect()
     }
 
     #[test]
     fn groups_agent_processes_outside_the_terminal_host() {
         let (t, info) = fixture();
-        assert_eq!(candidates(&t, 100), vec![200, 210, 211, 220, 221, 310, 311, 410, 500, 600, 610], "nothing under the host is a candidate");
+        assert!(!candidates(&t, 100).contains(&111), "nothing under the host is a candidate");
         let found = outside_agents(&t, 100, &info);
-        let by_pid: HashMap<u32, &OutsideAgent> = found.iter().map(|a| (a.pid, a)).collect();
+        let by_pid = by_pid(&found);
         let mut pids: Vec<u32> = by_pid.keys().copied().collect();
         pids.sort_unstable();
-        assert_eq!(pids, vec![200, 210, 220, 310, 410, 500, 600, 610], "one entry per group; a daemon's children stand alone");
+        assert_eq!(pids, vec![200, 210, 220, 310, 410, 420, 500, 600, 610, 700, 710, 720, 800], "one entry per group");
 
         let daemon = by_pid[&200];
-        assert!(daemon.daemon && !daemon.idle, "a daemon is never offered for stopping");
+        assert!(daemon.daemon && !daemon.leftover, "a daemon is never offered for stopping");
         assert_eq!((daemon.command.as_str(), daemon.resources.processes, daemon.resources.rss_kb), ("claude daemon", 1, 200_000));
 
         let leaked = by_pid[&210];
         assert_eq!((leaked.started_by.as_str(), leaked.resources.rss_kb, leaked.resources.processes), ("claude daemon", 240_000, 2));
         assert_eq!(leaked.command, "claude --bg-pty-host", "a process's own title is not taken for its argument");
-        assert!(leaked.idle, "nothing but agent processes under it, no CPU, hours old");
-        assert!(!by_pid[&220].idle, "a command still runs under it");
+        assert!(leaked.leftover, "hosted by a daemon, nothing but agent processes under it, quiet, hours old");
+        assert!(!by_pid[&220].leftover, "a command still runs under it");
 
         let desktop = by_pid[&310];
         assert_eq!((desktop.started_by.as_str(), desktop.resources.processes, desktop.command.as_str()), ("Claude", 3, "claude --resume"));
-        assert!(!desktop.idle, "a desktop conversation with a tool server is not idle");
+        assert!(!desktop.leftover);
 
         let headless = by_pid[&410];
         assert_eq!((headless.command.as_str(), headless.started_by.as_str()), ("claude -p", "reviewer"));
-        assert!(!headless.idle, "young and busy");
-        assert_eq!((by_pid[&500].provider, by_pid[&500].command.as_str()), (AgentProvider::Codex, "codex exec"));
+        assert!(!by_pid[&420].leftover, "a quiet, old headless run may be waiting on a response; it is never a leftover");
+        let orphan = by_pid[&500];
+        assert_eq!((orphan.provider, orphan.command.as_str(), orphan.leftover), (AgentProvider::Codex, "codex exec", true));
         assert_eq!(found[0].pid, 310, "heaviest first");
+    }
+
+    #[test]
+    fn every_process_belongs_to_one_group() {
+        let (t, info) = fixture();
+        let found = outside_agents(&t, 100, &info);
+        let by_pid = by_pid(&found);
+        // claude -> zsh -> claude: the inner harness stays in the outer group.
+        let outer = by_pid[&800];
+        assert_eq!((outer.resources.processes, outer.resources.rss_kb), (3, 122_000));
+        assert!(!by_pid.contains_key(&820));
+        assert!(!outer.leftover, "a shell runs under it");
+        // A daemon below an agent is a group of its own, counted once.
+        let above = by_pid[&700];
+        assert_eq!((above.resources.processes, above.resources.rss_kb), (1, 50_000));
+        assert!(!above.leftover, "never stopped while a daemon runs below it");
+        assert!(by_pid[&710].daemon);
+        assert_eq!(by_pid[&720].started_by, "claude daemon");
+        // 20 processes sit in agent trees outside the host; each is in one row.
+        let rows: u32 = found.iter().map(|a| a.resources.processes).sum();
+        assert_eq!(rows, 20, "every process is counted exactly once");
     }
 
     #[test]
     fn a_daemon_on_a_path_with_spaces_is_still_a_daemon() {
         let (t, info) = fixture();
         let found = outside_agents(&t, 100, &info);
-        let agy = found.iter().find(|a| a.pid == 600).unwrap();
-        assert!(agy.daemon && !agy.idle);
+        let by_pid = by_pid(&found);
+        let agy = by_pid[&600];
+        assert!(agy.daemon && !agy.leftover);
         assert_eq!((agy.command.as_str(), agy.resources.processes), ("agy daemon", 1));
-        let hosted = found.iter().find(|a| a.pid == 610).unwrap();
-        assert_eq!(hosted.started_by, "agy daemon");
+        assert_eq!(by_pid[&610].started_by, "agy daemon");
     }
 
     #[test]
     fn prompt_text_never_shows() {
         let (t, info) = fixture();
         let found = outside_agents(&t, 100, &info);
-        assert_eq!(found.iter().find(|a| a.pid == 610).unwrap().command, "agy", "a positional prompt is dropped");
+        assert_eq!(by_pid(&found)[&610].command, "agy", "a positional prompt is dropped");
         assert_eq!(shown_arg("--append-system-prompt=keep this private").as_deref(), Some("--append-system-prompt"));
         assert_eq!(shown_arg("rotate").as_deref(), None);
         assert_eq!(shown_arg("exec").as_deref(), Some("exec"));
         for a in &found {
-            assert!(!a.command.contains("secret") && !a.command.contains("rotate"), "{}", a.command);
+            assert!(!a.command.contains("secret") && !a.command.contains("rotate") && !a.command.contains("hello"), "{}", a.command);
         }
     }
 
     #[test]
-    fn only_an_idle_group_outside_every_session_may_be_stopped() {
+    fn only_a_leftover_may_be_stopped() {
         let (t, info) = fixture();
         let agents = outside_agents(&t, 100, &info);
-        assert_eq!(stop_target(&agents, 210), Ok(()));
+        for pid in [210, 500, 610, 720] {
+            assert_eq!(stop_target(&agents, pid), Ok(()), "{pid}");
+        }
         assert_eq!(stop_target(&agents, 200), Err(StopRefused::Daemon));
-        assert_eq!(stop_target(&agents, 220), Err(StopRefused::NotIdle));
-        assert_eq!(stop_target(&agents, 410), Err(StopRefused::NotIdle));
-        assert_eq!(stop_target(&agents, 211), Err(StopRefused::Gone), "part of a group, not a group");
-        assert_eq!(stop_target(&agents, 111), Err(StopRefused::Gone), "a session's harness is never outside");
-        assert_eq!(stop_target(&agents, 9999), Err(StopRefused::Gone));
+        for pid in [220, 310, 410, 420, 700, 800] {
+            assert_eq!(stop_target(&agents, pid), Err(StopRefused::NotLeftover), "{pid}");
+        }
+        for pid in [211, 820, 111, 9999] {
+            assert_eq!(stop_target(&agents, pid), Err(StopRefused::Gone), "{pid}: part of a group, in a session or unknown");
+        }
     }
 
     #[test]
@@ -382,5 +504,13 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert!(wait_gone(child.id(), Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn a_process_that_cannot_be_signalled_is_not_gone() {
+        // launchd exists; an unprivileged probe gets EPERM, which is not "gone".
+        assert!(!matches!(signal(1, 0), Ok(false)));
+        assert!(!wait_gone(1, Duration::from_millis(150)));
+        assert!(signal(0, 0).is_err(), "pid 0 would address a process group");
     }
 }

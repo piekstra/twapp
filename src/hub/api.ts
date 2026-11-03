@@ -65,8 +65,12 @@ export interface OutsideAgent {
   started_by: string;
   age_secs: number;
   resources: SessionResources;
-  /** Nothing but agent processes under it, no CPU, at least half an hour old. */
-  idle: boolean;
+  /**
+   * What finished background work leaves behind: hosted by a daemon or
+   * orphaned, nothing but agent processes under it, not busy, at least half
+   * an hour old. Only these can be stopped.
+   */
+  leftover: boolean;
   /** Hosts background work for many sessions; never stopped from here. */
   daemon: boolean;
 }

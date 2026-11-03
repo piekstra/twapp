@@ -480,18 +480,27 @@ note, when it was archived, and each copy with the path the harness reads.
   processes whose `ps` name is a harness binary (`proctree::harness_of`, the
   same test that finds a session's harness, so Claude Code's native
   `claude/versions/<version>` path and its `claude <role>` helpers count for
-  both) and that are neither the terminal host nor below it. Each group starts at
-  such a process whose parent is not one, except that the children of an
-  `<agent> daemon` process start groups of their own, since a daemon hosts
-  unrelated work for many sessions; the daemon's row counts only itself. A
-  group is idle when everything below it is an agent process, it uses under
-  1% CPU and it is at least 30 minutes old. Only idle groups can be stopped
-  (`hub_stop_outside_agent`, SIGTERM deepest first), and the hub scans again
-  and asks `outside::stop_target` first, so one that started working, joined
-  a session or whose pid was reused is refused. A row shows the harness and,
-  when it is a flag (without its value) or a known subcommand, its first
-  argument; anything else could be prompt text. The tab refreshes the list
-  every ten seconds while the window is visible.
+  both) and that are neither the terminal host nor below it. Every process
+  belongs to one group: a group starts at such a process with no harness
+  above it, or whose nearest harness above it is an `<agent> daemon`, or that
+  is a daemon; a harness started further down (through a shell another
+  harness runs) stays in its ancestor's group, and a group stops at any
+  daemon below it. A daemon's row counts only itself, since it hosts
+  unrelated work for many sessions, some of it started by sessions in this
+  window. A failed `ps` is an error, not an empty list.
+  A group is a leftover when it is hosted by a daemon or orphaned (its
+  parent gone), everything in it is an agent process and no daemon is below
+  it, it uses under 10% CPU, and it is at least 30 minutes old. One CPU
+  sample cannot tell a conversation or job that is waiting from a finished
+  one, so the rule rests on those forms: interactive, desktop-app and
+  headless runs are listed but never leftovers. Only leftovers can be
+  stopped (`hub_stop_outside_agent`, SIGTERM deepest first): the hub scans
+  again and asks `outside::stop_target` first, so one that started working,
+  joined a session or whose pid was reused is refused, a signal the process
+  refuses is an error, and only "no such process" counts as stopped. A row
+  shows the harness and, when it is a flag (without its value) or a known
+  subcommand, its first argument; anything else could be prompt text. The
+  tab refreshes the list every ten seconds while the window is visible.
 
 Keyboard:
 

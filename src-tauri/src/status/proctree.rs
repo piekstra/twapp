@@ -115,6 +115,10 @@ impl ProcTable {
         self.entries.get(&pid)
     }
 
+    pub fn children(&self, pid: u32) -> &[u32] {
+        self.children.get(&pid).map_or(&[], Vec::as_slice)
+    }
+
     pub fn entries(&self) -> impl Iterator<Item = &ProcEntry> {
         self.entries.values()
     }

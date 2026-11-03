@@ -47,7 +47,7 @@ try {
           window.__calls.push({ cmd, args });
           if (cmd === 'hub_measure_disk') return true;
           if (cmd === 'hub_stop_outside_agent') {
-            if (args.pid === 500) throw 'It is no longer idle, so nothing was stopped.';
+            if (args.pid === 500) throw 'It no longer looks like a leftover, so nothing was stopped.';
             window.__outside = window.__outside.filter(a => a.pid !== args.pid);
             return true;
           }
@@ -128,11 +128,11 @@ try {
     );
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('board-session')), true, 'focus lands on the session name');
     // Agent processes outside every session: listed heaviest first as the hub
-    // sends them, Stop only on idle ones, never on the daemon.
+    // sends them, Stop only on leftovers, never on the daemon.
     const strays = page.getByRole('table', { name: 'Agent processes outside your sessions' });
     await strays.waitFor();
     assert.equal(await strays.locator('tbody tr').count(), outside.length);
-    assert.match(await page.locator('#resources-outside-head .count').textContent(), /^3\.3 GB in 6 · 1\.6 GB in 3 idle$/);
+    assert.match(await page.locator('#resources-outside-head .count').textContent(), /^3\.3 GB in 6 · 1\.6 GB in 3 leftover$/);
     assert.deepEqual(
       (await strays.getByRole('button', { name: /^Stop / }).evaluateAll(els => els.map(e => e.getAttribute('aria-label')))).sort(),
       ['Stop claude --bg-pty-host 24099', 'Stop claude --bg-pty-host 24982', 'Stop codex exec 500'],
@@ -157,7 +157,7 @@ try {
     const codex = strays.locator('tbody tr').filter({ hasText: 'codex exec' });
     await codex.getByRole('button', { name: 'Stop codex exec 500' }).click();
     await codex.getByRole('group').getByRole('button', { name: 'Stop codex exec 500' }).click();
-    const refused = page.locator('.resources-outside [role="alert"]').filter({ hasText: 'It is no longer idle' });
+    const refused = page.locator('.resources-outside [role="alert"]').filter({ hasText: 'no longer looks like a leftover' });
     await refused.waitFor();
     await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
     assert.equal(await refused.count(), 1, 'the refusal stays after the refresh that follows it');

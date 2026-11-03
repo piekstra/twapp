@@ -8,7 +8,7 @@ const REFRESH_MS = 10_000;
 /**
  * Agent processes no session's terminal started: a harness's daemon and the
  * background work it hosts, desktop-app conversations, headless runs other
- * tools start. Idle groups can be stopped.
+ * tools start. Leftovers of finished background work can be stopped.
  */
 export default function OutsideAgents({ now }: { now: number }) {
   const [agents, setAgents] = useState<OutsideAgent[] | null>(null);
@@ -112,8 +112,8 @@ export default function OutsideAgents({ now }: { now: number }) {
   if (agents === null && !loadError) return null;
   const list = agents ?? [];
   const totalKb = list.reduce((n, a) => n + a.resources.rss_kb, 0);
-  const idle = list.filter((a) => a.idle);
-  const idleKb = idle.reduce((n, a) => n + a.resources.rss_kb, 0);
+  const leftovers = list.filter((a) => a.leftover);
+  const leftoverKb = leftovers.reduce((n, a) => n + a.resources.rss_kb, 0);
 
   return (
     <section className="resources-outside" aria-labelledby="resources-outside-head">
@@ -122,14 +122,15 @@ export default function OutsideAgents({ now }: { now: number }) {
         {list.length > 0 && (
           <span className="count">
             {formatKb(totalKb)} in {list.length}
-            {idle.length > 0 && ` · ${formatKb(idleKb)} in ${idle.length} idle`}
+            {leftovers.length > 0 && ` · ${formatKb(leftoverKb)} in ${leftovers.length} leftover`}
           </span>
         )}
       </h3>
       <p className="board-muted resources-explain">
         Claude, Codex and Antigravity processes that no session's terminal started: a harness's daemon and the background work it
-        hosts, desktop-app conversations, and runs other tools start. Idle means nothing but agent processes runs under it, it uses
-        no CPU, and it is at least half an hour old.
+        hosts, which can belong to one of your sessions, desktop-app conversations, and runs other tools start. A leftover is what
+        finished background work leaves behind: hosted by a daemon or orphaned, with nothing but agent processes under it, not busy,
+        and at least half an hour old. Only leftovers can be stopped; a conversation or run that may be waiting never is.
       </p>
       <div className="sr-only" role="status">{status}</div>
       {actionError && (
@@ -156,11 +157,11 @@ export default function OutsideAgents({ now }: { now: number }) {
           </thead>
           <tbody>
             {list.map((a) => (
-              <tr key={a.pid} className={a.idle ? "stale" : undefined}>
+              <tr key={a.pid} className={a.leftover ? "stale" : undefined}>
                 <td>
                   <code className="resources-command">{a.command}</code>
                   <span className="board-muted"> {a.pid}</span>
-                  {a.idle && <span className="chip resources-flag">Idle</span>}
+                  {a.leftover && <span className="chip resources-flag">Leftover</span>}
                   {a.daemon && <span className="chip resources-flag" title="Hosts background work for many sessions; not stopped from here">Daemon</span>}
                 </td>
                 <td className="resources-state">{a.started_by}</td>
@@ -169,7 +170,7 @@ export default function OutsideAgents({ now }: { now: number }) {
                 <td className="num">{formatCpu(a.resources.cpu_tenths)}</td>
                 <td className="num">{a.resources.processes}</td>
                 <td className="resources-action">
-                  {a.idle &&
+                  {a.leftover &&
                     (confirming === a.pid ? (
                       <span className="resources-confirm" role="group" aria-label={`Stop ${a.command} ${a.pid}?`}>
                         <span className="board-muted">Ends it and everything under it.</span>
