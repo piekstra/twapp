@@ -156,7 +156,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_summarize,
             hub::hub_triage,
             hub::hub_usage,
-            hub::hub_disk_usage,
+            hub::hub_measure_disk,
+            hub::hub_session_disk,
             hub::hub_reports,
         ])
         .setup(move |app| {

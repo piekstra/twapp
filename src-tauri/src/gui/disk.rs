@@ -2,16 +2,22 @@
 //! conversation keeps outside it. Measured on request, since walking large
 //! trees is too slow and too heavy on the disk to run with every poll.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use crate::cli::session::{read_session, AgentProvider};
 use crate::status::claude::locate_transcript;
 
+/// A walk still running after this is given up, so one slow or unreachable
+/// volume costs only its own session's number.
+const DU_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DiskUsage {
+pub struct SessionDisk {
     pub key: String,
     /// Everything under the session directory, in KiB.
     pub dir_kb: Option<u64>,
@@ -21,7 +27,7 @@ pub struct DiskUsage {
 
 /// `projects` is `~/.claude/projects`; `tmp` holds Claude Code's
 /// `claude-<uid>` directory.
-pub fn measure(key: &str, projects: &Path, tmp: &Path) -> DiskUsage {
+pub fn measure(key: &str, projects: &Path, tmp: &Path) -> SessionDisk {
     let dir = Path::new(key);
     let temp = read_session(dir).ok().and_then(|data| {
         let id = data.native_session_id(AgentProvider::Claude)?.to_string();
@@ -29,10 +35,10 @@ pub fn measure(key: &str, projects: &Path, tmp: &Path) -> DiskUsage {
         let transcript = locate_transcript(projects, &cwd, &id)?;
         claude_temp_dir(tmp, &transcript)
     });
-    DiskUsage {
+    SessionDisk {
         key: key.to_string(),
-        dir_kb: du_kb(dir),
-        temp_kb: temp.as_deref().and_then(du_kb),
+        dir_kb: du_kb(dir, DU_TIMEOUT),
+        temp_kb: temp.and_then(|t| du_kb(&t, DU_TIMEOUT)),
     }
 }
 
@@ -47,22 +53,36 @@ fn claude_temp_dir(tmp: &Path, transcript: &Path) -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// `du`'s total for `path`, in KiB. `du` exits non-zero when it cannot read
-/// part of the tree but still prints the total of what it could.
-fn du_kb(path: &Path) -> Option<u64> {
+/// `du`'s total for `path`, in KiB, or `None` when it takes longer than
+/// `timeout`. `du` exits non-zero when it cannot read part of the tree but
+/// still prints the total of what it could.
+fn du_kb(path: &Path, timeout: Duration) -> Option<u64> {
     if !path.is_dir() {
         return None;
     }
-    let out = Command::new("nice")
+    let mut child = Command::new("nice")
         .args(["-n", "10", "du", "-skx"])
         .arg(path)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
+    let start = Instant::now();
+    loop {
+        let finished = if start.elapsed() < timeout { child.try_wait().ok() } else { None };
+        match finished {
+            Some(Some(_)) => break,
+            Some(None) => std::thread::sleep(Duration::from_millis(50)),
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    out.split_whitespace().next()?.parse().ok()
 }
 
 #[cfg(test)]
@@ -80,8 +100,9 @@ mod tests {
 
         assert_eq!(claude_temp_dir(&root, transcript), Some(scratch.clone()));
         assert_eq!(claude_temp_dir(&root, Path::new("/p/-work-app/other.jsonl")), None);
-        assert!(du_kb(&scratch).is_some_and(|kb| kb >= 64));
-        assert_eq!(du_kb(&root.join("missing")), None);
+        assert!(du_kb(&scratch, DU_TIMEOUT).is_some_and(|kb| kb >= 64));
+        assert_eq!(du_kb(&root.join("missing"), DU_TIMEOUT), None);
+        assert_eq!(du_kb(&scratch, Duration::ZERO), None, "a walk past its time is given up");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

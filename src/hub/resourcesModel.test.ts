@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { DiskUsage, SessionView } from "./api";
-import { byResources, formatCpu, formatKb, idleDays, staleReason } from "./resourcesModel";
+import type { SessionDisk, SessionView } from "./api";
+import { byResources, canStop, formatCpu, formatKb, idleDays, staleReason } from "./resourcesModel";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z");
 
-function session(name: string, over: Partial<SessionView> & { state?: SessionView["status"]["state"]; since?: string; rss?: number } = {}): SessionView {
-  const { state = "your_turn", since = "2026-11-03T11:00:00Z", rss, ...rest } = over;
+function session(name: string, over: Partial<SessionView> & { state?: SessionView["status"]["state"]; since?: string } = {}): SessionView {
+  const { state = "your_turn", since = "2026-11-03T11:00:00Z", ...rest } = over;
   return {
     key: `/work/${name}`,
     name,
@@ -17,7 +17,6 @@ function session(name: string, over: Partial<SessionView> & { state?: SessionVie
     override_terminal_theme: false,
     tabs: [],
     status: { state, since, detail: null, title: null, last_message: null, transcript_path: null, transcript_len: 0, harness_pid: null },
-    usage: rss === undefined ? null : { rss_kb: rss, cpu_tenths: 0, processes: 1 },
     summary: null,
     last_viewed: null,
     attention: false,
@@ -44,33 +43,40 @@ describe("staleness", () => {
   });
 
   it("flags parked and long-idle sessions that still run", () => {
-    expect(staleReason(session("parked", { lane: "parked", rss: 500_000 }), NOW)).toBe("Parked, still running");
-    expect(staleReason(session("old", { since: "2026-10-30T11:00:00Z", rss: 500_000 }), NOW)).toBe("Idle 4d");
-    expect(staleReason(session("recent", { rss: 500_000 }), NOW)).toBeNull();
+    expect(staleReason(session("parked", { lane: "parked" }), NOW)).toBe("Parked, still running");
+    expect(staleReason(session("old", { since: "2026-10-30T11:00:00Z" }), NOW)).toBe("Idle 4d");
+    expect(staleReason(session("recent"), NOW)).toBeNull();
   });
 
-  it("never flags a session that is not running or is at work", () => {
-    expect(staleReason(session("stopped", { lane: "parked", state: "suspended" }), NOW)).toBeNull();
-    expect(staleReason(session("no usage yet", { lane: "parked" }), NOW)).toBeNull();
-    for (const state of ["working", "starting", "needs_approval"] as const) {
-      expect(staleReason(session(state, { lane: "parked", state, since: "2026-10-01T00:00:00Z", rss: 1 }), NOW)).toBeNull();
+  it("never flags or offers to stop a session whose agent is not running or is at work", () => {
+    for (const state of ["suspended", "exited", "working", "starting", "needs_approval"] as const) {
+      const s = session(state, { lane: "parked", state, since: "2026-10-01T00:00:00Z" });
+      expect(staleReason(s, NOW)).toBeNull();
+      expect(canStop(s)).toBe(false);
     }
+    expect(canStop(session("waiting on the user"))).toBe(true);
   });
 });
 
 describe("order", () => {
-  it("puts running sessions first by memory, then the rest by disk", () => {
-    const disk = new Map<string, DiskUsage>([
+  it("puts sessions using memory first, largest first, then the rest by disk", () => {
+    const disk = new Map<string, SessionDisk>([
       ["/work/big-disk", { key: "/work/big-disk", dir_kb: 9_000_000, temp_kb: null }],
       ["/work/small-disk", { key: "/work/small-disk", dir_kb: 10, temp_kb: 5 }],
     ]);
+    const resources = {
+      "/work/light": { rss_kb: 100, cpu_tenths: 0, processes: 1 },
+      "/work/heavy": { rss_kb: 900, cpu_tenths: 0, processes: 2 },
+      "/work/small-disk": null,
+    };
     const order = byResources(
       [
         session("small-disk", { state: "suspended" }),
-        session("light", { rss: 100 }),
+        session("light"),
         session("big-disk", { state: "suspended" }),
-        session("heavy", { rss: 900 }),
+        session("heavy"),
       ],
+      resources,
       disk,
     ).map((s) => s.name);
     expect(order).toEqual(["heavy", "light", "big-disk", "small-disk"]);

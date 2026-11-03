@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
-import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type SessionView, type Triage, type UsageReport } from "./api";
+import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type SessionResources, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
 import AskList, { asksOf } from "./AskList";
@@ -20,6 +20,7 @@ interface Props {
   onSelect: (key: string) => void;
   /** Stop a session's main terminal, keeping it in the window. */
   onStop: (key: string) => Promise<void>;
+  resources: Record<string, SessionResources | null>;
   onOpenLibrary: () => void;
   library: React.ReactNode;
   showLibrary: boolean;
@@ -34,6 +35,7 @@ export default function Overview({
   now,
   onSelect,
   onStop,
+  resources,
   library,
   showLibrary,
   setShowLibrary,
@@ -269,7 +271,7 @@ export default function Overview({
         </div>
       ) : showResources ? (
         <div className="overview-body">
-          <Resources sessions={sessions} now={now} onSelect={onSelect} onStop={onStop} />
+          <Resources sessions={sessions} resources={resources} now={now} onSelect={onSelect} onStop={onStop} />
         </div>
       ) : (
         <div className="overview-body">

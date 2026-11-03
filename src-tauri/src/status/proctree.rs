@@ -22,7 +22,7 @@ pub struct ProcEntry {
 
 /// What a set of processes uses, totalled over each one and everything below it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct Usage {
+pub struct Resources {
     pub rss_kb: u64,
     pub cpu_tenths: u32,
     pub processes: u32,
@@ -82,10 +82,12 @@ impl ProcTable {
     }
 
     /// The memory and CPU of `roots` and every process below them, each
-    /// process counted once.
-    pub fn usage(&self, roots: &[u32]) -> Usage {
+    /// process counted once. `None` when no root is in the table, which is
+    /// also what a failed `ps` looks like: a live terminal always has at
+    /// least its shell, so there is nothing to report rather than zero.
+    pub fn resources(&self, roots: &[u32]) -> Option<Resources> {
         let mut seen = HashSet::new();
-        let mut usage = Usage::default();
+        let mut total = Resources::default();
         for &root in roots {
             if !self.entries.contains_key(&root) {
                 continue;
@@ -95,13 +97,13 @@ impl ProcTable {
                     continue;
                 }
                 if let Some(e) = self.entries.get(&pid) {
-                    usage.rss_kb += e.rss_kb;
-                    usage.cpu_tenths += e.cpu_tenths;
-                    usage.processes += 1;
+                    total.rss_kb += e.rss_kb;
+                    total.cpu_tenths += e.cpu_tenths;
+                    total.processes += 1;
                 }
             }
         }
-        usage
+        (total.processes > 0).then_some(total)
     }
 
     fn insert(&mut self, entry: ProcEntry) {
@@ -224,18 +226,24 @@ garbage line
         let me = t.get(std::process::id()).expect("the test process is in the table");
         assert!(me.rss_kb > 0);
         let below: u64 = t.descendants(me.pid).iter().filter_map(|p| t.get(*p)).map(|e| e.rss_kb).sum();
-        assert_eq!(t.usage(&[me.pid]).rss_kb, me.rss_kb + below);
+        assert_eq!(t.resources(&[me.pid]).unwrap().rss_kb, me.rss_kb + below);
     }
 
     #[test]
-    fn usage_totals_each_process_once() {
+    fn resources_total_each_process_once() {
         let t = ProcTable::parse(PS);
-        let session = Usage { rss_kb: 643_500, cpu_tenths: 923, processes: 4 };
-        assert_eq!(t.usage(&[510]), session);
+        let session = Resources { rss_kb: 643_500, cpu_tenths: 923, processes: 4 };
+        assert_eq!(t.resources(&[510]), Some(session));
         // A root inside another root's tree, or listed twice, adds nothing.
-        assert_eq!(t.usage(&[510, 530, 510]), session);
-        assert_eq!(t.usage(&[510, 700]).processes, 6);
-        assert_eq!(t.usage(&[9999]), Usage::default());
+        assert_eq!(t.resources(&[510, 530, 510]), Some(session));
+        assert_eq!(t.resources(&[510, 700]).unwrap().processes, 6);
+    }
+
+    #[test]
+    fn no_known_root_is_no_measurement() {
+        assert_eq!(ProcTable::parse(PS).resources(&[9999]), None);
+        assert_eq!(ProcTable::default().resources(&[510]), None, "a failed ps reads as nothing, not zero");
+        assert_eq!(ProcTable::parse(PS).resources(&[]), None);
     }
 
     #[test]

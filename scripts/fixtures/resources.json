@@ -35,7 +35,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": {
+      "resources": {
         "rss_kb": 831488,
         "cpu_tenths": 34,
         "processes": 9
@@ -76,7 +76,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": {
+      "resources": {
         "rss_kb": 552960,
         "cpu_tenths": 2,
         "processes": 4
@@ -117,7 +117,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": {
+      "resources": {
         "rss_kb": 624640,
         "cpu_tenths": 1,
         "processes": 5
@@ -158,7 +158,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": {
+      "resources": {
         "rss_kb": 1992294,
         "cpu_tenths": 1450,
         "processes": 23
@@ -199,7 +199,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": {
+      "resources": {
         "rss_kb": 498000,
         "cpu_tenths": 0,
         "processes": 3
@@ -240,7 +240,7 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": null
+      "resources": null
     },
     {
       "key": "/work/archive",
@@ -277,7 +277,54 @@
       "checked_at": null,
       "blockers": [],
       "asks": [],
-      "usage": null
+      "resources": null
+    },
+    {
+      "key": "/work/devserver",
+      "name": "Agent stopped, dev server tab still up",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "devserver-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": false,
+          "alive": false
+        },
+        {
+          "tab": "tab-1",
+          "title": "Shell 1",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "suspended",
+        "since": "2026-11-02T10:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "background",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "resources": {
+        "rss_kb": 1258291,
+        "cpu_tenths": 12,
+        "processes": 6
+      }
     }
   ],
   "selected": "/work/payments",

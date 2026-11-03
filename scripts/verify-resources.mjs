@@ -1,4 +1,4 @@
-// Headless Resources tab checks; native commands use synthetic sessions.
+// Headless Resources tab checks; native commands and hub events use synthetic sessions.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,46 +16,75 @@ try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: theme });
     await page.clock.setFixedTime(new Date('2026-11-03T12:00:00Z'));
     await page.route('https://api.github.com/**', r => r.abort());
-    await page.addInitScript(({ theme, width, snapshot, disk }) => {
+    await page.addInitScript(({ theme, width, snapshot }) => {
       localStorage.setItem('twapp-layout', JSON.stringify({ mode: 'right', sidebarWidth: width, switcherCollapsedLanes: [] }));
       window.__calls = [];
+      const callbacks = {};
+      const listeners = [];
       let counter = 0;
+      window.__emit = (event, payload) =>
+        listeners.filter(l => l.event === event).forEach(l => callbacks[l.handler]?.({ event, id: 0, payload }));
       window.__TAURI_INTERNALS__ = {
         metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
-        transformCallback: () => ++counter,
+        transformCallback: (cb) => { callbacks[++counter] = cb; return counter; },
         unregisterCallback: () => {},
         invoke: async (cmd, args) => {
           if (cmd === 'hub_snapshot') return snapshot;
-          if (cmd === 'hub_disk_usage') return disk;
+          if (cmd === 'hub_session_disk') return { running: false, sessions: [] };
           if (cmd === 'get_theme_preference') return theme;
           if (cmd === 'get_global_config') return { agent_providers: ['claude', 'codex', 'antigravity'] };
           if (cmd === 'get_notes' || cmd === 'get_session_history') return [];
           if (cmd === 'get_ticket') return null;
           if (cmd === 'get_font_family_preference') return 'monospace';
           if (cmd === 'plugin:app|version') return '0.0.0';
-          if (cmd === 'plugin:event|listen') return ++counter;
+          if (cmd === 'plugin:event|listen') { listeners.push({ event: args.event, handler: args.handler }); return ++counter; }
+          if (cmd === 'plugin:event|unlisten') return null;
           window.__calls.push({ cmd, args });
+          if (cmd === 'hub_measure_disk') return true;
           return null;
         },
       };
-    }, { theme, width, snapshot, disk });
+    }, { theme, width, snapshot });
     await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1420');
     await page.locator('.rail-home').click();
     await page.getByRole('button', { name: 'Resources', exact: true }).click();
-    const table = page.locator('.resources-table');
+    const table = page.getByRole('table', { name: 'Resources by session' });
     await table.waitFor();
 
     const rows = table.locator('tbody tr');
+    const names = async () => (await rows.locator('.resources-session').allTextContents());
     assert.equal(await rows.count(), snapshot.sessions.length);
-    assert.equal(await rows.first().locator('.board-session').textContent(), 'Release build', 'the heaviest session comes first');
+    assert.deepEqual((await names()).slice(0, 2), ['Release build', 'Agent stopped, dev server tab still up'],
+      'heaviest first, and a tab that outlives its agent still counts');
     assert.deepEqual(await table.locator('.resources-flag').allTextContents(), ['Idle 5d', 'Parked, still running']);
-    // Only running sessions that are not at work or waiting on a prompt can be stopped.
-    assert.equal(await table.getByRole('button', { name: 'Stop', exact: true }).count(), 3);
-    assert.match(await page.locator('.resources .overview-stat').first().textContent(), /^4\.3 GB\s*memory in 5 running$/);
+    // Stop only where the agent runs and is neither at work nor waiting on a prompt.
+    assert.deepEqual(
+      (await table.getByRole('button', { name: /^Stop / }).evaluateAll(els => els.map(e => e.getAttribute('aria-label')))).sort(),
+      ['Stop Docs refresh', 'Stop Old investigation', 'Stop Payments retry worker with a deliberately long session name'],
+    );
+    assert.equal(await table.getByRole('columnheader', { name: 'Actions' }).count(), 1);
+    assert.match(await page.locator('.resources .overview-stat').first().textContent(), /^5\.5 GB\s*memory in 6 running$/);
 
+    // A refresh arrives as one event for every changed session.
+    await page.evaluate(() => window.__emit('hub:resources', {
+      '/work/docs': { rss_kb: 3 * 1024 * 1024, cpu_tenths: 5, processes: 4 },
+      '/work/payments': null,
+    }));
+    await page.waitForFunction(() => document.querySelector('.resources-table tbody tr .resources-session')?.textContent === 'Docs refresh');
+    assert.equal(await rows.filter({ hasText: 'Docs refresh' }).locator('td.num').first().textContent(), '3.0 GB');
+    assert.equal(await rows.filter({ hasText: 'Payments retry' }).locator('td.num').first().textContent(), '');
+
+    // Disk is measured by the hub; results land one session at a time.
     await page.getByRole('button', { name: 'Measure disk', exact: true }).click();
-    await page.getByText('on disk across these sessions.').waitFor();
+    await page.getByRole('status').filter({ hasText: 'Measuring one session at a time' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Measuring disk...', exact: true }).isDisabled(), true);
+    await page.evaluate((disk) => {
+      for (const session of disk) window.__emit('hub:disk', { session, running: true });
+      window.__emit('hub:disk', { session: null, running: false });
+    }, disk);
+    await page.getByRole('status').filter({ hasText: 'on disk across these sessions.' }).waitFor();
     assert.equal(await rows.filter({ hasText: 'Stopped session' }).locator('td.num').last().textContent(), '6.0 GB');
+    assert.equal((await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_measure_disk'))).length, 1);
 
     const overflow = await page.locator('.overview-body').evaluate(el => {
       const box = el.getBoundingClientRect();
@@ -65,21 +94,26 @@ try {
     assert.equal(overflow, 0, 'nothing runs past the overview');
     await page.screenshot({ path: path.join(dir, `resources-${theme}-${width}.png`) });
 
-    const docs = rows.filter({ hasText: 'Docs refresh' });
-    await docs.getByRole('button', { name: 'Stop', exact: true }).click();
-    await docs.getByText('Opening the session resumes it.').waitFor();
+    // Keyboard: focus follows the controls as they swap.
+    const old = rows.filter({ hasText: 'Old investigation' });
+    await old.getByRole('button', { name: 'Stop Old investigation' }).focus();
+    await page.keyboard.press('Enter');
+    await old.getByRole('group', { name: 'Stop Old investigation?' }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Cancel stopping Old investigation');
     await page.screenshot({ path: path.join(dir, `resources-confirm-${theme}-${width}.png`) });
     const before = await page.evaluate(() => window.__calls.length);
-    await docs.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.__calls.length), before, 'Cancel stops nothing');
-    await docs.getByRole('button', { name: 'Stop', exact: true }).click();
-    await docs.locator('.resources-confirm').getByRole('button', { name: 'Stop', exact: true }).click();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Stop Old investigation');
+    await page.keyboard.press('Enter');
+    await old.getByRole('group').getByRole('button', { name: 'Stop Old investigation' }).click();
     await page.waitForFunction(() => window.__calls.some(c => c.cmd === 'hub_close_tab'));
     assert.deepEqual(
       await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_close_tab')),
-      [{ cmd: 'hub_close_tab', args: { key: '/work/docs', tab: 'main' } }],
+      [{ cmd: 'hub_close_tab', args: { key: '/work/old', tab: 'main' } }],
     );
-    results.push({ theme, width, rows: snapshot.sessions.length, stopButtons: 3, overflow });
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('board-session')), true, 'focus lands on the session name');
+    results.push({ theme, width, rows: snapshot.sessions.length, overflow });
     await page.close();
   }
 } finally {

@@ -891,6 +891,7 @@ export default function Hub() {
             now={now}
             onSelect={selectSession}
             onStop={stopSession}
+            resources={hub.resources}
             onOpenLibrary={() => openLibrary("sessions")}
             library={library}
             showLibrary={showLibrary}
