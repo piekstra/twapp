@@ -192,11 +192,43 @@ jobs:
           # Strip leading whitespace from heredoc
           sed -i '' 's/^          //' /tmp/twapp.rb
 
-          CONTENT=$(base64 -i /tmp/twapp.rb)
-          EXISTING_SHA=$(gh api repos/piekstra/homebrew-tap/contents/Formula/twapp.rb --jq '.sha' 2>/dev/null || echo "")
-
-          gh api repos/piekstra/homebrew-tap/contents/Formula/twapp.rb \
-            -X PUT \
-            -f message="Update twapp to v${VERSION}" \
-            -f content="${CONTENT}" \
-            -f sha="${EXISTING_SHA}"
+          # The tap's main takes changes only through a reviewed pull request.
+          # One branch per release, cut from main, so the pull request never
+          # conflicts; an earlier release's PR still open is closed in favour
+          # of this one, leaving at most one formula PR waiting. brew sees the
+          # version once piekstra-dev approves it and it merges. `gh api`
+          # prints a 404's body to stdout, hence `|| VAR=""` outside `$()`.
+          TAP=piekstra/homebrew-tap
+          FILE=Formula/twapp.rb
+          BRANCH="formula/twapp-v${VERSION}"
+          NEW_BLOB=$(git hash-object /tmp/twapp.rb)
+          MAIN_BLOB=$(gh api "repos/$TAP/contents/$FILE" --jq .sha 2>/dev/null) || MAIN_BLOB=""
+          if [ "$NEW_BLOB" = "$MAIN_BLOB" ]; then
+            echo "The tap already has twapp v${VERSION}"
+            exit 0
+          fi
+          if ! gh api "repos/$TAP/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
+            MAIN_SHA=$(gh api "repos/$TAP/git/ref/heads/main" --jq .object.sha)
+            gh api "repos/$TAP/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$MAIN_SHA" >/dev/null
+          fi
+          BRANCH_BLOB=$(gh api "repos/$TAP/contents/$FILE?ref=$BRANCH" --jq .sha 2>/dev/null) || BRANCH_BLOB=""
+          if [ "$NEW_BLOB" != "$BRANCH_BLOB" ]; then
+            CONTENT=$(base64 < /tmp/twapp.rb | tr -d '\n')
+            if [ -n "$BRANCH_BLOB" ]; then
+              gh api -X PUT "repos/$TAP/contents/$FILE" -f message="twapp ${VERSION}" \
+                -f content="$CONTENT" -f branch="$BRANCH" -f sha="$BRANCH_BLOB" >/dev/null
+            else
+              gh api -X PUT "repos/$TAP/contents/$FILE" -f message="twapp ${VERSION}" \
+                -f content="$CONTENT" -f branch="$BRANCH" >/dev/null
+            fi
+          fi
+          PR=$(gh pr list -R "$TAP" --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -z "$PR" ]; then
+            PR=$(gh pr create -R "$TAP" --head "$BRANCH" --base main --title "twapp ${VERSION}" \
+              --body "Moves the twapp formula to https://github.com/piekstra/twapp/releases/tag/v${VERSION}. Opened by the twapp release workflow; each sha256 is that release's tarball.")
+          fi
+          for N in $(gh pr list -R "$TAP" --state open --json number,headRefName \
+              --jq ".[] | select(.headRefName | startswith(\"formula/twapp-v\")) | select(.headRefName != \"$BRANCH\") | .number"); do
+            gh pr close "$N" -R "$TAP" --delete-branch --comment "Superseded by $PR."
+          done
+          echo "::notice title=Homebrew::$PR moves twapp to v${VERSION}; brew sees it after the piekstra-dev review and merge."
