@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { hubApi, sinceLabel, type OutsideAgent } from "./api";
 import { formatCpu, formatKb } from "./resourcesModel";
+import StopConfirmRow from "./StopConfirmRow";
 
 /** Refresh interval while the section is on screen. */
 const REFRESH_MS = 10_000;
@@ -72,7 +73,9 @@ export default function OutsideAgents({ now }: { now: number }) {
         ? headingRef.current
         : want === "next-stop"
           ? stillHeld ? nextStop() ?? headingRef.current : null
-          : tableRef.current?.querySelector<HTMLElement>(`[data-pid="${want.pid}"][data-focus="${want.target}"]`);
+          : want.target === "cancel"
+            ? tableRef.current?.querySelector<HTMLElement>('[data-focus="cancel"]')
+            : tableRef.current?.querySelector<HTMLElement>(`[data-pid="${want.pid}"][data-focus="stop"]`);
     target?.focus();
   });
 
@@ -153,52 +156,55 @@ export default function OutsideAgents({ now }: { now: number }) {
               <th scope="col" className="num">Memory</th>
               <th scope="col" className="num">CPU</th>
               <th scope="col" className="num">Processes</th>
-              <th scope="col"><span className="sr-only">Actions</span></th>
+              <th scope="col" className="resources-action"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {list.map((a) => (
-              <tr key={a.pid} className={a.leftover ? "stale" : undefined}>
-                <td>
-                  <code className="resources-command">{a.command}</code>
-                  <span className="board-muted"> {a.pid}</span>
-                  {a.leftover && <span className="chip resources-flag">Leftover</span>}
-                  {a.daemon && <span className="chip resources-flag" title="Hosts background work for many sessions; not stopped from here">Daemon</span>}
-                </td>
-                <td className="resources-state">{a.started_by}</td>
-                <td className="resources-state">{sinceLabel(new Date(now - a.age_secs * 1000).toISOString(), now)}</td>
-                <td className="num">{formatKb(a.resources.rss_kb)}</td>
-                <td className="num">{formatCpu(a.resources.cpu_tenths)}</td>
-                <td className="num">{a.resources.processes}</td>
-                <td className="resources-action">
-                  {a.leftover &&
-                    (confirming === a.pid ? (
-                      <span className="resources-confirm" role="group" aria-label={`Stop ${a.command} ${a.pid}?`}>
-                        <span className="board-muted">Ends it and everything under it, including a task still waiting on a response.</span>
-                        <button className="button ghost small" data-pid={a.pid} data-focus="cancel" onClick={() => cancel(a.pid)} aria-label={`Cancel stopping ${a.command} ${a.pid}`}>
-                          Cancel
-                        </button>
-                        <button className="button ghost small danger" onClick={() => stop(a)} aria-label={`Stop ${a.command} ${a.pid}`}>
+            {list.map((a) => {
+              const asking = confirming === a.pid;
+              const name = `${a.command} ${a.pid}`;
+              return (
+                <Fragment key={a.pid}>
+                  <tr className={[a.leftover && "stale", asking && "confirming"].filter(Boolean).join(" ") || undefined}>
+                    <td>
+                      <code className="resources-command">{a.command}</code>
+                      <span className="board-muted"> {a.pid}</span>
+                      {a.leftover && <span className="chip resources-flag">{stopping === a.pid ? "Stopping" : "Leftover"}</span>}
+                      {a.daemon && <span className="chip resources-flag" title="Hosts background work for many sessions; not stopped from here">Daemon</span>}
+                    </td>
+                    <td className="resources-state">{a.started_by}</td>
+                    <td className="resources-state">{sinceLabel(new Date(now - a.age_secs * 1000).toISOString(), now)}</td>
+                    <td className="num">{formatKb(a.resources.rss_kb)}</td>
+                    <td className="num">{formatCpu(a.resources.cpu_tenths)}</td>
+                    <td className="num">{a.resources.processes}</td>
+                    <td className="resources-action">
+                      {a.leftover && (
+                        <button
+                          className={`button ghost small${asking ? " resources-held" : ""}`}
+                          data-pid={a.pid}
+                          data-focus="stop"
+                          disabled={stopping !== null}
+                          onClick={() => ask(a.pid)}
+                          aria-label={`Stop ${name}`}
+                        >
                           Stop
                         </button>
-                      </span>
-                    ) : stopping === a.pid ? (
-                      <span className="board-muted">Stopping</span>
-                    ) : (
-                      <button
-                        className="button ghost small"
-                        data-pid={a.pid}
-                        data-focus="stop"
-                        disabled={stopping !== null}
-                        onClick={() => ask(a.pid)}
-                        aria-label={`Stop ${a.command} ${a.pid}`}
-                      >
-                        Stop
-                      </button>
-                    ))}
-                </td>
-              </tr>
-            ))}
+                      )}
+                    </td>
+                  </tr>
+                  {asking && (
+                    <StopConfirmRow
+                      className="stale"
+                      columns={7}
+                      name={name}
+                      explain="Ends it and everything under it, including a task still waiting on a response."
+                      onCancel={() => cancel(a.pid)}
+                      onStop={() => stop(a)}
+                    />
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       )}
