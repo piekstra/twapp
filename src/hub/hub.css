@@ -4486,12 +4486,31 @@ kbd {
   white-space: nowrap;
 }
 
+/* As wide as a Stop, so the columns hold when the last one goes. */
+.resources-table th.resources-action {
+  width: 60px;
+}
+
+/* The confirm row's width comes from the table, never the other way round. */
 .resources-confirm {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  white-space: normal;
-  text-align: left;
+  contain: inline-size;
+}
+
+.resources-table tr.confirming td {
+  border-bottom-color: transparent;
+}
+
+.resources-table tr.resources-confirm-row td {
+  padding-top: 0;
+}
+
+/* Keeps the column's width while the confirm below stands in for it. */
+.resources-held {
+  visibility: hidden;
 }
 
 /* Read by screen readers, not shown. */

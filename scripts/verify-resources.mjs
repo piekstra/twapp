@@ -108,11 +108,34 @@ try {
     assert.equal(overflow, 0, 'nothing runs past the overview');
     await page.screenshot({ path: path.join(dir, `resources-${theme}-${width}.png`) });
 
-    // Keyboard: focus follows the controls as they swap.
+    // A session that starts working while its confirm is open loses it, focus
+    // moves from Cancel to the session's name, and the confirm does not come
+    // back when the session is idle again.
+    const docs = rows.filter({ hasText: 'Docs refresh' });
+    const docsStatus = snapshot.sessions.find(s => s.key === '/work/docs').status;
+    await docs.getByRole('button', { name: 'Stop Docs refresh' }).click();
+    await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor();
+    await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status: { ...status, state: 'working' }, attention: false }), docsStatus);
+    await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor({ state: 'detached' });
+    await page.waitForFunction(() => {
+      const focused = document.activeElement;
+      return focused?.classList.contains('board-session') && focused.querySelector('.resources-session')?.textContent === 'Docs refresh';
+    });
+    assert.equal(await table.getByRole('button', { name: 'Stop Docs refresh' }).count(), 0, 'a working session offers no Stop');
+    await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status, attention: false }), docsStatus);
+    await docs.getByRole('button', { name: 'Stop Docs refresh' }).waitFor();
+    assert.equal(await table.getByRole('group').count(), 0, 'the confirm stays closed');
+
+    // Keyboard: focus follows the controls as they swap. The confirm opens in
+    // a row of its own, so no column moves.
+    const columns = (t) => t.locator('th').evaluateAll(ths => ths.map(th => Math.round(th.getBoundingClientRect().left)));
+    const sessionColumns = await columns(table);
     const old = rows.filter({ hasText: 'Old investigation' });
     await old.getByRole('button', { name: 'Stop Old investigation' }).focus();
     await page.keyboard.press('Enter');
-    await old.getByRole('group', { name: 'Stop Old investigation?' }).waitFor();
+    const confirm = table.getByRole('group', { name: 'Stop Old investigation?' });
+    await confirm.waitFor();
+    assert.deepEqual(await columns(table), sessionColumns, 'opening the confirm moves no column');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Cancel stopping Old investigation');
     await page.screenshot({ path: path.join(dir, `resources-confirm-${theme}-${width}.png`) });
     const before = await page.evaluate(() => window.__calls.length);
@@ -120,7 +143,7 @@ try {
     assert.equal(await page.evaluate(() => window.__calls.length), before, 'Cancel stops nothing');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Stop Old investigation');
     await page.keyboard.press('Enter');
-    await old.getByRole('group').getByRole('button', { name: 'Stop Old investigation' }).click();
+    await confirm.getByRole('button', { name: 'Stop Old investigation' }).click();
     await page.waitForFunction(() => window.__calls.some(c => c.cmd === 'hub_close_tab'));
     assert.deepEqual(
       await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_close_tab')),
@@ -140,10 +163,12 @@ try {
     assert.equal(await strays.locator('tbody tr').filter({ hasText: '21980' }).locator('.resources-flag').textContent(), 'Daemon');
     await page.screenshot({ path: path.join(dir, `outside-${theme}-${width}.png`), fullPage: true });
     const host = strays.locator('tbody tr').filter({ hasText: '24982' });
+    const strayColumns = await columns(strays);
     await host.getByRole('button', { name: 'Stop claude --bg-pty-host 24982' }).focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Cancel stopping claude --bg-pty-host 24982');
-    await host.getByRole('group').getByRole('button', { name: 'Stop claude --bg-pty-host 24982' }).click();
+    assert.deepEqual(await columns(strays), strayColumns, 'opening the confirm moves no column');
+    await strays.getByRole('group', { name: 'Stop claude --bg-pty-host 24982?' }).getByRole('button', { name: 'Stop claude --bg-pty-host 24982' }).click();
     await page.waitForFunction(() => window.__calls.some(c => c.cmd === 'hub_stop_outside_agent'));
     assert.deepEqual(
       await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_stop_outside_agent')),
@@ -156,7 +181,7 @@ try {
     // A refused stop says why, and a refresh does not clear it.
     const orphan = strays.locator('tbody tr').filter({ hasText: '98549' });
     await orphan.getByRole('button', { name: 'Stop claude --bg-pty-host 98549' }).click();
-    await orphan.getByRole('group').getByRole('button', { name: 'Stop claude --bg-pty-host 98549' }).click();
+    await strays.getByRole('group', { name: 'Stop claude --bg-pty-host 98549?' }).getByRole('button', { name: 'Stop claude --bg-pty-host 98549' }).click();
     const refused = page.locator('.resources-outside [role="alert"]').filter({ hasText: 'no longer looks like a leftover' });
     await refused.waitFor();
     await page.evaluate(() => new Promise(r => setTimeout(r, 300)));

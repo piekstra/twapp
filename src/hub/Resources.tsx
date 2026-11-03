@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { STATE_LABELS, hubApi, sinceLabel, type DiskEvent, type SessionDisk, type SessionView } from "./api";
 import { StateDot } from "./SessionRail";
 import OutsideAgents from "./OutsideAgents";
+import StopConfirmRow from "./StopConfirmRow";
 import { byResources, canStop, diskKb, formatCpu, formatKb, staleReason, type ResourceMap } from "./resourcesModel";
 
 interface Props {
@@ -23,13 +24,25 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
   // opens, the row's Stop on Cancel, its name after a confirmed Stop.
   const focusNext = useRef<{ key: string; target: "cancel" | "stop" | "name" } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const tableRef = useRef<HTMLTableElement>(null);
 
   useEffect(() => {
     const want = focusNext.current;
     if (!want) return;
     focusNext.current = null;
-    rowRefs.current.get(want.key)?.querySelector<HTMLElement>(`[data-focus="${want.target}"]`)?.focus();
+    // Cancel sits in the confirm row, the only one open.
+    const scope = want.target === "cancel" ? tableRef.current : rowRefs.current.get(want.key);
+    scope?.querySelector<HTMLElement>(`[data-focus="${want.target}"]`)?.focus();
   });
+
+  // A session that starts working or stops running while its confirm is
+  // open loses it, as it loses its Stop; focus that was in it goes to the
+  // session's name.
+  useEffect(() => {
+    if (!confirming || sessions.some((s) => s.key === confirming && canStop(s))) return;
+    if (document.activeElement === document.body) focusNext.current = { key: confirming, target: "name" };
+    setConfirming(null);
+  }, [confirming, sessions]);
 
   // The hub keeps the measurement, so leaving this tab mid-walk loses nothing.
   useEffect(() => {
@@ -131,7 +144,7 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
       {sessions.length === 0 ? (
         <div className="overview-empty">No sessions are open.</div>
       ) : (
-        <table className="resources-table" aria-label="Resources by session">
+        <table className="resources-table" aria-label="Resources by session" ref={tableRef}>
           <thead>
             <tr>
               <th scope="col">Session</th>
@@ -140,7 +153,7 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
               <th scope="col" className="num">CPU</th>
               <th scope="col" className="num">Processes</th>
               <th scope="col" className="num" title="Session directory plus Claude scratch files">Disk</th>
-              <th scope="col"><span className="sr-only">Actions</span></th>
+              <th scope="col" className="resources-action"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -150,61 +163,66 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
               const d = disk?.get(s.key);
               const used = diskKb(d);
               const otherTabs = s.tabs.some((t) => t.tab !== "main" && t.alive);
+              const asking = confirming === s.key && canStop(s);
               return (
-                <tr
-                  key={s.key}
-                  className={reason ? "stale" : undefined}
-                  ref={(el) => {
-                    if (el) rowRefs.current.set(s.key, el);
-                    else rowRefs.current.delete(s.key);
-                  }}
-                >
-                  <td className="resources-name">
-                    <button className="board-session" data-focus="name" onClick={() => onSelect(s.key)} title="Go to the session">
-                      <StateDot session={s} />
-                      <span className="resources-session">{s.name}</span>
-                    </button>
-                  </td>
-                  <td className="resources-state">
-                    {STATE_LABELS[s.status.state]}
-                    {s.status.state !== "suspended" && ` for ${sinceLabel(s.status.since, now)}`}
-                    {reason && <span className="chip resources-flag">{reason}</span>}
-                  </td>
-                  <td className="num">{r ? formatKb(r.rss_kb) : ""}</td>
-                  <td className="num">{r ? formatCpu(r.cpu_tenths) : ""}</td>
-                  <td className="num">{r ? r.processes : ""}</td>
-                  <td
-                    className="num"
-                    title={
-                      d
-                        ? `Directory ${d.dir_kb === null ? (d.gave_up ? "over two minutes to walk" : "none") : formatKb(d.dir_kb)}, ` +
-                          `Claude scratch ${d.temp_kb === null ? "none" : formatKb(d.temp_kb)}; measured ${sinceLabel(d.measured_at, now)} ago`
-                        : undefined
-                    }
+                <Fragment key={s.key}>
+                  <tr
+                    className={[reason && "stale", asking && "confirming"].filter(Boolean).join(" ") || undefined}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(s.key, el);
+                      else rowRefs.current.delete(s.key);
+                    }}
                   >
-                    {d?.gave_up ? "over 2 min" : used !== null ? formatKb(used) : ""}
-                  </td>
-                  <td className="resources-action">
-                    {canStop(s) &&
-                      (confirming === s.key ? (
-                        <span className="resources-confirm" role="group" aria-label={`Stop ${s.name}?`}>
-                          <span className="board-muted">
-                            Stops its agent's terminal{otherTabs ? "; its other tabs keep running" : ""}. Opening the session resumes it.
-                          </span>
-                          <button className="button ghost small" data-focus="cancel" onClick={() => cancel(s.key)} aria-label={`Cancel stopping ${s.name}`}>
-                            Cancel
-                          </button>
-                          <button className="button ghost small danger" onClick={() => stop(s.key)} aria-label={`Stop ${s.name}`}>
-                            Stop
-                          </button>
-                        </span>
-                      ) : (
-                        <button className="button ghost small" data-focus="stop" onClick={() => ask(s.key)} aria-label={`Stop ${s.name}`} title="Stop the session's agent to free its memory">
+                    <td className="resources-name">
+                      <button className="board-session" data-focus="name" onClick={() => onSelect(s.key)} title="Go to the session">
+                        <StateDot session={s} />
+                        <span className="resources-session">{s.name}</span>
+                      </button>
+                    </td>
+                    <td className="resources-state">
+                      {STATE_LABELS[s.status.state]}
+                      {s.status.state !== "suspended" && ` for ${sinceLabel(s.status.since, now)}`}
+                      {reason && <span className="chip resources-flag">{reason}</span>}
+                    </td>
+                    <td className="num">{r ? formatKb(r.rss_kb) : ""}</td>
+                    <td className="num">{r ? formatCpu(r.cpu_tenths) : ""}</td>
+                    <td className="num">{r ? r.processes : ""}</td>
+                    <td
+                      className="num"
+                      title={
+                        d
+                          ? `Directory ${d.dir_kb === null ? (d.gave_up ? "over two minutes to walk" : "none") : formatKb(d.dir_kb)}, ` +
+                            `Claude scratch ${d.temp_kb === null ? "none" : formatKb(d.temp_kb)}; measured ${sinceLabel(d.measured_at, now)} ago`
+                          : undefined
+                      }
+                    >
+                      {d?.gave_up ? "over 2 min" : used !== null ? formatKb(used) : ""}
+                    </td>
+                    <td className="resources-action">
+                      {canStop(s) && (
+                        <button
+                          className={`button ghost small${asking ? " resources-held" : ""}`}
+                          data-focus="stop"
+                          onClick={() => ask(s.key)}
+                          aria-label={`Stop ${s.name}`}
+                          title="Stop the session's agent to free its memory"
+                        >
                           Stop
                         </button>
-                      ))}
-                  </td>
-                </tr>
+                      )}
+                    </td>
+                  </tr>
+                  {asking && (
+                    <StopConfirmRow
+                      className={reason ? "stale" : undefined}
+                      columns={7}
+                      name={s.name}
+                      explain={`Stops its agent's terminal${otherTabs ? "; its other tabs keep running" : ""}. Opening the session resumes it.`}
+                      onCancel={() => cancel(s.key)}
+                      onStop={() => stop(s.key)}
+                    />
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
