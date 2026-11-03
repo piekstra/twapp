@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { hubApi, type HubSnapshot, type SessionStatus, type SessionView, type Summary } from "./api";
+import { hubApi, type HubSnapshot, type SessionResources, type SessionStatus, type SessionView, type Summary } from "./api";
 
 export interface HubState {
   sessions: SessionView[];
   selected: string | null;
   hostError: string | null;
   loaded: boolean;
+  /**
+   * Each session's memory and CPU, kept apart from `sessions` so the
+   * ten-second refresh does not re-render everything that reads the list.
+   */
+  resources: Record<string, SessionResources | null>;
 }
 
 /**
@@ -20,6 +25,7 @@ export function useHub() {
     selected: null,
     hostError: null,
     loaded: false,
+    resources: {},
   });
   const refetching = useRef(false);
   const pendingRefetch = useRef(false);
@@ -40,6 +46,7 @@ export function useHub() {
           selected: keep ? prev.selected : snap.selected,
           hostError: snap.host_error,
           loaded: true,
+          resources: Object.fromEntries(snap.sessions.map((s) => [s.key, s.resources ?? null])),
         };
       });
     } catch (error) {
@@ -64,6 +71,9 @@ export function useHub() {
           ...prev,
           sessions: prev.sessions.map((s) => (s.key === key ? { ...s, status, attention } : s)),
         }));
+      }),
+      listen<Record<string, SessionResources | null>>("hub:resources", (e) => {
+        setState((prev) => ({ ...prev, resources: { ...prev.resources, ...e.payload } }));
       }),
       listen<{ key: string; summary: Summary; name_suggestion: string | null }>("hub:summary", (e) => {
         const { key, summary, name_suggestion } = e.payload;

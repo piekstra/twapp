@@ -1,6 +1,7 @@
 pub mod blockers;
 pub mod watch;
 pub mod config;
+pub mod disk;
 pub mod files;
 pub mod hub;
 pub mod import;
@@ -155,6 +156,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_summarize,
             hub::hub_triage,
             hub::hub_usage,
+            hub::hub_measure_disk,
+            hub::hub_session_disk,
             hub::hub_reports,
         ])
         .setup(move |app| {

@@ -367,6 +367,15 @@ export default function Hub() {
     if (host) manager.show(current.key, "main", host, terminalThemeFor(current, isDark));
   }, [current, manager, isDark]);
 
+  // Like restart, minus the start: showing the session again resumes it.
+  const stopSession = useCallback(
+    async (key: string) => {
+      await hubApi.closeTab(key, "main");
+      manager.reset(key, "main");
+    },
+    [manager],
+  );
+
   const closeSession = useCallback(
     async (session: SessionView) => {
       manager.dispose(session.key);
@@ -881,6 +890,8 @@ export default function Hub() {
             isDark={isDark}
             now={now}
             onSelect={selectSession}
+            onStop={stopSession}
+            resources={hub.resources}
             onOpenLibrary={() => openLibrary("sessions")}
             library={library}
             showLibrary={showLibrary}

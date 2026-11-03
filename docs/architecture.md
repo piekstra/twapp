@@ -140,6 +140,18 @@ The harness process is found by walking the process tree from the PTY's shell.
 The engine re-reads the process tree and status files every two seconds while
 the GUI is open. It reads transcripts only when their size changes.
 
+The same `ps` call carries each process's resident memory and %CPU. Every
+fifth poll (ten seconds) the hub totals them over the shells of every live tab
+of each session, main or not, and everything below them, and sends the totals
+that changed as one `hub:resources` event (key to `resources`). The frontend
+keeps them apart from the session list, so a refresh re-renders only what
+reads them. A session loses its reading as soon as its last terminal goes
+(closed, exited or a terminal host gone); a live shell missing from the table
+(a failed `ps`) keeps the last reading rather than reading as zero. A
+process belongs to the session whose terminal started it, so work a harness
+hands to a daemon outside that tree, such as detached background tasks, is not
+counted.
+
 ## Summaries
 
 Every session carries a headline, a short description of what it is doing, and
@@ -447,7 +459,22 @@ note, when it was archived, and each copy with the path the harness reads.
   refresh); notes; session settings.
 - **Overview.** A card per hosted session with its full summary and what it
   needs, the Triage action, and the list of every known session for opening
-  one that is not hosted.
+  one that is not hosted. Its Resources tab (`hub/Resources.tsx`,
+  `hub/resourcesModel.ts`) lists each session's memory, CPU and processes,
+  flags sessions whose agent runs while parked or idle for three days, and
+  stops one's main terminal on request (the session resumes when opened; its
+  other tabs keep running). Disk is measured only when asked
+  (`hub_measure_disk`, `gui/disk.rs`): the session directory plus Claude
+  Code's scratch directory for its conversation. The hub measures one session
+  at a time on its own thread and sends each result as `hub:disk`. A walk is
+  given up after two minutes, and a session's whole measurement, reading its
+  files included, after both walks' time, so an unreachable volume never
+  stalls the run. The hub keeps the last results (`hub_session_disk`), so a
+  second request while one runs starts nothing and closing the tab loses
+  nothing. A given-up walk is marked (`gave_up`) and reads "over 2 min"; the
+  total counts only finished sessions, says how many of the open sessions it
+  covers and how old the oldest reading is, and a rerun that gives up keeps
+  the earlier full reading.
 
 Keyboard:
 

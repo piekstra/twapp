@@ -31,6 +31,37 @@ export interface SessionStatus {
   background_agents?: string[];
 }
 
+/** Memory and CPU of every process under a session's live terminals. */
+export interface SessionResources {
+  rss_kb: number;
+  /** %CPU in tenths of a percent; one busy core is 1000. */
+  cpu_tenths: number;
+  processes: number;
+}
+
+/** What a session takes on disk, measured on request. */
+export interface SessionDisk {
+  key: string;
+  dir_kb: number | null;
+  /** Claude Code's scratch directory for the session's conversation. */
+  temp_kb: number | null;
+  /** A walk ran past its time limit, so the sizes leave part of the session out. */
+  gave_up: boolean;
+  measured_at: string;
+}
+
+/** The last disk measurement, and whether one is running. */
+export interface DiskReport {
+  running: boolean;
+  sessions: SessionDisk[];
+}
+
+/** `hub:disk`: one session measured, or the measurement over (`session` null). */
+export interface DiskEvent {
+  session: SessionDisk | null;
+  running: boolean;
+}
+
 export interface Summary {
   headline: string;
   doing: string;
@@ -116,6 +147,8 @@ export interface SessionView {
   override_terminal_theme: boolean;
   tabs: TabView[];
   status: SessionStatus;
+  /** Null when none of the session's terminals is live. */
+  resources?: SessionResources | null;
   summary: Summary | null;
   last_viewed: string | null;
   attention: boolean;
@@ -339,6 +372,9 @@ export const hubApi = {
   summarize: (key: string) => invoke("hub_summarize", { key }),
   triage: () => invoke<Triage>("hub_triage"),
   usage: (days = 7) => invoke<UsageReport>("hub_usage", { days }),
+  sessionDisk: () => invoke<DiskReport>("hub_session_disk"),
+  /** False when a measurement is already running. */
+  measureDisk: () => invoke<boolean>("hub_measure_disk"),
 };
 
 export const STATE_LABELS: Record<SessionState, string> = {

@@ -1,8 +1,11 @@
 //! A snapshot of the process table, used to find the harness running under a
-//! session's shell and to tell live processes from stale status files.
+//! session's shell, to tell live processes from stale status files, and to
+//! total the memory and CPU a session's processes use.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Command;
+
+use serde::Serialize;
 
 use crate::cli::session::AgentProvider;
 
@@ -10,7 +13,19 @@ use crate::cli::session::AgentProvider;
 pub struct ProcEntry {
     pub pid: u32,
     pub ppid: u32,
+    /// Resident memory in KiB.
+    pub rss_kb: u64,
+    /// `ps`'s %CPU in tenths of a percent; one busy core is 1000.
+    pub cpu_tenths: u32,
     pub comm: String,
+}
+
+/// What a set of processes uses, totalled over each one and everything below it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct Resources {
+    pub rss_kb: u64,
+    pub cpu_tenths: u32,
+    pub processes: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -24,7 +39,9 @@ impl ProcTable {
     /// cannot run, which makes every process look dead rather than failing.
     pub fn snapshot() -> Self {
         Command::new("ps")
-            .args(["-A", "-o", "pid=,ppid=,comm="])
+            .args(["-A", "-o", "pid=,ppid=,rss=,pcpu=,comm="])
+            // A locale with a decimal comma would print %CPU as `1,5`.
+            .env("LC_ALL", "C")
             .output()
             .ok()
             .filter(|out| out.status.success())
@@ -32,25 +49,61 @@ impl ProcTable {
             .unwrap_or_default()
     }
 
+    /// Parses `ps -o pid=,ppid=,rss=,pcpu=,comm=` output.
     pub fn parse(text: &str) -> Self {
+        fn field(rest: &mut &str) -> Option<String> {
+            let trimmed = rest.trim_start();
+            let (value, after) = trimmed.split_once(char::is_whitespace).unwrap_or((trimmed, ""));
+            *rest = after;
+            (!value.is_empty()).then(|| value.to_string())
+        }
         let mut table = Self::default();
         for line in text.lines() {
-            let mut rest = line.trim_start();
-            let Some((pid, after)) = rest.split_once(char::is_whitespace) else {
+            let mut rest = line;
+            let (Some(pid), Some(ppid), Some(rss), Some(cpu)) =
+                (field(&mut rest), field(&mut rest), field(&mut rest), field(&mut rest))
+            else {
                 continue;
             };
-            rest = after.trim_start();
-            let (ppid, comm) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-            let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) else {
+            let (Ok(pid), Ok(ppid), Ok(rss_kb), Ok(cpu)) =
+                (pid.parse::<u32>(), ppid.parse::<u32>(), rss.parse::<u64>(), cpu.parse::<f64>())
+            else {
                 continue;
             };
             table.insert(ProcEntry {
                 pid,
                 ppid,
-                comm: comm.trim().to_string(),
+                rss_kb,
+                cpu_tenths: (cpu * 10.0).round() as u32,
+                comm: rest.trim().to_string(),
             });
         }
         table
+    }
+
+    /// The memory and CPU of `roots` and every process below them, each
+    /// process counted once. `None` when no root is in the table, which is
+    /// also what a failed `ps` looks like: a live terminal always has at
+    /// least its shell, so there is nothing to report rather than zero.
+    pub fn resources(&self, roots: &[u32]) -> Option<Resources> {
+        let mut seen = HashSet::new();
+        let mut total = Resources::default();
+        for &root in roots {
+            if !self.entries.contains_key(&root) {
+                continue;
+            }
+            for pid in std::iter::once(root).chain(self.descendants(root)) {
+                if !seen.insert(pid) {
+                    continue;
+                }
+                if let Some(e) = self.entries.get(&pid) {
+                    total.rss_kb += e.rss_kb;
+                    total.cpu_tenths += e.cpu_tenths;
+                    total.processes += 1;
+                }
+            }
+        }
+        (total.processes > 0).then_some(total)
     }
 
     fn insert(&mut self, entry: ProcEntry) {
@@ -139,17 +192,17 @@ fn is_harness_comm(comm: &str, provider: AgentProvider) -> bool {
 mod tests {
     use super::*;
 
-    const PS: &str = "    1     0 /sbin/launchd
-  500     1 /Applications/twapp.app/Contents/MacOS/twapp
-  510   500 /bin/zsh
-  520   510 claude
-  530   520 /bin/zsh
-  531   530 git
-  600   500 /bin/zsh
-  610   600 node
-  611   610 /usr/local/lib/node_modules/@openai/codex/bin/codex-aarch64-apple-darwin
-  700   500 /bin/zsh
-  710   700 /Applications/My Tools/agy
+    const PS: &str = "    1     0  12000   0.0 /sbin/launchd
+  500     1 150000   2.5 /Applications/twapp.app/Contents/MacOS/twapp
+  510   500   2000   0.0 /bin/zsh
+  520   510 600000  12.3 claude
+  530   520   1500   0.0 /bin/zsh
+  531   530  40000  80.0 git
+  600   500   2000   0.0 /bin/zsh
+  610   600  30000   0.1 node
+  611   610 200000   1.0 /usr/local/lib/node_modules/@openai/codex/bin/codex-aarch64-apple-darwin
+  700   500   2000   0.0 /bin/zsh
+  710   700  90000   0.0 /Applications/My Tools/agy
 garbage line
 ";
 
@@ -158,6 +211,39 @@ garbage line
         let t = ProcTable::parse(PS);
         assert_eq!(t.get(710).unwrap().comm, "/Applications/My Tools/agy");
         assert!(!t.contains(9999));
+    }
+
+    #[test]
+    fn parses_memory_and_cpu() {
+        let t = ProcTable::parse(PS);
+        let claude = t.get(520).unwrap();
+        assert_eq!((claude.rss_kb, claude.cpu_tenths), (600_000, 123));
+    }
+
+    #[test]
+    fn snapshot_reads_this_process() {
+        let t = ProcTable::snapshot();
+        let me = t.get(std::process::id()).expect("the test process is in the table");
+        assert!(me.rss_kb > 0);
+        let below: u64 = t.descendants(me.pid).iter().filter_map(|p| t.get(*p)).map(|e| e.rss_kb).sum();
+        assert_eq!(t.resources(&[me.pid]).unwrap().rss_kb, me.rss_kb + below);
+    }
+
+    #[test]
+    fn resources_total_each_process_once() {
+        let t = ProcTable::parse(PS);
+        let session = Resources { rss_kb: 643_500, cpu_tenths: 923, processes: 4 };
+        assert_eq!(t.resources(&[510]), Some(session));
+        // A root inside another root's tree, or listed twice, adds nothing.
+        assert_eq!(t.resources(&[510, 530, 510]), Some(session));
+        assert_eq!(t.resources(&[510, 700]).unwrap().processes, 6);
+    }
+
+    #[test]
+    fn no_known_root_is_no_measurement() {
+        assert_eq!(ProcTable::parse(PS).resources(&[9999]), None);
+        assert_eq!(ProcTable::default().resources(&[510]), None, "a failed ps reads as nothing, not zero");
+        assert_eq!(ProcTable::parse(PS).resources(&[]), None);
     }
 
     #[test]

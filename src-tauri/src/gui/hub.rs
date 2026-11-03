@@ -20,11 +20,15 @@ use tauri::{AppHandle, Emitter};
 use crate::cli::session::{read_session, AgentProvider};
 use crate::gui::types::GuiArgs;
 use crate::ptyd::{ClientEvent, PtydClient, SpawnRequest};
+use crate::status::proctree::Resources;
 use crate::status::{PollContext, SessionProbe, SessionStatus, State, StatusRoots, StatusTracker};
 use crate::summary::{Summarizer, SummarizerConfig, Summary, SummaryRequest};
 
 pub const MAIN_TAB: &str = "main";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Sessions' memory and CPU are refreshed every this many polls; `ps`'s %CPU
+/// is already an average, and fresher numbers would only cost redraws.
+const RESOURCE_POLLS: u64 = 5;
 /// Journal entries written per catch-up, most recent days first.
 const JOURNAL_CATCH_UP: usize = 3;
 
@@ -157,6 +161,8 @@ pub struct SessionView {
     pub override_terminal_theme: bool,
     pub tabs: Vec<TabView>,
     pub status: SessionStatus,
+    /// Memory and CPU of the processes under the session's live terminals.
+    pub resources: Option<Resources>,
     pub summary: Option<Summary>,
     pub last_viewed: Option<String>,
     pub attention: bool,
@@ -440,6 +446,9 @@ struct HubSession {
     /// The user typed into the main tab since last pressing Enter there: a
     /// draft may sit in the harness's input, so the window sends nothing.
     draft: bool,
+    /// Memory and CPU of every process under the session's live terminals,
+    /// main or not, as of the last refresh. `None` when none is live.
+    resources: Option<Resources>,
 }
 
 impl HubSession {
@@ -465,6 +474,15 @@ impl HubSession {
             effort: None,
             launch_kind: None,
             context_check: None,
+            resources: None,
+        }
+    }
+
+    /// Forget the resources reading once no tab has a terminal; while one
+    /// does, the next refresh recounts what is left.
+    fn drop_resources_if_idle(&mut self) {
+        if self.tabs.iter().all(|t| t.pty.is_none()) {
+            self.resources = None;
         }
     }
 
@@ -569,6 +587,7 @@ impl HubSession {
                 })
                 .collect(),
             status: self.status.clone(),
+            resources: self.resources,
             summary: self.summary.clone(),
             last_viewed: self.last_viewed.clone(),
             attention: self.attention(),
@@ -646,6 +665,7 @@ impl HubInner {
                 tab.spawning = false;
             }
             session.shell_pid = None;
+            session.resources = None;
             if had_main {
                 session.status = SessionStatus::in_state_now(State::Exited);
             }
@@ -671,6 +691,10 @@ pub struct Hub {
     persist_lock: Mutex<()>,
     focused: std::sync::atomic::AtomicBool,
     summarizer: Summarizer,
+    /// What the last disk measurement found per session, and whether one is
+    /// running; kept here so a view that closes mid-measurement loses nothing.
+    disk: Mutex<HashMap<String, super::disk::SessionDisk>>,
+    disk_running: std::sync::atomic::AtomicBool,
 }
 
 impl Hub {
@@ -698,6 +722,8 @@ impl Hub {
             persist_lock: Mutex::new(()),
             focused: std::sync::atomic::AtomicBool::new(true),
             summarizer,
+            disk: Mutex::new(HashMap::new()),
+            disk_running: std::sync::atomic::AtomicBool::new(false),
         });
         let _ = HUB.set(Arc::clone(&hub));
 
@@ -803,6 +829,9 @@ impl Hub {
                         if let Some(t) = inner.tab(&key, &tab) {
                             t.pty = None;
                             t.exited = true;
+                        }
+                        if let Some(session) = inner.session(&key) {
+                            session.drop_resources_if_idle();
                         }
                     }
                 }
@@ -1611,6 +1640,7 @@ impl Hub {
                 session.tabs.retain(|t| t.tab != tab);
                 pty
             };
+            session.drop_resources_if_idle();
             if let Some(p) = pty {
                 inner.pty_index.remove(&p);
             }
@@ -1861,6 +1891,7 @@ impl Hub {
                                 session.shell_pid = None;
                                 session.status = SessionStatus::in_state_now(State::Exited);
                             }
+                            session.drop_resources_if_idle();
                         }
                     }
                     entry
@@ -1896,13 +1927,15 @@ impl Hub {
 
     fn poll_loop(&self) {
         let roots = StatusRoots::from_home();
+        let mut poll: u64 = 0;
         loop {
             std::thread::sleep(POLL_INTERVAL);
-            self.poll_once(&roots);
+            self.poll_once(&roots, poll.is_multiple_of(RESOURCE_POLLS));
+            poll = poll.wrapping_add(1);
         }
     }
 
-    fn poll_once(&self, roots: &StatusRoots) {
+    fn poll_once(&self, roots: &StatusRoots, refresh_resources: bool) {
         // A host that cannot answer says nothing about the sessions; skip the
         // round rather than reading every one of them as exited.
         let Ok(client) = self.ptyd() else { return };
@@ -1914,6 +1947,36 @@ impl Hub {
             .collect();
         let ctx = PollContext::gather(roots);
         let focused = self.focused.load(std::sync::atomic::Ordering::SeqCst);
+
+        // Every session's terminals count, not only the main tab's: a second
+        // tab can outlive the agent. `Some(None)`: nothing is live, so nothing
+        // runs. `None`: a live shell is missing from the table (a failed
+        // `ps`), so the last reading stands.
+        let measured: Vec<(String, Option<Option<Resources>>)> = if refresh_resources {
+            let ptys: Vec<(String, Vec<u64>)> = self
+                .inner
+                .lock()
+                .sessions
+                .iter()
+                .map(|s| (s.key.clone(), s.tabs.iter().filter_map(|t| t.pty).collect()))
+                .collect();
+            ptys.into_iter()
+                .map(|(key, ptys)| {
+                    let shells: Vec<u32> = ptys
+                        .iter()
+                        .filter_map(|pty| live.get(pty).and_then(|(pid, _)| *pid))
+                        .collect();
+                    let next = if shells.is_empty() {
+                        Some(None)
+                    } else {
+                        ctx.procs.resources(&shells).map(Some)
+                    };
+                    (key, next)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         struct Work {
             key: String,
@@ -1994,6 +2057,7 @@ impl Hub {
         }
 
         let mut changed: Vec<String> = Vec::new();
+        let mut resources_changed: HashMap<String, Option<Resources>> = HashMap::new();
         let mut summaries: Vec<SummaryRequest> = Vec::new();
         let mut newly_waiting = false;
         let mut context_changed = false;
@@ -2036,6 +2100,18 @@ impl Hub {
                     }
                 }
             }
+            for (key, next) in measured {
+                let (Some(next), Some(session)) = (next, inner.session(&key)) else { continue };
+                if session.resources != next {
+                    session.resources = next;
+                    resources_changed.insert(key, next);
+                }
+            }
+        }
+        // One event per round, not one per session: each event replaces the
+        // window's session list.
+        if !resources_changed.is_empty() {
+            let _ = self.app.emit("hub:resources", resources_changed);
         }
         for key in changed {
             self.emit_status(&key);
@@ -2923,7 +2999,7 @@ mod tests {
             status_updated_at: None,
         };
         let ctx = PollContext {
-            procs: ProcTable::parse("  100     1 /bin/zsh\n  200   100 claude\n  300     1 claude\n"),
+            procs: ProcTable::parse("  100     1 0 0.0 /bin/zsh\n  200   100 0 0.0 claude\n  300     1 0 0.0 claude\n"),
             claude_files: vec![file(300, "someone-else"), file(200, "after-clear")],
             now: std::time::SystemTime::now(),
             roots: StatusRoots::under(&dir),
@@ -2946,6 +3022,7 @@ mod tests {
         shell.pty = Some(2);
         session.tabs.push(shell);
         session.shell_pid = Some(42);
+        session.resources = Some(Resources { rss_kb: 1, cpu_tenths: 0, processes: 1 });
         inner.sessions.push(session);
         inner.pty_index.insert(1, ("/w/a".into(), "main".into()));
         inner.pty_index.insert(2, ("/w/a".into(), "tab-1".into()));
@@ -2956,7 +3033,23 @@ mod tests {
         let s = &inner.sessions[0];
         assert!(s.tabs.iter().all(|t| t.pty.is_none() && t.exited));
         assert_eq!(s.shell_pid, None);
+        assert_eq!(s.resources, None, "nothing of the session runs");
         assert_eq!(s.status.state, State::Exited);
+    }
+
+    #[test]
+    fn resources_go_with_the_last_live_terminal() {
+        let mut session = HubSession::new("/w/a".into(), AgentProvider::Claude);
+        let mut shell = HubTab::new("tab-1", "Shell 1");
+        shell.pty = Some(2);
+        session.tabs.push(shell);
+        session.resources = Some(Resources { rss_kb: 1, cpu_tenths: 0, processes: 1 });
+
+        session.drop_resources_if_idle();
+        assert!(session.resources.is_some(), "a second tab still runs; the next refresh recounts it");
+        session.tabs[1].pty = None;
+        session.drop_resources_if_idle();
+        assert_eq!(session.resources, None);
     }
 
     #[test]
@@ -2965,7 +3058,7 @@ mod tests {
             r#"[{"pid": 111, "sessionId": "live-id"}, {"pid": 222, "sessionId": "stale-id"}]"#,
         )
         .unwrap();
-        let procs = crate::status::proctree::ProcTable::parse("  111     1 claude\n");
+        let procs = crate::status::proctree::ProcTable::parse("  111     1 0 0.0 claude\n");
         assert_eq!(live_holder(&files, &procs, "live-id"), Some(111));
         assert_eq!(live_holder(&files, &procs, "stale-id"), None, "its process is gone");
         assert_eq!(live_holder(&files, &procs, "other"), None);
@@ -3139,6 +3232,69 @@ mod tests {
         s.lane.lane = Lane::Blocked;
         assert!(s.attention(), "even in the Blocked lane");
     }
+}
+
+/// What the last disk measurement found, and whether one is running.
+#[derive(Serialize, Clone)]
+pub struct DiskReport {
+    pub running: bool,
+    pub sessions: Vec<super::disk::SessionDisk>,
+}
+
+/// One session measured (`session`), or the measurement over (`None`).
+#[derive(Serialize, Clone)]
+struct DiskEvent {
+    session: Option<super::disk::SessionDisk>,
+    running: bool,
+}
+
+impl Hub {
+    /// Measure each session's disk in turn on a background thread, sending
+    /// every result as it lands. False when a measurement is already running.
+    fn measure_disk(self: Arc<Self>) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.disk_running.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let keys: Vec<String> = self.inner.lock().sessions.iter().map(|s| s.key.clone()).collect();
+        std::thread::spawn(move || {
+            let roots = StatusRoots::from_home();
+            for key in keys {
+                let (k, projects) = (key.clone(), roots.claude_projects.clone());
+                let row = super::disk::measure_bounded(&key, super::disk::MEASURE_TIMEOUT, move || {
+                    super::disk::measure(&k, &projects, Path::new("/tmp"))
+                });
+                let kept = {
+                    let mut disk = self.disk.lock();
+                    // A rerun that gave up keeps the earlier full reading,
+                    // which carries its own time.
+                    if !(row.gave_up && disk.get(&key).is_some_and(|old| !old.gave_up)) {
+                        disk.insert(key.clone(), row);
+                    }
+                    disk.get(&key).cloned()
+                };
+                let _ = self.app.emit("hub:disk", DiskEvent { session: kept, running: true });
+            }
+            self.disk_running.store(false, Ordering::SeqCst);
+            let _ = self.app.emit("hub:disk", DiskEvent { session: None, running: false });
+        });
+        true
+    }
+}
+
+#[tauri::command]
+pub fn hub_measure_disk() -> Result<bool, String> {
+    Ok(require_hub()?.measure_disk())
+}
+
+#[tauri::command]
+pub fn hub_session_disk() -> Result<DiskReport, String> {
+    let hub = require_hub()?;
+    let sessions = hub.disk.lock().values().cloned().collect();
+    Ok(DiskReport {
+        running: hub.disk_running.load(std::sync::atomic::Ordering::SeqCst),
+        sessions,
+    })
 }
 
 /// The latest reports sessions made with `twapp report`, newest first.

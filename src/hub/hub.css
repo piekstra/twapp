@@ -4420,3 +4420,89 @@ kbd {
   font-size: 11px;
   color: var(--text-3);
 }
+
+/* --- Resources ------------------------------------------------------------ */
+
+.resources .overview-summary-row {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.resources-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.resources-table th {
+  padding: 0 8px 6px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.resources-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.resources-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.resources-table tr.stale td {
+  background: var(--accent-soft);
+}
+
+.resources-name {
+  max-width: 260px;
+}
+
+.resources-session {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resources-state {
+  color: var(--text-2);
+}
+
+.resources-flag {
+  margin-left: 6px;
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.resources-action {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.resources-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: normal;
+  text-align: left;
+}
+
+/* Read by screen readers, not shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
