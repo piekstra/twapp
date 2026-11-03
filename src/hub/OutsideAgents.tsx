@@ -79,6 +79,11 @@ export default function OutsideAgents({ now }: { now: number }) {
     target?.focus();
   });
 
+  // One that stops being a leftover while its confirm is open loses it.
+  useEffect(() => {
+    if (confirming !== null && !agents?.some((a) => a.pid === confirming && a.leftover)) setConfirming(null);
+  }, [confirming, agents]);
+
   const ask = (pid: number) => {
     focusNext.current = { pid, target: "cancel" };
     setConfirming(pid);
@@ -161,7 +166,7 @@ export default function OutsideAgents({ now }: { now: number }) {
           </thead>
           <tbody>
             {list.map((a) => {
-              const asking = confirming === a.pid;
+              const asking = confirming === a.pid && a.leftover;
               const name = `${a.command} ${a.pid}`;
               return (
                 <Fragment key={a.pid}>

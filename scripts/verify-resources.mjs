@@ -108,6 +108,19 @@ try {
     assert.equal(overflow, 0, 'nothing runs past the overview');
     await page.screenshot({ path: path.join(dir, `resources-${theme}-${width}.png`) });
 
+    // A session that starts working while its confirm is open loses it, and
+    // it does not come back when the session is idle again.
+    const docs = rows.filter({ hasText: 'Docs refresh' });
+    const docsStatus = snapshot.sessions.find(s => s.key === '/work/docs').status;
+    await docs.getByRole('button', { name: 'Stop Docs refresh' }).click();
+    await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor();
+    await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status: { ...status, state: 'working' }, attention: false }), docsStatus);
+    await table.getByRole('group', { name: 'Stop Docs refresh?' }).waitFor({ state: 'detached' });
+    assert.equal(await table.getByRole('button', { name: 'Stop Docs refresh' }).count(), 0, 'a working session offers no Stop');
+    await page.evaluate((status) => window.__emit('hub:status', { key: '/work/docs', status, attention: false }), docsStatus);
+    await docs.getByRole('button', { name: 'Stop Docs refresh' }).waitFor();
+    assert.equal(await table.getByRole('group').count(), 0, 'the confirm stays closed');
+
     // Keyboard: focus follows the controls as they swap. The confirm opens in
     // a row of its own, so no column moves.
     const columns = (t) => t.locator('th').evaluateAll(ths => ths.map(th => Math.round(th.getBoundingClientRect().left)));

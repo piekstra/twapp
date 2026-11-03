@@ -35,6 +35,12 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
     scope?.querySelector<HTMLElement>(`[data-focus="${want.target}"]`)?.focus();
   });
 
+  // A session that starts working or stops running while its confirm is
+  // open loses it, as it loses its Stop.
+  useEffect(() => {
+    if (confirming && !sessions.some((s) => s.key === confirming && canStop(s))) setConfirming(null);
+  }, [confirming, sessions]);
+
   // The hub keeps the measurement, so leaving this tab mid-walk loses nothing.
   useEffect(() => {
     const merge = (rows: SessionDisk[]) =>
@@ -154,7 +160,7 @@ export default function Resources({ sessions, resources, now, onSelect, onStop }
               const d = disk?.get(s.key);
               const used = diskKb(d);
               const otherTabs = s.tabs.some((t) => t.tab !== "main" && t.alive);
-              const asking = confirming === s.key;
+              const asking = confirming === s.key && canStop(s);
               return (
                 <Fragment key={s.key}>
                   <tr
