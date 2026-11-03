@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const { chromium } = playwright.default || playwright;
 const snapshot = JSON.parse(await fs.readFile(new URL('./fixtures/resources.json', import.meta.url), 'utf8'));
+const outside = JSON.parse(await fs.readFile(new URL('./fixtures/outside-agents.json', import.meta.url), 'utf8'));
 const disk = snapshot.sessions.map((s, i) => s.key === '/work/archive'
   ? { key: s.key, dir_kb: null, temp_kb: null, gave_up: true, measured_at: '2026-11-03T11:30:00Z' }
   : { key: s.key, dir_kb: 1024 * 1024 * (i + 1), temp_kb: i % 2 ? null : 300 * 1024, gave_up: false, measured_at: '2026-11-03T11:30:00Z' });
@@ -18,7 +19,7 @@ try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: theme });
     await page.clock.setFixedTime(new Date('2026-11-03T12:00:00Z'));
     await page.route('https://api.github.com/**', r => r.abort());
-    await page.addInitScript(({ theme, width, snapshot }) => {
+    await page.addInitScript(({ theme, width, snapshot, outside }) => {
       localStorage.setItem('twapp-layout', JSON.stringify({ mode: 'right', sidebarWidth: width, switcherCollapsedLanes: [] }));
       window.__calls = [];
       const callbacks = {};
@@ -33,6 +34,7 @@ try {
         invoke: async (cmd, args) => {
           if (cmd === 'hub_snapshot') return snapshot;
           if (cmd === 'hub_session_disk') return { running: false, sessions: [] };
+          if (cmd === 'hub_outside_agents') return outside;
           if (cmd === 'get_theme_preference') return theme;
           if (cmd === 'get_global_config') return { agent_providers: ['claude', 'codex', 'antigravity'] };
           if (cmd === 'get_notes' || cmd === 'get_session_history') return [];
@@ -43,10 +45,11 @@ try {
           if (cmd === 'plugin:event|unlisten') return null;
           window.__calls.push({ cmd, args });
           if (cmd === 'hub_measure_disk') return true;
+          if (cmd === 'hub_stop_outside_agent') return true;
           return null;
         },
       };
-    }, { theme, width, snapshot });
+    }, { theme, width, snapshot, outside });
     await page.goto(process.env.TWAPP_URL || 'http://127.0.0.1:1420');
     await page.locator('.rail-home').click();
     await page.getByRole('button', { name: 'Resources', exact: true }).click();
@@ -119,7 +122,29 @@ try {
       [{ cmd: 'hub_close_tab', args: { key: '/work/old', tab: 'main' } }],
     );
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('board-session')), true, 'focus lands on the session name');
-    results.push({ theme, width, rows: snapshot.sessions.length, overflow });
+    // Agent processes outside every session: listed heaviest first as the hub
+    // sends them, Stop only on idle ones, never on the daemon.
+    const strays = page.getByRole('table', { name: 'Agent processes outside your sessions' });
+    await strays.waitFor();
+    assert.equal(await strays.locator('tbody tr').count(), outside.length);
+    assert.match(await page.locator('#resources-outside-head .count').textContent(), /^3\.3 GB in 6 · 1\.6 GB in 3 idle$/);
+    assert.deepEqual(
+      (await strays.getByRole('button', { name: /^Stop / }).evaluateAll(els => els.map(e => e.getAttribute('aria-label')))).sort(),
+      ['Stop claude --bg-pty-host 24099', 'Stop claude --bg-pty-host 24982', 'Stop codex exec 500'],
+    );
+    assert.equal(await strays.locator('tbody tr').filter({ hasText: '21980' }).locator('.resources-flag').textContent(), 'Daemon');
+    await page.screenshot({ path: path.join(dir, `outside-${theme}-${width}.png`), fullPage: true });
+    const host = strays.locator('tbody tr').filter({ hasText: '24982' });
+    await host.getByRole('button', { name: 'Stop claude --bg-pty-host 24982' }).focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Cancel stopping claude --bg-pty-host 24982');
+    await host.getByRole('group').getByRole('button', { name: 'Stop claude --bg-pty-host 24982' }).click();
+    await page.waitForFunction(() => window.__calls.some(c => c.cmd === 'hub_stop_outside_agent'));
+    assert.deepEqual(
+      await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_stop_outside_agent')),
+      [{ cmd: 'hub_stop_outside_agent', args: { pid: 24982 } }],
+    );
+    results.push({ theme, width, rows: snapshot.sessions.length, outside: outside.length, overflow });
     await page.close();
   }
 } finally {

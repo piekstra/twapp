@@ -3297,6 +3297,59 @@ pub fn hub_session_disk() -> Result<DiskReport, String> {
     })
 }
 
+/// Agent processes no session's terminal started, heaviest first.
+#[tauri::command]
+pub async fn hub_outside_agents() -> Result<Vec<crate::status::outside::OutsideAgent>, String> {
+    let inside = terminal_host_pid()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::status::outside;
+        let table = crate::status::proctree::ProcTable::snapshot();
+        let info = outside::read_info(&outside::candidates(&table, inside));
+        outside::outside_agents(&table, inside, &info)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// End an idle group of agent processes outside every session. It is looked
+/// up again first, so a process that started working, joined a session or
+/// whose pid was reused is left alone. True when it is gone.
+#[tauri::command]
+pub async fn hub_stop_outside_agent(pid: u32) -> Result<bool, String> {
+    let inside = terminal_host_pid()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::status::{outside, proctree::ProcTable};
+        let table = ProcTable::snapshot();
+        let info = outside::read_info(&outside::candidates(&table, inside));
+        let agents = outside::outside_agents(&table, inside, &info);
+        let agent = agents
+            .iter()
+            .find(|a| a.pid == pid)
+            .ok_or("That process has ended or is no longer outside a session.")?;
+        if !agent.idle {
+            return Err("It is no longer idle, so nothing was stopped.".to_string());
+        }
+        outside::terminate(&table, pid);
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_millis(100));
+            if !ProcTable::snapshot().contains(pid) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The terminal host's pid: every session's processes run below it.
+fn terminal_host_pid() -> Result<u32, String> {
+    match require_hub()?.daemon_pid.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => Err("The terminal host is not connected.".to_string()),
+        pid => Ok(pid),
+    }
+}
+
 /// The latest reports sessions made with `twapp report`, newest first.
 #[tauri::command]
 pub async fn hub_reports(limit: Option<usize>) -> Result<Vec<crate::cli::reports::Report>, String> {

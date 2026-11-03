@@ -115,6 +115,10 @@ impl ProcTable {
         self.entries.get(&pid)
     }
 
+    pub fn entries(&self) -> impl Iterator<Item = &ProcEntry> {
+        self.entries.values()
+    }
+
     pub fn contains(&self, pid: u32) -> bool {
         self.entries.contains_key(&pid)
     }

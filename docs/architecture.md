@@ -475,6 +475,21 @@ note, when it was archived, and each copy with the path the harness reads.
   total counts only finished sessions, says how many of the open sessions it
   covers and how old the oldest reading is, and a rerun that gives up keeps
   the earlier full reading.
+  The tab also lists agent processes outside every session
+  (`hub/OutsideAgents.tsx`, `hub_outside_agents`, `status/outside.rs`):
+  processes whose `ps` name is a harness binary (Claude Code's native
+  `claude/versions/<version>` path and its `claude <role>` helpers included)
+  and that are neither the terminal host nor below it. Each group starts at
+  such a process whose parent is not one, except that the children of an
+  `<agent> daemon` process start groups of their own, since a daemon hosts
+  unrelated work for many sessions; the daemon's row counts only itself. A
+  group is idle when everything below it is an agent process, it uses under
+  1% CPU and it is at least 30 minutes old. Only idle groups can be stopped
+  (`hub_stop_outside_agent`, SIGTERM deepest first), and the hub looks the
+  group up again before stopping it, so one that started working, joined a
+  session or whose pid was reused is left alone. Only the harness and its
+  first argument are shown, since later arguments can carry prompts. The tab
+  refreshes the list every ten seconds while it is open.
 
 Keyboard:
 

@@ -176,6 +176,8 @@ Agents in a session can use the same data from the CLI: `twapp note add`, `twapp
 
 The overview's **Resources** tab lists each session's memory, CPU and process count, heaviest first, refreshed every ten seconds and counting every terminal tab the session has open. Sessions whose agent is running while parked, or after three days without a turn or a visit, are flagged, and **Stop** closes that agent's terminal: the session stays in the window as Not running and resumes its conversation when you open it, and its other tabs keep running. Disk is measured only when you ask, one session at a time: the session directory plus its Claude scratch files.
 
+Below the sessions, the tab lists the agent processes outside them: Claude, Codex and Antigravity processes that no session's terminal started, such as a harness's daemon and the background work it hosts, desktop-app conversations, and headless runs other tools start, each with what started it, how long it has run and what it uses with everything under it. Other applications are not listed. A group with nothing but agent processes under it, no CPU and at least half an hour of age is marked **Idle** and can be stopped; a daemon never is, since it hosts work for many sessions.
+
 The overview's **Board** tab puts this in one place: the work some session waits on, with who waits, who holds it and the latest report; every report sessions made, newest first, with the sessions it reached; the open pull requests sessions opened, by repository, with state, checks and review; the tickets sessions are under, with their status and the pull requests that name them; and, folded, the merged and closed pull requests. Each session in it opens that session.
 
 ### Forking

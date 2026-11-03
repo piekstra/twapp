@@ -56,6 +56,21 @@ export interface DiskReport {
   sessions: SessionDisk[];
 }
 
+/** An agent process no session's terminal started, with everything below it. */
+export interface OutsideAgent {
+  pid: number;
+  provider: AgentProvider;
+  /** The harness and its first argument, such as `claude daemon`. */
+  command: string;
+  started_by: string;
+  age_secs: number;
+  resources: SessionResources;
+  /** Nothing but agent processes under it, no CPU, at least half an hour old. */
+  idle: boolean;
+  /** Hosts background work for many sessions; never stopped from here. */
+  daemon: boolean;
+}
+
 /** `hub:disk`: one session measured, or the measurement over (`session` null). */
 export interface DiskEvent {
   session: SessionDisk | null;
@@ -375,6 +390,9 @@ export const hubApi = {
   sessionDisk: () => invoke<DiskReport>("hub_session_disk"),
   /** False when a measurement is already running. */
   measureDisk: () => invoke<boolean>("hub_measure_disk"),
+  outsideAgents: () => invoke<OutsideAgent[]>("hub_outside_agents"),
+  /** True when it ended; refused unless it is still an idle group outside every session. */
+  stopOutsideAgent: (pid: number) => invoke<boolean>("hub_stop_outside_agent", { pid }),
 };
 
 export const STATE_LABELS: Record<SessionState, string> = {

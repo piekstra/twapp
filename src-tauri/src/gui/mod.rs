@@ -158,6 +158,8 @@ pub fn run(args: GuiArgs) {
             hub::hub_usage,
             hub::hub_measure_disk,
             hub::hub_session_disk,
+            hub::hub_outside_agents,
+            hub::hub_stop_outside_agent,
             hub::hub_reports,
         ])
         .setup(move |app| {
