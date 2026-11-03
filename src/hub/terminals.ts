@@ -5,9 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Channel } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText, hubApi } from "./api";
-
-const FILE_PATH_REGEX =
-  /(?:^|[\s"'`(,])(\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+(?::[0-9]+)?|[a-zA-Z0-9_.][a-zA-Z0-9_./-]*\.[a-zA-Z0-9]+(?::[0-9]+)?)/g;
+import { pathLinks } from "./terminalLinks";
 
 interface HostedTerminal {
   key: string;
@@ -179,31 +177,18 @@ export class TerminalManager {
 
     term.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
-        const line = term.buffer.active.getLine(bufferLineNumber - 1);
-        if (!line) {
-          callback(undefined);
-          return;
-        }
-        const text = line.translateToString();
-        const links: ILink[] = [];
-        let match: RegExpExecArray | null;
-        FILE_PATH_REGEX.lastIndex = 0;
-        while ((match = FILE_PATH_REGEX.exec(text)) !== null) {
-          const filePath = match[1];
-          if (filePath.includes("://") || filePath.length < 4) continue;
-          const startX = match.index + match[0].indexOf(filePath) + 1;
-          links.push({
-            range: {
-              start: { x: startX, y: bufferLineNumber },
-              end: { x: startX + filePath.length - 1, y: bufferLineNumber },
-            },
-            text: filePath,
-            decorations: { pointerCursor: true, underline: true },
-            activate: (event, linkText) => {
-              if (event.metaKey) this.openFile(linkText.replace(/:\d+$/, ""), key);
-            },
-          });
-        }
+        const row = (y: number) => {
+          const line = term.buffer.active.getLine(y - 1);
+          return line ? { text: line.translateToString(), wrapped: line.isWrapped } : undefined;
+        };
+        const links: ILink[] = pathLinks(row, bufferLineNumber, term.cols).map((link) => ({
+          range: { start: link.start, end: link.end },
+          text: link.text,
+          decorations: { pointerCursor: true, underline: true },
+          activate: (event, linkText) => {
+            if (event.metaKey) this.openFile(linkText.replace(/:\d+$/, ""), key);
+          },
+        }));
         callback(links.length > 0 ? links : undefined);
       },
     });
