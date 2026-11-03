@@ -194,9 +194,11 @@ jobs:
 
           # The tap's main takes changes only through a reviewed pull request.
           # One branch per release, cut from main, so the pull request never
-          # conflicts. The newest version wins: a run for a version older than
-          # the tap's or than a formula PR already open (a late or re-run
-          # job) changes nothing, and opening this PR closes only older ones.
+          # conflicts, and piekstra-dev is asked to review it. The newest
+          # version wins: a run for a version older than the tap's or than an
+          # open formula PR's (a publish job that finished late) changes
+          # nothing, and a run closes only older formula PRs and deletes only
+          # older formula branches, including ones a failed run left behind.
           # Fork PRs are ignored, since `--head` matches on the branch name
           # alone. `gh api` prints a 404's body to stdout, hence `|| VAR=""`
           # outside `$()`.
@@ -249,6 +251,8 @@ jobs:
             PR=$(gh pr create -R "$TAP" --head "$BRANCH" --base main --title "twapp ${VERSION}" \
               --body "Moves the twapp formula to https://github.com/piekstra/twapp/releases/tag/v${VERSION}. Opened by the twapp release workflow; each sha256 is that release's tarball.")
           fi
+          gh pr edit "$PR" -R "$TAP" --add-reviewer piekstra-dev >/dev/null 2>&1 \
+            || echo "::warning title=Homebrew::Could not request piekstra-dev's review on $PR"
           while read -r N V; do
             if [ -n "$V" ] && [ "$V" != "$VERSION" ]; then
               gh pr close "$N" -R "$TAP" --delete-branch --comment "Superseded by $PR."
@@ -256,4 +260,11 @@ jobs:
           done <<EOF
           $OPEN
           EOF
+          REFS=$(gh api "repos/$TAP/git/matching-refs/heads/$PREFIX" --jq '.[].ref' 2>/dev/null) || REFS=""
+          for REF in $REFS; do
+            V=${REF#refs/heads/"$PREFIX"}
+            if [ "$V" != "$VERSION" ] && newer "$VERSION" "$V"; then
+              gh api -X DELETE "repos/$TAP/git/$REF" >/dev/null 2>&1 || true
+            fi
+          done
           echo "::notice title=Homebrew::$PR moves twapp to v${VERSION}; brew sees it after the piekstra-dev review and merge."
