@@ -3301,42 +3301,22 @@ pub fn hub_session_disk() -> Result<DiskReport, String> {
 #[tauri::command]
 pub async fn hub_outside_agents() -> Result<Vec<crate::status::outside::OutsideAgent>, String> {
     let inside = terminal_host_pid()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        use crate::status::outside;
-        let table = crate::status::proctree::ProcTable::snapshot();
-        let info = outside::read_info(&outside::candidates(&table, inside));
-        outside::outside_agents(&table, inside, &info)
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || crate::status::outside::scan(inside).1)
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// End an idle group of agent processes outside every session. It is looked
-/// up again first, so a process that started working, joined a session or
-/// whose pid was reused is left alone. True when it is gone.
+/// End an idle group of agent processes outside every session, checked
+/// against a fresh scan first (`outside::stop_target`). True when it is gone.
 #[tauri::command]
 pub async fn hub_stop_outside_agent(pid: u32) -> Result<bool, String> {
     let inside = terminal_host_pid()?;
     tauri::async_runtime::spawn_blocking(move || {
-        use crate::status::{outside, proctree::ProcTable};
-        let table = ProcTable::snapshot();
-        let info = outside::read_info(&outside::candidates(&table, inside));
-        let agents = outside::outside_agents(&table, inside, &info);
-        let agent = agents
-            .iter()
-            .find(|a| a.pid == pid)
-            .ok_or("That process has ended or is no longer outside a session.")?;
-        if !agent.idle {
-            return Err("It is no longer idle, so nothing was stopped.".to_string());
-        }
+        use crate::status::outside;
+        let (table, agents) = outside::scan(inside);
+        outside::stop_target(&agents, pid).map_err(|refused| refused.message().to_string())?;
         outside::terminate(&table, pid);
-        for _ in 0..30 {
-            std::thread::sleep(Duration::from_millis(100));
-            if !ProcTable::snapshot().contains(pid) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(outside::wait_gone(pid, Duration::from_secs(3)))
     })
     .await
     .map_err(|e| e.to_string())?

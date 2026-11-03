@@ -22,6 +22,7 @@ try {
     await page.addInitScript(({ theme, width, snapshot, outside }) => {
       localStorage.setItem('twapp-layout', JSON.stringify({ mode: 'right', sidebarWidth: width, switcherCollapsedLanes: [] }));
       window.__calls = [];
+      window.__outside = outside.map(a => ({ ...a }));
       const callbacks = {};
       const listeners = [];
       let counter = 0;
@@ -34,7 +35,7 @@ try {
         invoke: async (cmd, args) => {
           if (cmd === 'hub_snapshot') return snapshot;
           if (cmd === 'hub_session_disk') return { running: false, sessions: [] };
-          if (cmd === 'hub_outside_agents') return outside;
+          if (cmd === 'hub_outside_agents') return window.__outside;
           if (cmd === 'get_theme_preference') return theme;
           if (cmd === 'get_global_config') return { agent_providers: ['claude', 'codex', 'antigravity'] };
           if (cmd === 'get_notes' || cmd === 'get_session_history') return [];
@@ -45,7 +46,11 @@ try {
           if (cmd === 'plugin:event|unlisten') return null;
           window.__calls.push({ cmd, args });
           if (cmd === 'hub_measure_disk') return true;
-          if (cmd === 'hub_stop_outside_agent') return true;
+          if (cmd === 'hub_stop_outside_agent') {
+            if (args.pid === 500) throw 'It is no longer idle, so nothing was stopped.';
+            window.__outside = window.__outside.filter(a => a.pid !== args.pid);
+            return true;
+          }
           return null;
         },
       };
@@ -144,6 +149,18 @@ try {
       await page.evaluate(() => window.__calls.filter(c => c.cmd === 'hub_stop_outside_agent')),
       [{ cmd: 'hub_stop_outside_agent', args: { pid: 24982 } }],
     );
+    // Success is announced, the row goes, and focus moves to the next Stop.
+    await page.locator('.resources-outside [role="status"]').filter({ hasText: 'claude --bg-pty-host 24982 stopped.' }).waitFor({ state: 'attached' });
+    await page.waitForFunction(() => !document.querySelector('.resources-outside tbody')?.textContent?.includes('24982'));
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Stop claude --bg-pty-host 24099');
+    // A refused stop says why, and a refresh does not clear it.
+    const codex = strays.locator('tbody tr').filter({ hasText: 'codex exec' });
+    await codex.getByRole('button', { name: 'Stop codex exec 500' }).click();
+    await codex.getByRole('group').getByRole('button', { name: 'Stop codex exec 500' }).click();
+    const refused = page.locator('.resources-outside [role="alert"]').filter({ hasText: 'It is no longer idle' });
+    await refused.waitFor();
+    await page.evaluate(() => new Promise(r => setTimeout(r, 300)));
+    assert.equal(await refused.count(), 1, 'the refusal stays after the refresh that follows it');
     results.push({ theme, width, rows: snapshot.sessions.length, outside: outside.length, overflow });
     await page.close();
   }

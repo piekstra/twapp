@@ -12,33 +12,66 @@ const REFRESH_MS = 10_000;
  */
 export default function OutsideAgents({ now }: { now: number }) {
   const [agents, setAgents] = useState<OutsideAgent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A failed refresh clears itself on the next one; a failed stop stays
+  // until the next stop or until dismissed.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
   const [confirming, setConfirming] = useState<number | null>(null);
   const [stopping, setStopping] = useState<number | null>(null);
-  const focusNext = useRef<{ pid: number; target: "cancel" | "stop" } | null>(null);
+  const focusNext = useRef<{ pid: number; target: "cancel" | "stop" } | "heading" | "next-stop" | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
+  // Only the latest request may update the list; a slow one that resolves
+  // after a newer one is dropped, and a tick is skipped while one is out.
+  const latest = useRef(0);
+  const pending = useRef(false);
 
-  const load = useCallback(() => {
-    hubApi
-      .outsideAgents()
-      .then((list) => {
-        setAgents(list);
-        setError(null);
-      })
-      .catch((e) => setError(String(e)));
+  const load = useCallback(async (force = false) => {
+    if (pending.current && !force) return;
+    const id = ++latest.current;
+    pending.current = true;
+    try {
+      const list = await hubApi.outsideAgents();
+      if (id !== latest.current) return;
+      setAgents(list);
+      setLoadError(null);
+    } catch (e) {
+      if (id === latest.current) setLoadError(String(e));
+    } finally {
+      if (id === latest.current) pending.current = false;
+    }
   }, []);
 
+  // Poll only while the window is visible; catch up as soon as it is again.
   useEffect(() => {
-    load();
-    const timer = window.setInterval(load, REFRESH_MS);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const start = () => {
+      window.clearInterval(timer);
+      if (document.hidden) return;
+      load();
+      timer = window.setInterval(() => load(), REFRESH_MS);
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", start);
+    };
   }, [load]);
 
   useEffect(() => {
     const want = focusNext.current;
     if (!want) return;
     focusNext.current = null;
-    tableRef.current?.querySelector<HTMLElement>(`[data-pid="${want.pid}"][data-focus="${want.target}"]`)?.focus();
+    const nextStop = () => tableRef.current?.querySelector<HTMLElement>('[data-focus="stop"]');
+    const target =
+      want === "heading"
+        ? headingRef.current
+        : want === "next-stop"
+          ? nextStop() ?? headingRef.current
+          : tableRef.current?.querySelector<HTMLElement>(`[data-pid="${want.pid}"][data-focus="${want.target}"]`);
+    target?.focus();
   });
 
   const ask = (pid: number) => {
@@ -50,21 +83,31 @@ export default function OutsideAgents({ now }: { now: number }) {
     setConfirming(null);
   };
   const stop = async (a: OutsideAgent) => {
+    // The confirm controls are about to go: hold focus on the heading.
+    focusNext.current = "heading";
     setConfirming(null);
     setStopping(a.pid);
-    setError(null);
+    setActionError(null);
+    setStatus(`Stopping ${a.command} ${a.pid}.`);
     try {
       const gone = await hubApi.stopOutsideAgent(a.pid);
-      if (!gone) setError(`${a.command} (${a.pid}) was asked to end but is still running.`);
+      if (gone) setStatus(`${a.command} ${a.pid} stopped.`);
+      else {
+        setStatus("");
+        setActionError(`${a.command} (${a.pid}) was asked to end but is still running.`);
+      }
     } catch (e) {
-      setError(String(e));
+      setStatus("");
+      setActionError(String(e));
     } finally {
+      // Refresh first, so focus lands on a Stop in the new list.
+      await load(true);
+      focusNext.current = "next-stop";
       setStopping(null);
-      load();
     }
   };
 
-  if (agents === null && !error) return null;
+  if (agents === null && !loadError) return null;
   const list = agents ?? [];
   const totalKb = list.reduce((n, a) => n + a.resources.rss_kb, 0);
   const idle = list.filter((a) => a.idle);
@@ -72,7 +115,7 @@ export default function OutsideAgents({ now }: { now: number }) {
 
   return (
     <section className="resources-outside" aria-labelledby="resources-outside-head">
-      <h3 id="resources-outside-head" className="resources-heading">
+      <h3 id="resources-outside-head" className="resources-heading" ref={headingRef} tabIndex={-1}>
         Agent processes outside your sessions
         {list.length > 0 && (
           <span className="count">
@@ -86,9 +129,16 @@ export default function OutsideAgents({ now }: { now: number }) {
         hosts, desktop-app conversations, and runs other tools start. Idle means nothing but agent processes runs under it, it uses
         no CPU, and it is at least half an hour old.
       </p>
-      {error && <div className="triage-error" role="alert">{error}</div>}
+      <div className="sr-only" role="status">{status}</div>
+      {actionError && (
+        <div className="triage-error resources-action-error" role="alert">
+          {actionError}
+          <button className="triage-dismiss" onClick={() => setActionError(null)} aria-label="Dismiss">&times;</button>
+        </div>
+      )}
+      {loadError && <div className="triage-error" role="alert">{loadError}</div>}
       {list.length === 0 ? (
-        !error && <div className="board-muted">None running.</div>
+        !loadError && <div className="board-muted">None running.</div>
       ) : (
         <table className="resources-table" aria-label="Agent processes outside your sessions" ref={tableRef}>
           <thead>
@@ -128,16 +178,18 @@ export default function OutsideAgents({ now }: { now: number }) {
                           Stop
                         </button>
                       </span>
+                    ) : stopping === a.pid ? (
+                      <span className="board-muted">Stopping</span>
                     ) : (
                       <button
                         className="button ghost small"
                         data-pid={a.pid}
                         data-focus="stop"
-                        disabled={stopping === a.pid}
+                        disabled={stopping !== null}
                         onClick={() => ask(a.pid)}
                         aria-label={`Stop ${a.command} ${a.pid}`}
                       >
-                        {stopping === a.pid ? "Stopping" : "Stop"}
+                        Stop
                       </button>
                     ))}
                 </td>

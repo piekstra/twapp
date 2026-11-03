@@ -4530,3 +4530,10 @@ kbd {
   font: 500 11.5px var(--font-mono);
   color: var(--text-1);
 }
+
+.resources-action-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}

@@ -183,12 +183,24 @@ pub fn args(pid: u32) -> Option<String> {
 }
 
 fn is_harness_comm(comm: &str, provider: AgentProvider) -> bool {
+    harness_of(comm) == Some(provider)
+}
+
+/// The harness a process runs, from its `ps` name. Claude Code's native
+/// install runs from `.../claude/versions/<version>` and titles its helpers
+/// `claude <role>`; the npm-installed Codex runs a platform binary such as
+/// `codex-aarch64-apple-darwin` under a node wrapper.
+pub fn harness_of(comm: &str) -> Option<AgentProvider> {
     let base = comm.rsplit('/').next().unwrap_or(comm);
-    match provider {
-        // The npm-installed Codex runs a platform binary such as
-        // `codex-aarch64-apple-darwin` under a node wrapper.
-        AgentProvider::Codex => base == "codex" || base.starts_with("codex-"),
-        _ => provider.binaries().contains(&base),
+    let name = base.split(' ').next().unwrap_or(base);
+    if name == "claude" || comm.contains("/claude/versions/") {
+        Some(AgentProvider::Claude)
+    } else if name == "codex" || name.starts_with("codex-") {
+        Some(AgentProvider::Codex)
+    } else if AgentProvider::Antigravity.binaries().contains(&name) {
+        Some(AgentProvider::Antigravity)
+    } else {
+        None
     }
 }
 
@@ -257,6 +269,18 @@ garbage line
         assert_eq!(t.find_harness(600, AgentProvider::Codex), Some(611));
         assert_eq!(t.find_harness(700, AgentProvider::Antigravity), Some(710));
         assert_eq!(t.find_harness(600, AgentProvider::Claude), None);
+    }
+
+    #[test]
+    fn recognizes_every_harness_form() {
+        for comm in ["claude", "claude bg-spare", "/Users/u/.local/bin/claude", "/Users/u/.local/share/claude/versions/2.1.317", "/x/ClaudeCode.app/Contents/MacOS/claude"] {
+            assert_eq!(harness_of(comm), Some(AgentProvider::Claude), "{comm}");
+        }
+        assert_eq!(harness_of("/usr/local/bin/codex-aarch64-apple-darwin"), Some(AgentProvider::Codex));
+        assert_eq!(harness_of("/Applications/My Tools/agy"), Some(AgentProvider::Antigravity));
+        for other in ["/Applications/Claude.app/Contents/MacOS/Claude", "node", "/bin/zsh", "claudette"] {
+            assert_eq!(harness_of(other), None, "{other}");
+        }
     }
 
     #[test]

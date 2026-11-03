@@ -477,19 +477,21 @@ note, when it was archived, and each copy with the path the harness reads.
   the earlier full reading.
   The tab also lists agent processes outside every session
   (`hub/OutsideAgents.tsx`, `hub_outside_agents`, `status/outside.rs`):
-  processes whose `ps` name is a harness binary (Claude Code's native
-  `claude/versions/<version>` path and its `claude <role>` helpers included)
-  and that are neither the terminal host nor below it. Each group starts at
+  processes whose `ps` name is a harness binary (`proctree::harness_of`, the
+  same test that finds a session's harness, so Claude Code's native
+  `claude/versions/<version>` path and its `claude <role>` helpers count for
+  both) and that are neither the terminal host nor below it. Each group starts at
   such a process whose parent is not one, except that the children of an
   `<agent> daemon` process start groups of their own, since a daemon hosts
   unrelated work for many sessions; the daemon's row counts only itself. A
   group is idle when everything below it is an agent process, it uses under
   1% CPU and it is at least 30 minutes old. Only idle groups can be stopped
-  (`hub_stop_outside_agent`, SIGTERM deepest first), and the hub looks the
-  group up again before stopping it, so one that started working, joined a
-  session or whose pid was reused is left alone. Only the harness and its
-  first argument are shown, since later arguments can carry prompts. The tab
-  refreshes the list every ten seconds while it is open.
+  (`hub_stop_outside_agent`, SIGTERM deepest first), and the hub scans again
+  and asks `outside::stop_target` first, so one that started working, joined
+  a session or whose pid was reused is refused. A row shows the harness and,
+  when it is a flag (without its value) or a known subcommand, its first
+  argument; anything else could be prompt text. The tab refreshes the list
+  every ten seconds while the window is visible.
 
 Keyboard:
 
