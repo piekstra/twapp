@@ -18,12 +18,12 @@ const LEFTOVER_AGE_SECS: u64 = 30 * 60;
 /// host's single `ps` sample still swings between 0 and several percent, so
 /// the structure of the group, not this number, is what marks a leftover.
 const QUIET_CPU_TENTHS: u32 = 100;
-/// Harness subcommands and process roles shown as they are. Any other first
-/// argument that is not a flag could be the start of a prompt.
 /// The roles a harness gives the processes that host its background work.
 /// Only these count as left behind when their parent is gone: a headless or
 /// interactive run whose launcher exited is still a run.
 const HOST_ROLES: &[&str] = &["bg-pty-host", "--bg-pty-host", "bg-spare", "--bg-spare"];
+/// Harness subcommands and process roles shown as they are. Any other first
+/// argument that is not a flag could be the start of a prompt.
 const KNOWN_WORDS: &[&str] = &["daemon", "bg-pty-host", "bg-spare", "mcp", "exec", "app-server", "proto", "resume", "update", "doctor"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
