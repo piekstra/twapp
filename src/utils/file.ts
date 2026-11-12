@@ -13,6 +13,10 @@ export function isHtmlFile(path: string): boolean {
   return /\.html?$/i.test(path);
 }
 
+export function isPdfFile(path: string): boolean {
+  return /\.pdf$/i.test(path);
+}
+
 export function isImageFile(path: string): boolean {
   const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
   return imageExtensions.has(ext);

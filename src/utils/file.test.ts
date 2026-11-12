@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, splitTextWithFilePaths } from "./file";
+import { isYamlFile, isHtmlFile, isImageFile, isPdfFile, imageMimeType, isFilePath, isLikelyPreviewableHref, normalizeFilePathCandidate, splitTextWithFilePaths } from "./file";
 
 describe("isYamlFile", () => {
   it("detects .yaml files", () => {
@@ -19,6 +19,18 @@ describe("isYamlFile", () => {
     expect(isYamlFile("config.json")).toBe(false);
     expect(isYamlFile("config.txt")).toBe(false);
     expect(isYamlFile("yaml")).toBe(false);
+  });
+});
+
+describe("isPdfFile", () => {
+  it("detects .pdf files in any case", () => {
+    expect(isPdfFile("/Users/me/Downloads/letter.pdf")).toBe(true);
+    expect(isPdfFile("Scan.PDF")).toBe(true);
+  });
+
+  it("rejects other files", () => {
+    expect(isPdfFile("letter.pdf.txt")).toBe(false);
+    expect(isPdfFile("pdf")).toBe(false);
   });
 });
 
