@@ -28,8 +28,11 @@ pub fn read_file(path: String, directory: Option<String>) -> Result<String, Stri
     if metadata.len() > 2 * 1024 * 1024 {
         return Err("File too large (max 2MB)".to_string());
     }
-    std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+    let bytes = std::fs::read(&resolved).map_err(|e| e.to_string())?;
+    String::from_utf8(bytes).map_err(|_| NOT_TEXT.to_string())
 }
+
+const NOT_TEXT: &str = "Not a text file, so it can't be previewed here.";
 
 #[tauri::command]
 pub fn read_file_base64(path: String, directory: Option<String>) -> Result<String, String> {
@@ -206,4 +209,24 @@ pub fn relaunch_app() -> Result<(), String> {
         std::process::exit(0);
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_file_returns_text_and_refuses_binary() {
+        let dir = std::env::temp_dir().join(format!("twapp-read-file-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.md"), "# Notes\n").unwrap();
+        // The start of a PDF: a binary marker line that is not UTF-8.
+        std::fs::write(dir.join("letter.pdf"), b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n").unwrap();
+        let directory = dir.to_str().map(str::to_string);
+
+        assert_eq!(read_file("notes.md".into(), directory.clone()), Ok("# Notes\n".to_string()));
+        assert_eq!(read_file("letter.pdf".into(), directory), Err(NOT_TEXT.to_string()));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

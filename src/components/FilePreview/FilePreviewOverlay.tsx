@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import yaml from "js-yaml";
-import { isYamlFile, isHtmlFile, isImageFile, imageMimeType } from "../../utils/file";
+import { isYamlFile, isHtmlFile, isImageFile, isPdfFile, imageMimeType } from "../../utils/file";
 import { remarkAutolinkFilePaths } from "../../utils/markdown";
 import { markdownComponents as buildMarkdownComponents } from "../markdown";
 import { renderJsonNode, renderYamlNode } from "./renderers";
@@ -51,6 +51,11 @@ const FilePreviewOverlay = forwardRef<FilePreviewHandle>(function FilePreviewOve
       if (isImageFile(filePath)) {
         const base64 = await invoke<string>("read_file_base64", { path: filePath, directory });
         setPreviewFile({ path: filePath, content: `data:${imageMimeType(filePath)};base64,${base64}` });
+      } else if (isPdfFile(filePath)) {
+        const base64 = await invoke<string>("read_file_base64", { path: filePath, directory });
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        setPreviewFile({ path: filePath, content: url });
       } else {
         const content = await invoke<string>("read_file", { path: filePath, directory });
         setPreviewFile({ path: filePath, content });
@@ -68,6 +73,13 @@ const FilePreviewOverlay = forwardRef<FilePreviewHandle>(function FilePreviewOve
       handleFilePreview(path, directory ?? null);
     },
   }));
+
+  // A PDF shows from an object URL, released once another file replaces it or the preview closes.
+  useEffect(() => {
+    const url = previewFile && isPdfFile(previewFile.path) ? previewFile.content : "";
+    if (!url) return;
+    return () => URL.revokeObjectURL(url);
+  }, [previewFile]);
 
   const markdownComponents = buildMarkdownComponents((path) => handleFilePreview(path));
 
@@ -216,7 +228,10 @@ const FilePreviewOverlay = forwardRef<FilePreviewHandle>(function FilePreviewOve
 
   return (
       <div className="file-preview-overlay" onClick={() => { setPreviewFile(null); setPreviewError(null); setPreviewSearchOpen(false); setPreviewSearchQuery(""); }}>
-        <div className="file-preview-panel" onClick={(e) => e.stopPropagation()}>
+        <div
+          className={`file-preview-panel${previewFile && !previewError && isPdfFile(previewFile.path) ? " file-preview-panel-tall" : ""}`}
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="file-preview-header">
             <span className="file-preview-path">{previewFile?.path ?? ""}</span>
             <div className="file-preview-header-actions">
@@ -326,6 +341,9 @@ const FilePreviewOverlay = forwardRef<FilePreviewHandle>(function FilePreviewOve
                   />
                 )}
               </div>
+            ) : previewFile && isPdfFile(previewFile.path) ? (
+              // Not sandboxed: WebKit shows nothing for a PDF in a sandboxed frame.
+              <iframe src={previewFile.content} className="file-preview-pdf" title="PDF Preview" />
             ) : previewFile && isImageFile(previewFile.path) ? (
               <div
                 className="file-preview-image"
