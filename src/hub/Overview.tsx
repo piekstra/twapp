@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getDarkModeAccentColor } from "../color";
-import { LANES, STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type SessionResources, type SessionView, type Triage, type UsageReport } from "./api";
+import { STATE_LABELS, compactNumber, effortsOf, headlineOf, hubApi, sinceLabel, usageShare, type Lane, type SessionResources, type SessionView, type Triage, type UsageReport } from "./api";
 import { StateDot, blockedLabel } from "./SessionRail";
 import BlockerList, { blockersOf } from "./BlockerList";
 import AskList, { asksOf } from "./AskList";
@@ -9,6 +9,7 @@ import Journal from "./Journal";
 import Board from "./Board";
 import Resources from "./Resources";
 import Linkify from "./Linkify";
+import { moveInGroup, overviewLanes, type DropSide } from "./overviewOrder";
 
 interface Props {
   /** The session that was showing before the overview opened. */
@@ -18,6 +19,8 @@ interface Props {
   isDark: boolean;
   now: number;
   onSelect: (key: string) => void;
+  /** New order for every session after a card was dragged within its group. */
+  onMove: (keys: string[], moved: string, lane: Lane) => void;
   /** Stop a session's main terminal, keeping it in the window. */
   onStop: (key: string) => Promise<void>;
   resources: Record<string, SessionResources | null>;
@@ -34,6 +37,7 @@ export default function Overview({
   isDark,
   now,
   onSelect,
+  onMove,
   onStop,
   resources,
   library,
@@ -45,6 +49,9 @@ export default function Overview({
   const [showJournal, setShowJournal] = useState(false);
   const [showBoard, setShowBoard] = useState(false);
   const [showResources, setShowResources] = useState(false);
+  // The card being dragged, and the card and side it would land on.
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ key: string; side: DropSide } | null>(null);
   // Preserve existing folds while introducing Parked as a folded lane.
   const [folded, setFoldedState] = useState<string[]>(() => {
     try {
@@ -120,13 +127,57 @@ export default function Overview({
     }
   };
 
-  const card = (s: SessionView, showEffort = false) => {
+  const endDrag = () => {
+    setDragKey(null);
+    setDrop(null);
+  };
+
+  /** `group`: the keys of the cards this one shares a grid with. */
+  const card = (s: SessionView, group: string[], showEffort = false) => {
     const accent = s.color ? (isDark ? getDarkModeAccentColor(s.color) : s.color) : undefined;
+    const target = drop?.key === s.key ? ` drop-${drop.side}` : "";
+    // Checked against the group as it is now, so a card that moved to another
+    // lane or effort during the drag is no longer a target.
+    const accepts = () => !!dragKey && dragKey !== s.key && group.includes(dragKey);
+    const sideOf = (e: React.DragEvent<HTMLElement>): DropSide => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      return e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+    };
+    // WebKit decides whether a drop is allowed from dragenter alone when the
+    // pointer crosses into an element inside the card, so both accept it.
+    const over = (e: React.DragEvent<HTMLElement>) => {
+      if (!accepts()) {
+        if (drop?.key === s.key) setDrop(null);
+        return;
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const side = sideOf(e);
+      if (drop?.key !== s.key || drop.side !== side) setDrop({ key: s.key, side });
+    };
     return (
       <button
         key={s.key}
-        className={`overview-card state-${s.status.state}${s.attention ? " attention" : ""}`}
+        className={`overview-card state-${s.status.state}${s.attention ? " attention" : ""}${dragKey === s.key ? " dragging" : ""}${target}`}
         onClick={() => onSelect(s.key)}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", s.key);
+          setDragKey(s.key);
+        }}
+        onDragEnter={over}
+        onDragOver={over}
+        onDragLeave={(e) => {
+          if (drop?.key === s.key && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const keys = dragKey && accepts() ? moveInGroup(sessions.map((x) => x.key), group, dragKey, s.key, sideOf(e)) : null;
+          if (dragKey && keys) onMove(keys, dragKey, s.lane ?? "background");
+          endDrag();
+        }}
+        onDragEnd={endDrag}
       >
         <span className="overview-card-accent" style={{ background: accent }} />
         <div className="overview-card-top">
@@ -154,31 +205,7 @@ export default function Overview({
   };
 
   const efforts = effortsOf(sessions);
-  // Each lane lists its sessions grouped by effort, efforts first in the
-  // user's order, then the sessions that belong to none.
-  const lanes = LANES.map(({ lane, label }) => {
-    const inLane = sessions.filter((s) => (s.lane ?? "background") === lane);
-    const names = [...new Set(inLane.map((s) => efforts.get(s.key)).filter((e): e is string => !!e))];
-    return {
-      lane,
-      label,
-      sessions: inLane,
-      // An effort with two or more sessions in the lane gets its own
-      // heading; the others share one grid, with the effort on the card.
-      groups: [
-        ...names
-          .map((name) => ({ name: name as string | null, sessions: inLane.filter((s) => efforts.get(s.key) === name) }))
-          .filter((g) => g.sessions.length > 1),
-        {
-          name: null as string | null,
-          sessions: inLane.filter((s) => {
-            const e = efforts.get(s.key);
-            return !e || inLane.filter((o) => efforts.get(o.key) === e).length < 2;
-          }),
-        },
-      ].filter((g) => g.sessions.length > 0),
-    };
-  }).filter((l) => l.sessions.length > 0);
+  const lanes = overviewLanes(sessions, efforts);
 
   const waiting = blockersOf(sessions);
   const asks = asksOf(sessions);
@@ -446,7 +473,7 @@ export default function Overview({
                     l.groups.map((g) => (
                       <div key={g.name ?? "none"} className="overview-effort">
                         {g.name && <div className="overview-effort-head">{g.name}</div>}
-                        <div className="overview-grid">{g.sessions.map((s) => card(s, !g.name))}</div>
+                        <div className="overview-grid">{g.sessions.map((s) => card(s, g.sessions.map((x) => x.key), !g.name))}</div>
                       </div>
                     ))}
                 </section>
