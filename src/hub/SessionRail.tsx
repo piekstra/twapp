@@ -143,6 +143,8 @@ export default function SessionRail({
         draggable
         onDragStart={() => setDragKey(s.key)}
         onDragOver={(e) => {
+          // Only the list's own drags drop here, not the Overview's cards.
+          if (!dragKey) return;
           e.preventDefault();
           e.stopPropagation();
           setDrop({ key: s.key, lane: s.lane ?? "background" });
@@ -249,6 +251,7 @@ export default function SessionRail({
                   key={l.lane}
                   className={`lane lane-${l.lane}${drop && drop.key === null && drop.lane === l.lane ? " drop-target" : ""}`}
                   onDragOver={(e) => {
+                    if (!dragKey) return;
                     e.preventDefault();
                     setDrop({ key: null, lane: l.lane });
                   }}

@@ -1,0 +1,274 @@
+{
+ "sessions": [
+  {
+   "key": "/work/p1",
+   "name": "Billing roles migration",
+   "provider": "claude",
+   "color": "#ffe0e0",
+   "session_id": "p1-id",
+   "ticket_key": "OPS-81",
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": {
+    "doing": "Adding the role column to the billing schema"
+   },
+   "last_viewed": null,
+   "attention": false,
+   "lane": "priority",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": {
+    "name": "Billing rollout",
+    "source": "user"
+   }
+  },
+  {
+   "key": "/work/p2",
+   "name": "A very long session name that keeps going to test wrapping inside the card",
+   "provider": "claude",
+   "color": "#e0ffe0",
+   "session_id": "p2-id",
+   "ticket_key": "OPS-102",
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "your_turn",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": {
+    "doing": "Waiting for review on the retry change"
+   },
+   "last_viewed": null,
+   "attention": true,
+   "lane": "priority",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": null
+  },
+  {
+   "key": "/work/p3",
+   "name": "Billing invoices",
+   "provider": "claude",
+   "color": "#ffe0e0",
+   "session_id": "p3-id",
+   "ticket_key": null,
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": {
+    "doing": "Regenerating invoice PDFs"
+   },
+   "last_viewed": null,
+   "attention": false,
+   "lane": "priority",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": {
+    "name": "Billing rollout",
+    "source": "user"
+   }
+  },
+  {
+   "key": "/work/p4",
+   "name": "Search indexing",
+   "provider": "claude",
+   "color": "#fff0e0",
+   "session_id": "p4-id",
+   "ticket_key": "OPS-140",
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": {
+    "doing": "Rebuilding the search index"
+   },
+   "last_viewed": null,
+   "attention": false,
+   "lane": "priority",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": null
+  },
+  {
+   "key": "/work/p5",
+   "name": "Docs refresh",
+   "provider": "claude",
+   "color": "#f0e0ff",
+   "session_id": "p5-id",
+   "ticket_key": null,
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": {
+    "doing": "Updating the setup guide"
+   },
+   "last_viewed": null,
+   "attention": false,
+   "lane": "priority",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": null
+  },
+  {
+   "key": "/work/b1",
+   "name": "Dependency bumps",
+   "provider": "claude",
+   "color": "#e0ffff",
+   "session_id": "b1-id",
+   "ticket_key": null,
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": null,
+   "last_viewed": null,
+   "attention": false,
+   "lane": "background",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": null
+  },
+  {
+   "key": "/work/b2",
+   "name": "Flaky test hunt",
+   "provider": "claude",
+   "color": "#fef3c7",
+   "session_id": "b2-id",
+   "ticket_key": null,
+   "chrome": false,
+   "override_terminal_theme": false,
+   "tabs": [
+    {
+     "tab": "main",
+     "title": "Claude",
+     "running": false
+    }
+   ],
+   "status": {
+    "state": "working",
+    "since": "2026-10-01T12:00:00Z",
+    "detail": null,
+    "title": null,
+    "last_message": null,
+    "transcript_path": null,
+    "transcript_len": 0,
+    "harness_pid": null
+   },
+   "summary": null,
+   "last_viewed": null,
+   "attention": false,
+   "lane": "background",
+   "blocked_since": null,
+   "checked_at": null,
+   "blockers": [],
+   "asks": [],
+   "effort": null
+  }
+ ],
+ "selected": null,
+ "host_error": null
+}

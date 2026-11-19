@@ -2032,6 +2032,27 @@ kbd {
   border-color: color-mix(in srgb, var(--state-approval) 55%, transparent);
 }
 
+/* Dragging a card to reorder it: the dragged card dims and the target shows
+   a bar in the grid gap on the side the card will land, outside the card so
+   its color stripe does not cover it. */
+.overview-card.dragging {
+  opacity: 0.4;
+}
+
+.overview-card.drop-before {
+  box-shadow: -5px 0 0 -3px var(--accent), var(--shadow-1);
+}
+
+.overview-card.drop-after {
+  box-shadow: 5px 0 0 -3px var(--accent), var(--shadow-1);
+}
+
+.overview-card.dragging,
+.overview-card.drop-before,
+.overview-card.drop-after {
+  transform: none;
+}
+
 .overview-card-accent {
   position: absolute;
   left: 0;
