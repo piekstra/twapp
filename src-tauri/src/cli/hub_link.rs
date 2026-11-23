@@ -73,9 +73,18 @@ pub fn suspend(directory: &str, force: bool) -> Result<bool, String> {
     changed(request(&HubRequest::Suspend { key: directory.to_string(), force })?)
 }
 
+/// What a wake request found.
+#[derive(Debug, PartialEq)]
+pub enum Woke {
+    Started,
+    AlreadyRunning,
+    /// The window took longer than `WAKE_WAIT` to answer; it goes on starting the session.
+    StillStarting,
+}
+
 /// Start a session's agent in the window, starting the window first when
-/// none runs. `Ok(false)`: it was already running.
-pub fn wake(directory: &str, select: bool) -> Result<bool, String> {
+/// none runs.
+pub fn wake(directory: &str, select: bool) -> Result<Woke, String> {
     if matches!(exchange(&HubRequest::Ping, Duration::from_secs(10)), Err(NoReply::NotRunning)) {
         start_window(!select)?;
     }
@@ -83,16 +92,13 @@ pub fn wake(directory: &str, select: bool) -> Result<bool, String> {
     // can take longer than other requests.
     let req = HubRequest::Wake { key: directory.to_string(), select };
     match exchange(&req, WAKE_WAIT) {
-        Ok(reply) => changed(reply),
-        Err(NoReply::Silent(_)) => Err(format!(
-            "the window is still starting it after {} s; `twapp status` shows when it runs",
-            WAKE_WAIT.as_secs()
-        )),
+        Ok(reply) => Ok(if changed(reply)? { Woke::Started } else { Woke::AlreadyRunning }),
+        Err(NoReply::Silent(_)) => Ok(Woke::StillStarting),
         Err(e) => Err(e.to_string()),
     }
 }
 
-const WAKE_WAIT: Duration = Duration::from_secs(60);
+pub const WAKE_WAIT: Duration = Duration::from_secs(60);
 
 fn changed(reply: HubReply) -> Result<bool, String> {
     if reply.ok {

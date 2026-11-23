@@ -1774,13 +1774,27 @@ impl Hub {
         Ok(started)
     }
 
-    /// Take a session that has no terminal out of the window.
+    /// Take a session a failed wake added out of the window, stopping any
+    /// terminal its start left behind (a spawn whose attach failed).
     fn forget(&self, key: &str) {
-        {
+        let ptys: Vec<u64> = {
             let mut inner = self.inner.lock();
+            let ptys: Vec<u64> = inner
+                .session(key)
+                .map(|s| s.tabs.iter().filter_map(|t| t.pty).collect())
+                .unwrap_or_default();
+            for p in &ptys {
+                inner.pty_index.remove(p);
+            }
             inner.sessions.retain(|s| s.key != key);
             if inner.selected.as_deref() == Some(key) {
                 inner.selected = inner.sessions.first().map(|s| s.key.clone());
+            }
+            ptys
+        };
+        if let Ok(client) = self.ptyd() {
+            for p in ptys {
+                client.kill(p).ok();
             }
         }
         self.persist();

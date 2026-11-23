@@ -316,7 +316,7 @@ pub enum Commands {
         #[arg(long)]
         background: bool,
         /// Seconds to wait for the session to take messages; 0 returns once it
-        /// starts. Past it, wake exits 2 and the session keeps starting
+        /// starts. Exit 2 means it is still starting when wake stops waiting
         #[arg(long, default_value_t = 120)]
         timeout: u64,
     },
@@ -2210,8 +2210,16 @@ fn cmd_wake(dir: Option<&str>, background: bool, timeout: u64) -> i32 {
         }
     };
     match hub_link::wake(&key, !background) {
-        Ok(true) => println!("{} is starting in the window.", data.name),
-        Ok(false) => println!("{} is already running.", data.name),
+        Ok(hub_link::Woke::Started) => println!("{} is starting in the window.", data.name),
+        Ok(hub_link::Woke::AlreadyRunning) => println!("{} is already running.", data.name),
+        Ok(hub_link::Woke::StillStarting) => {
+            eprintln!(
+                "The window is still starting {} after {} s. `twapp who` or `twapp status` shows when it is ready.",
+                data.name,
+                hub_link::WAKE_WAIT.as_secs()
+            );
+            return 2;
+        }
         Err(e) => {
             eprintln!("Error: {}", e);
             return 1;
