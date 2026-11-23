@@ -106,7 +106,14 @@ The window finds the pull requests a session opens on its own, from the URL `gh 
 
 Mark every pull request and commit you make, so the window can tell which session they came from even when it never saw them created (a subagent opened the pull request, or another machine did):
 
-- End the body of every pull request you open, or edit, with the line `twapp pr marker` prints, for example `gh pr create --body "$(printf '%s\n\n%s' "$BODY" "$(twapp pr marker)")"`. It is an HTML comment holding a random id for the session, so it does not show in the rendered description and names nothing about the session.
+- End the body of every pull request you open, or edit, with the line `twapp pr marker` prints. It is an HTML comment holding a random id for the session, so it does not show in the rendered description and names nothing about the session. Write the body, marker included, to a file and give `gh` the file:
+
+  ```bash
+  printf '%s\n\n%s\n' "$BODY" "$(twapp pr marker)" > /tmp/pr-body.md
+  gh pr create --title "<title>" --body-file /tmp/pr-body.md
+  ```
+
+  When the user's instructions or skills name a check to run before a pull request is opened or its text changes (a local scan for secrets and personal data, for example), run it on that title and file before `gh pr create` or `gh pr edit`, and give `gh` exactly the text it checked.
 - Add `--trailer "$(twapp pr marker --trailer)"` to every `git commit`.
 
 Do this in every repository, including public ones; it carries no names.
