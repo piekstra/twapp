@@ -187,7 +187,7 @@ Three ways to stop a session, which differ in what stays:
 
 To free memory, suspend: `twapp status` shows the memory each running session holds. Close or archive only when the user asks.
 
-`twapp wake --dir <path> --background` starts a suspended, closed or archived session's agent in the window without switching to it, resuming its own conversation, and prints its message address once it listens (`It takes messages at uds:...`). Send it what it should do with SendMessage; wake types nothing into it. `twapp who` and `twapp report` print the wake command for each suspended session they list.
+`twapp wake --dir <path> --background` starts a suspended, closed or archived session's agent in the window without switching to it, resuming its own conversation, and prints its message address once it listens (`It takes messages at uds:...`); exit 2 means it is still starting, and `twapp who` shows the address once it is ready. Send it what it should do with SendMessage; wake types nothing into it. `twapp who` and `twapp report` print the wake command for each suspended session they list.
 
 ## The window's view
 

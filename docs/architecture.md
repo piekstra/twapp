@@ -775,7 +775,9 @@ and a GUI process that starts while another holds it forwards its arguments
 over the socket and exits. When the CLI has to start the GUI, it waits for the
 socket to answer and then sends the request over it.
 
-`hub.sock` requests, one JSON line each, answered with one JSON line:
+`hub.sock` requests, one JSON line each, answered with one JSON line. Each
+client is served on its own thread, so a slow request (a wake that resumes a
+long conversation) holds up no other:
 
 | Request | Effect |
 |---|---|
@@ -803,5 +805,7 @@ its text and Enter resumes it, and a woken one attaches at once; off screen it
 is cleared, so showing it attaches to whatever runs. `twapp wake` then reads the
 snapshot each second until a Claude session's harness listens on
 `/tmp/cc-socks/<pid>.sock` and prints that address (`--timeout`, 120 seconds by
-default). Other harnesses take no messages from other sessions, so it returns
-once they run.
+default; past it, exit 2 while the session keeps starting). Other harnesses
+take no messages from other sessions, so it returns once they run. A wake
+refused because the conversation is open in another terminal, or whose start
+fails, leaves a session it had to add out of the window again.

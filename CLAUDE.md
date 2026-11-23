@@ -21,7 +21,7 @@ twapp is one window hosting every session. Each session is a directory with a `.
 - `twapp effort [name|--clear]`: show or set the larger effort the session belongs to.
 - `twapp rename <name>` or `twapp rename --suggested`, `twapp close`, `twapp delete [--everything] --yes`.
 - `twapp suspend [--force]`: stop the session's agent (the main terminal, as Stop in Resources does) to free its memory, keeping it in the window with its asks and blockers. Refused while it starts, works on a turn or waits on a prompt, and for the session running the command, unless `--force`.
-- `twapp wake [--background] [--timeout <s>]`: start a suspended, closed or archived session's agent in the window, resuming its conversation, then print its message address once a Claude session listens. It types nothing into the session.
+- `twapp wake [--background] [--timeout <s>]`: start a suspended, closed or archived session's agent in the window, resuming its conversation, then print its message address once a Claude session listens; past `--timeout` it exits 2 while the session keeps starting. It types nothing into the session.
 - `twapp archive [--note <why>]`, `twapp unarchive`: close a session and keep a copy of its conversation in `.twapp-archive/`, restored on the next launch when the harness no longer has it. An archived session cannot be deleted.
 - `twapp work <ticket|--name> [--background]`, `twapp resume`: start or open a session in the window.
 - `twapp journal [day|period]`: the work journal, one entry per work day across every session, and summaries of weeks, months and years (`--list`, `--path`, `--json`). Concise bullets are the default; `--paragraph` shows the paragraph overview.

@@ -494,6 +494,19 @@ impl HubSession {
         self.tabs[0].pty.is_some() || self.tabs[0].spawning
     }
 
+    /// Mark the main tab stopped, leaving it ready to start again, and hand
+    /// back its PTY for the caller to kill once the lock is released.
+    fn stop_main(&mut self) -> Option<u64> {
+        let main = self.main();
+        main.spawning = false;
+        main.exited = false;
+        main.channel = None;
+        let pty = main.pty.take();
+        self.status = SessionStatus::suspended();
+        self.shell_pid = None;
+        pty
+    }
+
     fn attention(&self) -> bool {
         if self.lane.lane == Lane::Parked {
             return false;
@@ -1342,10 +1355,7 @@ impl Hub {
         cols: u16,
     ) -> Result<(SpawnRequest, GuiArgs), String> {
         if let Some(pid) = conversation_running_elsewhere(key) {
-            return Err(format!(
-                "its conversation is still open in another terminal (process {}); quit it there first",
-                pid
-            ));
+            return Err(elsewhere_error(pid));
         }
         let pending = self
             .inner
@@ -1627,14 +1637,7 @@ impl Hub {
             let mut inner = self.inner.lock();
             let session = inner.session(key).ok_or("session is not in the window")?;
             let pty = if tab == MAIN_TAB {
-                let main = session.main();
-                main.spawning = false;
-                main.exited = false;
-                main.channel = None;
-                let pty = main.pty.take();
-                session.status = SessionStatus::suspended();
-                session.shell_pid = None;
-                pty
+                session.stop_main()
             } else {
                 let pty = session.tabs.iter().find(|t| t.tab == tab).and_then(|t| t.pty);
                 session.tabs.retain(|t| t.tab != tab);
@@ -1699,18 +1702,30 @@ impl Hub {
     /// Refused while the agent is busy unless `force`. Returns whether the
     /// agent was running.
     pub fn suspend(&self, key: &str, force: bool) -> Result<bool, String> {
-        let state = {
+        // The state is checked and the terminal taken under one lock, so a
+        // turn that starts meanwhile is not cut off.
+        let pty = {
             let mut inner = self.inner.lock();
             let session = inner.session(key).ok_or("the session is not open in the window")?;
             if !session.main_running() {
                 return Ok(false);
             }
-            if session.tabs[0].spawning { State::Starting } else { session.status.state }
+            let state = if session.tabs[0].spawning { State::Starting } else { session.status.state };
+            if let Some(refusal) = suspend_refusal(state, force) {
+                return Err(refusal);
+            }
+            let pty = session.stop_main();
+            session.drop_resources_if_idle();
+            if let Some(p) = pty {
+                inner.pty_index.remove(&p);
+            }
+            pty
         };
-        if let Some(refusal) = suspend_refusal(state, force) {
-            return Err(refusal);
+        if let (Some(p), Ok(client)) = (pty, self.ptyd()) {
+            client.kill(p).ok();
         }
-        self.close_tab(key, MAIN_TAB)?;
+        self.emit_changed();
+        self.emit_status(key);
         let _ = self.app.emit("hub:suspended", key.to_string());
         Ok(true)
     }
@@ -1719,8 +1734,14 @@ impl Hub {
     /// does. A session not in the window is put there first. Returns whether
     /// the agent started now rather than already running.
     pub fn wake(&self, key: &str, select: bool) -> Result<bool, String> {
-        if !self.is_hosted(key) {
+        let added = !self.is_hosted(key);
+        if added {
             read_session(Path::new(key))?;
+            // Refused before the session enters the window, so a refusal
+            // leaves the window as it was.
+            if let Some(pid) = conversation_running_elsewhere(key) {
+                return Err(elsewhere_error(pid));
+            }
             self.open_argv(&["--cwd".to_string(), key.to_string()], false)?;
         }
         let (running, at_shell) = {
@@ -1738,7 +1759,12 @@ impl Hub {
             if let Some(session) = self.inner.lock().session(key) {
                 session.main().exited = false;
             }
-            self.start(key, MAIN_TAB, None, None)?;
+            if let Err(e) = self.start(key, MAIN_TAB, None, None) {
+                if added {
+                    self.forget(key);
+                }
+                return Err(e);
+            }
             let _ = self.app.emit("hub:woken", key.to_string());
         }
         if select {
@@ -1746,6 +1772,19 @@ impl Hub {
             let _ = self.app.emit("hub:select", key.to_string());
         }
         Ok(started)
+    }
+
+    /// Take a session that has no terminal out of the window.
+    fn forget(&self, key: &str) {
+        {
+            let mut inner = self.inner.lock();
+            inner.sessions.retain(|s| s.key != key);
+            if inner.selected.as_deref() == Some(key) {
+                inner.selected = inner.sessions.first().map(|s| s.key.clone());
+            }
+        }
+        self.persist();
+        self.emit_changed();
     }
 
     pub fn summarize(&self, key: &str, force: bool) {
@@ -2208,7 +2247,7 @@ impl Hub {
         }
     }
 
-    fn socket_loop(&self) {
+    fn socket_loop(self: Arc<Self>) {
         let path = hub_socket_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -2228,8 +2267,11 @@ impl Hub {
             }
         };
         let _ = set_mode(&path, 0o600);
+        // Each client on its own thread: a wake that resumes a long
+        // conversation must not hold up other requests.
         for stream in listener.incoming().flatten() {
-            self.handle_client(stream);
+            let hub = Arc::clone(&self);
+            std::thread::spawn(move || hub.handle_client(stream));
         }
     }
 
@@ -2371,6 +2413,10 @@ fn conversation_running_elsewhere(key: &str) -> Option<u32> {
     let roots = StatusRoots::from_home();
     let files = crate::status::claude::read_status_files(&roots.claude_sessions);
     live_holder(&files, &crate::status::proctree::ProcTable::snapshot(), &id)
+}
+
+fn elsewhere_error(pid: u32) -> String {
+    format!("its conversation is still open in another terminal (process {}); quit it there first", pid)
 }
 
 fn live_holder(

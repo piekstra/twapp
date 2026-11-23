@@ -315,7 +315,8 @@ pub enum Commands {
         /// forward
         #[arg(long)]
         background: bool,
-        /// Seconds to wait for the session to take messages; 0 returns once it starts
+        /// Seconds to wait for the session to take messages; 0 returns once it
+        /// starts. Past it, wake exits 2 and the session keeps starting
         #[arg(long, default_value_t = 120)]
         timeout: u64,
     },
@@ -2239,8 +2240,11 @@ fn cmd_wake(dir: Option<&str>, background: bool, timeout: u64) -> i32 {
                 return 1;
             }
             WakeProgress::Waiting(state) if std::time::Instant::now() >= deadline => {
-                eprintln!("Error: it took no messages within {}s; it is {}.", timeout, state);
-                return 1;
+                eprintln!(
+                    "It took no messages within {} s; its state is {}. It keeps starting in the window, and `twapp who` or `twapp status` shows when it is ready.",
+                    timeout, state
+                );
+                return 2;
             }
             WakeProgress::Waiting(_) => std::thread::sleep(std::time::Duration::from_secs(1)),
         }
