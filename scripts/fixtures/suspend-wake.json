@@ -1,0 +1,80 @@
+{
+  "sessions": [
+    {
+      "key": "/work/alpha",
+      "name": "Alpha research",
+      "provider": "claude",
+      "color": "#ffe0e0",
+      "session_id": "alpha-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-11-23T19:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "priority",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "resources": null
+    },
+    {
+      "key": "/work/beta",
+      "name": "Beta cleanup",
+      "provider": "claude",
+      "color": "#e0f0ff",
+      "session_id": "beta-id",
+      "ticket_key": null,
+      "chrome": false,
+      "override_terminal_theme": false,
+      "tabs": [
+        {
+          "tab": "main",
+          "title": "Claude",
+          "started": true,
+          "alive": true
+        }
+      ],
+      "status": {
+        "state": "your_turn",
+        "since": "2026-11-23T19:00:00Z",
+        "detail": null,
+        "title": null,
+        "last_message": null,
+        "transcript_path": null,
+        "transcript_len": 0,
+        "harness_pid": null
+      },
+      "summary": null,
+      "last_viewed": null,
+      "attention": false,
+      "lane": "priority",
+      "blocked_since": null,
+      "checked_at": null,
+      "blockers": [],
+      "asks": [],
+      "resources": null
+    }
+  ],
+  "selected": "/work/alpha",
+  "host_error": null
+}

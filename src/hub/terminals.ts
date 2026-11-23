@@ -265,6 +265,32 @@ export class TerminalManager {
     hosted.term.write("\r\n\x1b[2m[The terminal exited. Press Enter to start it again.]\x1b[0m\r\n");
   }
 
+  /**
+   * The tab's PTY was stopped outside the window (`twapp suspend`). On screen
+   * the text stays and Enter resumes it; off screen it is cleared, so showing
+   * it resumes the session as it does any suspended one.
+   */
+  markSuspended(key: string, tab: string) {
+    const hosted = this.terminals.get(id(key, tab));
+    if (!hosted) return;
+    if (this.active !== hosted) {
+      this.reset(key, tab);
+      return;
+    }
+    hosted.started = false;
+    hosted.exited = true;
+    this.setWaiting(hosted, false);
+    hosted.term.write("\r\n\x1b[2m[Suspended. Press Enter to resume.]\x1b[0m\r\n");
+  }
+
+  /** The tab's PTY was started outside the window (`twapp wake`): on screen, attach to it now. */
+  markWoken(key: string, tab: string) {
+    const hosted = this.terminals.get(id(key, tab));
+    if (!hosted || hosted.started || hosted.starting) return;
+    hosted.exited = false;
+    if (this.active === hosted) this.begin(hosted);
+  }
+
   /** A start failed in the backend, including one begun before this terminal showed. */
   markFailed(key: string, tab: string, error: string) {
     const hosted = this.terminals.get(id(key, tab));

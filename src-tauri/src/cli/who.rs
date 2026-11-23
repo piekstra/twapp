@@ -248,10 +248,15 @@ fn names_key(text: &str, key: &str) -> bool {
     false
 }
 
+/// A directory as one shell word.
+fn shell_quote(path: &str) -> String {
+    format!("'{}'", super::session::shell_escape_single(path))
+}
+
 /// A running Claude session's message address: Claude Code listens on a
 /// socket named after its process id, and its SendMessage tool accepts
 /// `uds:<socket path>`.
-fn claude_address(session: &Value) -> Option<String> {
+pub fn claude_address(session: &Value) -> Option<String> {
     if session.get("provider").and_then(Value::as_str) != Some("claude") {
         return None;
     }
@@ -339,6 +344,10 @@ pub fn cmd_report(text: &str, on: &[String], dir: Option<&str>) -> i32 {
         }
         match claude_address(session) {
             Some(address) => println!("    message: {}", address),
+            None if session.pointer("/status/state").and_then(Value::as_str) == Some("suspended") => println!(
+                "    suspended; the window shows the update, and `twapp wake --dir {} --background` starts it to take a message",
+                shell_quote(session.get("key").and_then(Value::as_str).unwrap_or_default())
+            ),
             None => println!("    not reachable by message; the window shows the update"),
         }
     }
@@ -405,8 +414,12 @@ pub fn cmd_who(refs: &[String], all: bool, dir: Option<&str>, json: bool) -> i32
             for link in &h.links {
                 println!("    {}", link);
             }
-            if let (Some(address), false) = (&h.address, h.this_session) {
-                println!("    message: {}", address);
+            match (&h.address, h.this_session) {
+                (Some(address), false) => println!("    message: {}", address),
+                (None, false) if h.state == "suspended" => {
+                    println!("    suspended; `twapp wake --dir {} --background` starts it to take a message", shell_quote(&h.directory))
+                }
+                _ => {}
             }
         }
     }

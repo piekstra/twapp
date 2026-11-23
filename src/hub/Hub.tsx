@@ -273,9 +273,13 @@ export default function Hub() {
     const failed = listen<{ key: string; tab: string; error: string }>("hub:start-failed", (e) => {
       manager.markFailed(e.payload.key, e.payload.tab, e.payload.error);
     });
+    const suspended = listen<string>("hub:suspended", (e) => manager.markSuspended(e.payload, "main"));
+    const woken = listen<string>("hub:woken", (e) => manager.markWoken(e.payload, "main"));
     return () => {
       exited.then((u) => u());
       failed.then((u) => u());
+      suspended.then((u) => u());
+      woken.then((u) => u());
     };
   }, [manager]);
 

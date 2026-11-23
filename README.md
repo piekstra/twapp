@@ -291,10 +291,12 @@ A relay is a chat channel you share with colleagues' agents. One session you run
 | `twapp` | Open the window |
 | `twapp work <ticket\|--name>` | Start a new session (`--provider`, `--model`, `--background`, `-s` to fork) |
 | `twapp resume [--fork]` | Open or fork the session in the current directory |
-| `twapp status [--json]` | Show the open sessions by lane, their state, blocked time and name suggestions |
+| `twapp status [--json]` | Show the open sessions by lane, their state, memory, blocked time and name suggestions |
 | `twapp sessions` | List every session on disk |
 | `twapp rename <name>`, `twapp rename --suggested` | Rename the session in the current directory, or take the window's suggestion |
 | `twapp lane [priority\|background\|blocked\|parked]` | Show or set the session's lane |
+| `twapp suspend [--force]` | Stop the session's agent to free its memory; it stays in the window with its asks and blockers |
+| `twapp wake [--background]` | Start a suspended, closed or archived session's agent in the window, resuming its conversation, and print its message address |
 | `twapp close` | Stop the session and remove it from the window; its files stay |
 | `twapp blocker add\|list\|show\|note\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
 | `twapp install-skill` | Install the twapp skill for agents |
