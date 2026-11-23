@@ -31,6 +31,9 @@ use session::{
     shell_escape_single, AgentProvider,
 };
 
+/// The help after `suspend`, `close` and `archive`: what each leaves behind.
+const STOPPING: &str = "Three ways to stop a session:\n  twapp suspend   Stops its agent. It stays in the window with its asks and blockers; opening it or twapp wake resumes it.\n  twapp close     Stops it and removes it from the window. Its files stay; twapp resume or twapp wake brings it back.\n  twapp archive   Closes it and keeps a copy of its conversation in the session directory.\n\nTo free memory, suspend.";
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start a new work session
@@ -260,7 +263,9 @@ pub enum Commands {
         #[arg(long)]
         dir: Option<String>,
     },
-    /// Stop the session and remove it from the window; its files stay
+    /// Stop the session and remove it from the window; its files stay. To
+    /// free memory and keep it in the window, suspend it instead
+    #[command(after_help = STOPPING)]
     Close {
         /// Target session directory (default: current directory)
         #[arg(long)]
@@ -268,7 +273,9 @@ pub enum Commands {
     },
     /// Archive a session: close it and keep a copy of its conversation in
     /// the session directory, restored when the harness no longer has it.
-    /// Archived sessions cannot be deleted until unarchived.
+    /// Archived sessions cannot be deleted until unarchived. To free memory,
+    /// suspend instead
+    #[command(after_help = STOPPING)]
     Archive {
         /// Why the session is worth keeping
         #[arg(long)]
@@ -282,6 +289,35 @@ pub enum Commands {
         /// Target session directory (default: current directory)
         #[arg(long)]
         dir: Option<String>,
+    },
+    /// Stop the session's agent to free its memory. It stays in the window
+    /// with its decisions, actions, blockers and notes, and resumes when
+    /// opened there or woken with `twapp wake`
+    #[command(after_help = STOPPING)]
+    Suspend {
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+        /// Stop it even while it starts, works on a turn or waits on a prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Start a session's agent in the window, resuming its own conversation:
+    /// a suspended session, or one closed, archived or unarchived. Prints the
+    /// session's message address once it takes messages. Types nothing into
+    /// the session
+    #[command(after_help = "Examples:\n  twapp wake --dir ~/work/ABC-12 --background   Resume it without switching to it, and print its address\n  twapp wake --timeout 0                         Start it and return without waiting\n\nSend the woken session its instructions as a message, not as typed input.")]
+    Wake {
+        /// Target session directory (default: current directory)
+        #[arg(long)]
+        dir: Option<String>,
+        /// Start it without switching the window to it or bringing the window
+        /// forward
+        #[arg(long)]
+        background: bool,
+        /// Seconds to wait for the session to take messages; 0 returns once it starts
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
     },
     /// Delete a session: its conversation and twapp's files, or with
     /// --everything its whole directory
@@ -752,6 +788,8 @@ pub fn run(cmd: Commands) -> i32 {
         Commands::Archive { note, dir } => archive::cmd_archive(dir.as_deref(), note.as_deref(), false),
         Commands::Unarchive { dir } => archive::cmd_archive(dir.as_deref(), None, true),
         Commands::Close { dir } => cmd_close(dir.as_deref()),
+        Commands::Suspend { dir, force } => cmd_suspend(dir.as_deref(), force),
+        Commands::Wake { dir, background, timeout } => cmd_wake(dir.as_deref(), background, timeout),
         Commands::Relay { command: RelayCommands::List { json } } => relay::cmd_relay_list(json),
         Commands::Watch { command } => match command {
             WatchCommands::Sources { json } => watch::cmd_sources(json),
@@ -1696,11 +1734,17 @@ fn print_status_row(s: &serde_json::Value) {
             let h = get(&["summary", "headline"]);
             if h.is_empty() { get(&["status", "title"]) } else { h }
         };
+        let memory = s
+            .pointer("/resources/rss_kb")
+            .and_then(serde_json::Value::as_u64)
+            .map(format_kb)
+            .unwrap_or_default();
         println!(
-            "{} {:<40} {:<15} {}",
+            "{} {:<40} {:<15} {:>7}  {}",
             if attention { "!" } else { " " },
             truncate_display(&get(&["name"]), 40),
             state,
+            memory,
             headline
         );
         let needs = get(&["summary", "needs_user"]);
@@ -2116,6 +2160,148 @@ fn cmd_close(dir: Option<&str>) -> i32 {
             eprintln!("Error: {}", e);
             1
         }
+    }
+}
+
+fn cmd_suspend(dir: Option<&str>, force: bool) -> i32 {
+    let key = target_dir(dir);
+    let view = hosted_view(&key);
+    let name = view_name(view.as_ref(), &key);
+    if !force && std::env::var("TWAPP_SESSION_KEY").is_ok_and(|here| here == key) {
+        eprintln!(
+            "Error: {} is the session running this command, so suspending it stops this agent. Pass --force to do it anyway.",
+            name
+        );
+        return 1;
+    }
+    match hub_link::suspend(&key, force) {
+        Ok(true) => {
+            let held = view
+                .as_ref()
+                .and_then(|v| v.pointer("/resources/rss_kb"))
+                .and_then(serde_json::Value::as_u64)
+                .map(|kb| format!(" Its terminals held {} at the window's last reading.", format_kb(kb)))
+                .unwrap_or_default();
+            println!(
+                "Suspended {}. It stays in the window with its asks and blockers; opening it there or `twapp wake` resumes it.{}",
+                name, held
+            );
+            0
+        }
+        Ok(false) => {
+            println!("{} is not running; it stays in the window as it was.", name);
+            0
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_wake(dir: Option<&str>, background: bool, timeout: u64) -> i32 {
+    let key = target_dir(dir);
+    let data = match session::read_session(std::path::Path::new(&key)) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+    match hub_link::wake(&key, !background) {
+        Ok(true) => println!("{} is starting in the window.", data.name),
+        Ok(false) => println!("{} is already running.", data.name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    }
+    if timeout == 0 {
+        return 0;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    loop {
+        let progress = match hosted_view(&key) {
+            Some(view) => wake_progress(&view, &who::claude_address),
+            None => WakeProgress::Failed("it is no longer in the window".to_string()),
+        };
+        match progress {
+            WakeProgress::Reachable(address) => {
+                println!("It takes messages at {}", address);
+                return 0;
+            }
+            WakeProgress::NoMessages(harness) => {
+                println!("It runs. {} sessions take no messages from other sessions; the window shows it to the user.", harness);
+                return 0;
+            }
+            WakeProgress::Failed(why) => {
+                eprintln!("Error: {}", why);
+                return 1;
+            }
+            WakeProgress::Waiting(state) if std::time::Instant::now() >= deadline => {
+                eprintln!("Error: it took no messages within {}s; it is {}.", timeout, state);
+                return 1;
+            }
+            WakeProgress::Waiting(_) => std::thread::sleep(std::time::Duration::from_secs(1)),
+        }
+    }
+}
+
+/// Where a woken session stands, from its entry in the window's snapshot.
+#[derive(Debug, PartialEq)]
+enum WakeProgress {
+    /// A Claude session listening for messages, at this address.
+    Reachable(String),
+    /// A harness that takes no messages from other sessions runs.
+    NoMessages(String),
+    /// The agent is not running and will not start on its own.
+    Failed(String),
+    /// Still starting, in this state.
+    Waiting(String),
+}
+
+fn wake_progress(view: &serde_json::Value, address: &dyn Fn(&serde_json::Value) -> Option<String>) -> WakeProgress {
+    let state = view.pointer("/status/state").and_then(serde_json::Value::as_str).unwrap_or_default();
+    let detail = view
+        .pointer("/status/detail")
+        .and_then(serde_json::Value::as_str)
+        .map(|d| format!(": {}", d))
+        .unwrap_or_default();
+    match state {
+        "exited" | "suspended" => return WakeProgress::Failed(format!("its agent stopped{}", detail)),
+        "shell" => return WakeProgress::Failed(format!("its agent exited to a shell prompt{}", detail)),
+        _ => {}
+    }
+    if let Some(address) = address(view) {
+        return WakeProgress::Reachable(address);
+    }
+    let provider = view.get("provider").and_then(serde_json::Value::as_str).unwrap_or("claude");
+    if provider != "claude" && state != "starting" {
+        return WakeProgress::NoMessages(
+            serde_json::from_value::<AgentProvider>(serde_json::Value::from(provider))
+                .map(|p| p.display_name().to_string())
+                .unwrap_or_else(|_| provider.to_string()),
+        );
+    }
+    WakeProgress::Waiting(state.replace('_', " "))
+}
+
+fn view_name(view: Option<&serde_json::Value>, key: &str) -> String {
+    view.and_then(|v| v.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| key.to_string())
+}
+
+/// Memory as the window's Resources view writes it.
+fn format_kb(kb: u64) -> String {
+    if kb >= 1024 * 1024 {
+        format!("{:.1} GB", kb as f64 / (1024.0 * 1024.0))
+    } else if kb >= 1024 {
+        format!("{} MB", (kb as f64 / 1024.0).round() as u64)
+    } else {
+        format!("{} KB", kb)
     }
 }
 
@@ -2792,5 +2978,50 @@ mod resume_recovery_tests {
         assert!(resumed.command.starts_with(&format!("claude --resume {}", id)));
         assert!(!resumed.command.contains("Saved source conversation:"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+
+    fn session(key: &str) -> serde_json::Value {
+        let snapshot: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/status/wake-snapshot.json")).unwrap();
+        snapshot["sessions"].as_array().unwrap().iter().find(|s| s["key"] == key).unwrap().clone()
+    }
+
+    fn by_pid(view: &serde_json::Value) -> Option<String> {
+        view.pointer("/status/harness_pid").and_then(serde_json::Value::as_u64).map(|pid| format!("pid {}", pid))
+    }
+
+    #[test]
+    fn a_claude_session_is_reachable_once_it_listens_for_messages() {
+        assert_eq!(wake_progress(&session("/work/starting"), &by_pid), WakeProgress::Waiting("starting".into()));
+        assert_eq!(wake_progress(&session("/work/prompt"), &by_pid), WakeProgress::Waiting("needs approval".into()));
+        assert_eq!(wake_progress(&session("/work/reachable"), &by_pid), WakeProgress::Reachable("pid 4242".into()));
+    }
+
+    #[test]
+    fn another_harness_is_done_waiting_once_it_runs() {
+        assert_eq!(wake_progress(&session("/work/codex-starting"), &by_pid), WakeProgress::Waiting("starting".into()));
+        let no_address = |_: &serde_json::Value| None;
+        assert_eq!(wake_progress(&session("/work/codex"), &no_address), WakeProgress::NoMessages("Codex".into()));
+    }
+
+    #[test]
+    fn an_agent_that_stopped_fails_the_wait() {
+        assert_eq!(
+            wake_progress(&session("/work/shell"), &by_pid),
+            WakeProgress::Failed("its agent exited to a shell prompt: exit 1".into())
+        );
+        assert_eq!(wake_progress(&session("/work/exited"), &by_pid), WakeProgress::Failed("its agent stopped".into()));
+    }
+
+    #[test]
+    fn memory_reads_as_the_resources_view_writes_it() {
+        assert_eq!(format_kb(900), "900 KB");
+        assert_eq!(format_kb(312_000), "305 MB");
+        assert_eq!(format_kb(1_572_864), "1.5 GB");
     }
 }

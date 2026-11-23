@@ -1,0 +1,46 @@
+{
+  "sessions": [
+    {
+      "key": "/work/starting",
+      "name": "starting",
+      "provider": "claude",
+      "status": { "state": "starting", "since": "2026-11-23T20:00:00Z", "detail": null, "harness_pid": null }
+    },
+    {
+      "key": "/work/reachable",
+      "name": "reachable",
+      "provider": "claude",
+      "status": { "state": "your_turn", "since": "2026-11-23T20:00:04Z", "detail": null, "harness_pid": 4242 }
+    },
+    {
+      "key": "/work/prompt",
+      "name": "prompt",
+      "provider": "claude",
+      "status": { "state": "needs_approval", "since": "2026-11-23T20:00:04Z", "detail": "Resume from summary?", "harness_pid": null }
+    },
+    {
+      "key": "/work/codex",
+      "name": "codex",
+      "provider": "codex",
+      "status": { "state": "your_turn", "since": "2026-11-23T20:00:04Z", "detail": null, "harness_pid": 5151 }
+    },
+    {
+      "key": "/work/codex-starting",
+      "name": "codex starting",
+      "provider": "codex",
+      "status": { "state": "starting", "since": "2026-11-23T20:00:00Z", "detail": null, "harness_pid": null }
+    },
+    {
+      "key": "/work/shell",
+      "name": "shell",
+      "provider": "claude",
+      "status": { "state": "shell", "since": "2026-11-23T20:00:09Z", "detail": "exit 1", "harness_pid": null }
+    },
+    {
+      "key": "/work/exited",
+      "name": "exited",
+      "provider": "claude",
+      "status": { "state": "exited", "since": "2026-11-23T20:00:09Z", "detail": null, "harness_pid": null }
+    }
+  ]
+}

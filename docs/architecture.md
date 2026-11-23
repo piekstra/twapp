@@ -96,7 +96,7 @@ has access to. None of them need the user to install or configure anything.
 | `errored` | The last turn ended with an API or harness error. |
 | `shell` | The harness exited and the tab is back at a shell prompt. |
 | `exited` | The PTY is gone. |
-| `suspended` | Known to the hub (restored from the last run) but not started. |
+| `suspended` | Known to the hub but its agent is not running: restored from the last run, or stopped by Stop in Resources or `twapp suspend`. |
 
 A session needs attention when it is `needs_approval`, when it is `your_turn`
 or `errored` and the user has not viewed it since that state began, or when a
@@ -785,6 +785,8 @@ socket to answer and then sends the request over it.
 | `"snapshot"` | The rail as the window sees it, including state and summary (`twapp status`). |
 | `{"set_lane": {"key": "<dir>", "lane": "blocked"}}` | File a hosted session in a lane (`twapp lane`). |
 | `{"close": "<dir>"}` | Stop a hosted session and remove it from the window (`twapp close`, `twapp delete`). |
+| `{"suspend": {"key": "<dir>", "force": false}}` | Stop a hosted session's main terminal and keep the session, as Stop in Resources does; refused while it starts, works on a turn or waits on a prompt unless `force` (`twapp suspend`). `changed` says whether it was running. |
+| `{"wake": {"key": "<dir>", "select": false}}` | Start a session's main terminal, resuming its conversation as selecting it does; a session not in the window is put in it first, and one whose harness exited to its shell gets a new terminal. `select` switches to it and raises the window (`twapp wake`). `changed` says whether it started. |
 | `{"set_effort": {"key": "<dir>", "name": "..."}}` | Put a hosted session in an effort; `null` takes it out (`twapp effort`). |
 | `"changed"` | Session files changed on disk; the window redraws its list (`twapp rename`). |
 | `"ping"` | Liveness check. |
@@ -792,3 +794,14 @@ socket to answer and then sends the request over it.
 A session opened with a command (new, forked or resumed from the CLI) starts
 immediately, whether or not it is on screen. A session restored from the last
 run starts only when it is selected.
+
+`twapp suspend` and `twapp wake` stop and start a session's agent while it
+stays in the window, so its decisions, actions, blockers and notes stay under
+For you and its blockers keep being checked. The window tells the session's
+terminal (`hub:suspended`, `hub:woken`): on screen, a suspended terminal keeps
+its text and Enter resumes it, and a woken one attaches at once; off screen it
+is cleared, so showing it attaches to whatever runs. `twapp wake` then reads the
+snapshot each second until a Claude session's harness listens on
+`/tmp/cc-socks/<pid>.sock` and prints that address (`--timeout`, 120 seconds by
+default). Other harnesses take no messages from other sessions, so it returns
+once they run.

@@ -1694,6 +1694,60 @@ impl Hub {
         Ok(())
     }
 
+    /// Stop a session's agent to free what it holds, keeping the session in
+    /// the window with its asks and blockers; other tabs keep running.
+    /// Refused while the agent is busy unless `force`. Returns whether the
+    /// agent was running.
+    pub fn suspend(&self, key: &str, force: bool) -> Result<bool, String> {
+        let state = {
+            let mut inner = self.inner.lock();
+            let session = inner.session(key).ok_or("the session is not open in the window")?;
+            if !session.main_running() {
+                return Ok(false);
+            }
+            if session.tabs[0].spawning { State::Starting } else { session.status.state }
+        };
+        if let Some(refusal) = suspend_refusal(state, force) {
+            return Err(refusal);
+        }
+        self.close_tab(key, MAIN_TAB)?;
+        let _ = self.app.emit("hub:suspended", key.to_string());
+        Ok(true)
+    }
+
+    /// Start a session's agent, resuming its conversation as selecting it
+    /// does. A session not in the window is put there first. Returns whether
+    /// the agent started now rather than already running.
+    pub fn wake(&self, key: &str, select: bool) -> Result<bool, String> {
+        if !self.is_hosted(key) {
+            read_session(Path::new(key))?;
+            self.open_argv(&["--cwd".to_string(), key.to_string()], false)?;
+        }
+        let (running, at_shell) = {
+            let mut inner = self.inner.lock();
+            let session = inner.session(key).ok_or("the session is not open in the window")?;
+            (session.main_running(), session.status.state == State::Shell)
+        };
+        // A harness that exited back to its shell starts again in a new terminal.
+        if running && at_shell {
+            self.close_tab(key, MAIN_TAB)?;
+            let _ = self.app.emit("hub:suspended", key.to_string());
+        }
+        let started = !running || at_shell;
+        if started {
+            if let Some(session) = self.inner.lock().session(key) {
+                session.main().exited = false;
+            }
+            self.start(key, MAIN_TAB, None, None)?;
+            let _ = self.app.emit("hub:woken", key.to_string());
+        }
+        if select {
+            self.select(key);
+            let _ = self.app.emit("hub:select", key.to_string());
+        }
+        Ok(started)
+    }
+
     pub fn summarize(&self, key: &str, force: bool) {
         let request = {
             let mut inner = self.inner.lock();
@@ -2245,6 +2299,25 @@ impl Hub {
                     HubReply::err("the session is not open in the window".to_string())
                 }
             }
+            Ok(HubRequest::Suspend { key, force }) => {
+                let key = session_key(&key);
+                match self.suspend(&key, force) {
+                    Ok(stopped) => HubReply { changed: Some(stopped), ..HubReply::ok(Some(key)) },
+                    Err(e) => HubReply::err(e),
+                }
+            }
+            Ok(HubRequest::Wake { key, select }) => {
+                let key = session_key(&key);
+                match self.wake(&key, select) {
+                    Ok(started) => {
+                        if select {
+                            self.focus_window();
+                        }
+                        HubReply { changed: Some(started), ..HubReply::ok(Some(key)) }
+                    }
+                    Err(e) => HubReply::err(e),
+                }
+            }
             Ok(HubRequest::Changed) => {
                 self.refresh_blockers();
                 HubReply::ok(None)
@@ -2265,6 +2338,18 @@ impl Hub {
             let _ = window.set_focus();
         }
     }
+}
+
+/// Why `twapp suspend` leaves an agent running: stopping it mid-turn, while
+/// it starts, or at an open prompt could cut off work.
+fn suspend_refusal(state: State, force: bool) -> Option<String> {
+    let doing = match state {
+        State::Starting => "starting",
+        State::Working => "working on a turn",
+        State::NeedsApproval => "waiting on a prompt in the window",
+        _ => return None,
+    };
+    (!force).then(|| format!("it is {}; pass --force to stop it anyway", doing))
 }
 
 /// Tells a frontend terminal to clear itself before a replay arrives on the
@@ -2386,6 +2471,12 @@ pub enum HubRequest {
     SetLane { key: String, lane: Lane },
     /// Stop a session and remove it from the window.
     Close(String),
+    /// Stop a hosted session's agent and keep the session in the window;
+    /// refused while the agent is busy unless `force` (`twapp suspend`).
+    Suspend { key: String, force: bool },
+    /// Start a session's agent in the window, resuming its conversation, and
+    /// with `select` switch to it (`twapp wake`).
+    Wake { key: String, select: bool },
     /// Session files changed on disk (a rename from the CLI); redraw.
     Changed,
     /// Put a hosted session in an effort; `None` takes it out.
@@ -2403,6 +2494,10 @@ pub struct HubReply {
     pub running: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<serde_json::Value>,
+    /// For `suspend` and `wake`: whether the request stopped or started the
+    /// agent, rather than finding it already so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
 }
 
 impl HubReply {
@@ -2979,6 +3074,28 @@ mod tests {
         );
         let parsed: HubRequest = serde_json::from_str(r#"{"open_argv":["--cwd","/w"]}"#).unwrap();
         assert!(matches!(parsed, HubRequest::OpenArgv(a) if a == ["--cwd", "/w"]));
+        assert_eq!(
+            serde_json::to_string(&HubRequest::Suspend { key: "/w".into(), force: false }).unwrap(),
+            r#"{"suspend":{"key":"/w","force":false}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&HubRequest::Wake { key: "/w".into(), select: true }).unwrap(),
+            r#"{"wake":{"key":"/w","select":true}}"#
+        );
+        let reply: HubReply = serde_json::from_str(r#"{"ok":true,"key":"/w","changed":false}"#).unwrap();
+        assert_eq!(reply.changed, Some(false));
+    }
+
+    #[test]
+    fn suspend_leaves_a_busy_agent_running_unless_forced() {
+        for state in [State::Starting, State::Working, State::NeedsApproval] {
+            assert!(suspend_refusal(state, false).is_some_and(|r| r.ends_with("pass --force to stop it anyway")));
+            assert_eq!(suspend_refusal(state, true), None);
+        }
+        for state in [State::YourTurn, State::Errored, State::Shell] {
+            assert_eq!(suspend_refusal(state, false), None);
+        }
+        assert_eq!(suspend_refusal(State::Working, false).unwrap(), "it is working on a turn; pass --force to stop it anyway");
     }
 
     #[test]
