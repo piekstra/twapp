@@ -890,6 +890,7 @@ export default function Hub() {
             isDark={isDark}
             now={now}
             onSelect={selectSession}
+            onMove={moveSession}
             onStop={stopSession}
             resources={hub.resources}
             onOpenLibrary={() => openLibrary("sessions")}
