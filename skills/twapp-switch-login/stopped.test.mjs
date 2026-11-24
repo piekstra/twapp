@@ -64,7 +64,11 @@ describe("stopped.py", () => {
 
   it("names each session it could not check, and why, without losing the rest", () => {
     const { unchecked } = JSON.parse(stopped(fixtureWindow()).stdout);
-    expect(unchecked.map((u) => u.name)).toEqual(["No transcript", "Malformed", null]);
+    expect(unchecked.map((u) => [u.name, u.dir])).toEqual([
+      ["No transcript", "/work/gone"],
+      ["Malformed", "/work/malformed"],
+      [null, null],
+    ]);
     expect(unchecked[0].why).toMatch(/^FileNotFoundError: /);
   });
 

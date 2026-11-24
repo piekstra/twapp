@@ -107,8 +107,10 @@ def main():
         try:
             found = stopped_session(session)
         except (AttributeError, OSError, TypeError, ValueError, subprocess.TimeoutExpired) as e:
-            name = session.get("name") if isinstance(session, dict) else None
-            unchecked.append({"name": name, "why": f"{type(e).__name__}: {e}"})
+            known = session if isinstance(session, dict) else {}
+            unchecked.append(
+                {"name": known.get("name"), "dir": known.get("key"), "why": f"{type(e).__name__}: {e}"}
+            )
             continue
         if found:
             stopped.append(found)

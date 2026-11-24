@@ -27,7 +27,7 @@ The user runs `/login` in one session. Do not repeat it in the others, and never
 python3 -I ~/.claude/skills/twapp-switch-login/stopped.py
 ```
 
-It only reads. It prints JSON: `stopped` lists each session running in the window whose last reply is a usage-limit error, and `unchecked` names the sessions it could not read, with why. An unchecked session may be stopped too: look at it with `twapp status` before you count it out. For each stopped session:
+It only reads. It prints JSON: `stopped` lists each session running in the window whose last reply is a usage-limit error, and `unchecked` gives the name and `dir` of each session it could not read, with why. An unchecked session may be stopped too: look at it with `twapp status` before you count it out. For each stopped session:
 
 | Field | Meaning |
 |---|---|
