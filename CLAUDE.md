@@ -55,6 +55,7 @@ Run `twapp <command> --help` for flags.
 - **Summarizer** (`src-tauri/src/summary/`): transcript condensing, headless harness runs, cache, triage.
 - **Journal** (`src-tauri/src/journal/`): the activity trail, each day's facts, day and period digests, Markdown entries, `twapp journal`.
 - **CLI** (`src-tauri/src/cli/`): subcommands; `create_session_core()` in `mod.rs` is shared with the GUI; `hub_link.rs` hands sessions to the window.
+- **Skills** (`skills/`): embedded in the binary and written by `cli::install_skill`, which lists each file by harness; a file it does not list is not installed. `skills/twapp` goes to Claude and Codex, `skills/twapp-switch-login` to Claude.
 
 ## Dev Process
 

@@ -1,0 +1,16 @@
+{
+  "sessions": [
+    {"name": "Stopped at the dialog", "key": "/work/dialog", "provider": "claude", "status": {"state": "needs_approval", "detail": "dialog open", "transcript_path": "limit-dialog.jsonl"}},
+    {"name": "Stopped and idle", "key": "/work/idle", "provider": "claude", "status": {"state": "errored", "detail": "You've hit your session limit", "transcript_path": "limit-idle.jsonl"}},
+    {"name": "Another dialog", "key": "/work/answered", "provider": "claude", "status": {"state": "needs_approval", "detail": "dialog open", "transcript_path": "answered-since.jsonl"}},
+    {"name": "Permission prompt", "key": "/work/prompt", "provider": "claude", "status": {"state": "needs_approval", "detail": "permission prompt", "transcript_path": "limit-dialog.jsonl"}},
+    {"name": "Helper stopped", "key": "/work/helper", "provider": "claude", "status": {"state": "errored", "detail": null, "transcript_path": "subagent-limit.jsonl"}},
+    {"name": "Overloaded", "key": "/work/overloaded", "provider": "claude", "status": {"state": "errored", "detail": "API Error: 529 Overloaded.", "transcript_path": "overloaded.jsonl"}},
+    {"name": "Working", "key": "/work/working", "provider": "claude", "status": {"state": "working", "detail": null, "transcript_path": "limit-idle.jsonl"}},
+    {"name": "Codex", "key": "/work/codex", "provider": "codex", "status": {"state": "errored", "detail": "usage limit reached", "transcript_path": "limit-idle.jsonl"}},
+    {"name": "No transcript", "key": "/work/gone", "provider": "claude", "status": {"state": "errored", "detail": null, "transcript_path": "missing.jsonl"}},
+    {"name": "Malformed", "key": "/work/malformed", "provider": "claude", "status": "errored"},
+    null,
+    {"name": "Suspended", "key": "/work/suspended", "provider": "claude", "status": {"state": "suspended", "detail": null, "harness_pid": null, "transcript_path": "limit-idle.jsonl"}}
+  ]
+}

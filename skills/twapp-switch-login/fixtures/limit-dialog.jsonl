@@ -1,0 +1,7 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2020-01-01T00:00:00.000Z","content":"queued for an earlier process"}
+{"type":"assistant","timestamp":"2099-01-01T09:59:00.000Z","isSidechain":false,"message":{"content":[{"type":"text","text":"Opening the pull request."}]}}
+{"type":"assistant","timestamp":"2099-01-01T10:00:00.000Z","isSidechain":false,"isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"message":{"content":[{"type":"text","text":"You've hit your weekly limit · resets Jan 5 at 6am"}]}}
+{"type":"system","subtype":"turn_duration","timestamp":"2099-01-01T10:00:00.100Z"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2099-01-01T10:05:00.000Z","content":"Is the release out?"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2099-01-01T10:06:00.000Z","content":"withdrawn"}
+{"type":"queue-operation","operation":"remove","timestamp":"2099-01-01T10:07:00.000Z","content":"withdrawn"}

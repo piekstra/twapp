@@ -578,7 +578,8 @@ starting, and macOS cuts a line typed before the shell's line editor reads it
 at 1024 bytes. The text tells the agent it runs in twapp and
 points at `twapp blocker`, `twapp decision`, `twapp action`, `twapp followup`,
 `twapp note` and the twapp skill, which the window writes to
-`~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start when their
+`~/.claude/skills/twapp` and `~/.codex/skills/twapp` at start, and the
+`twapp-switch-login` skill to `~/.claude/skills/twapp-switch-login`, when their
 content differs from the built-in copy.
 
 The context is fixed for the life of the harness process, so an agent started

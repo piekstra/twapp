@@ -220,8 +220,8 @@ pub enum Commands {
         #[arg(long)]
         path: bool,
     },
-    /// Install the twapp skill for agents (~/.claude/skills/twapp, and
-    /// ~/.codex/skills/twapp when Codex is installed)
+    /// Install the twapp skills for agents (in ~/.claude/skills, and the one for
+    /// working in a session in ~/.codex/skills when Codex is installed)
     #[command(name = "install-skill")]
     InstallSkill,
     /// Rename the current session
@@ -2372,29 +2372,45 @@ fn cmd_rename_suggested() -> i32 {
     }
 }
 
-const SKILL: &str = include_str!("../../../skills/twapp/SKILL.md");
+/// Files `install_skill` writes under a harness's `skills` directory.
+type SkillFiles = &'static [(&'static str, &'static str)];
 
-/// Write the twapp skill for each installed harness, skipping files that
+const SESSION_SKILL: SkillFiles =
+    &[("twapp/SKILL.md", include_str!("../../../skills/twapp/SKILL.md"))];
+
+/// Claude only: it is about Claude logins and messages between Claude sessions.
+const SWITCH_LOGIN_SKILL: SkillFiles = &[
+    ("twapp-switch-login/SKILL.md", include_str!("../../../skills/twapp-switch-login/SKILL.md")),
+    ("twapp-switch-login/stopped.py", include_str!("../../../skills/twapp-switch-login/stopped.py")),
+];
+
+/// Write the twapp skills for each installed harness, skipping files that
 /// already match. Returns the files written.
 pub fn install_skill() -> Result<Vec<std::path::PathBuf>, String> {
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut targets = Vec::new();
-    if home.join(".claude").is_dir() {
-        targets.push(home.join(".claude/skills/twapp"));
-    }
-    if home.join(".codex").is_dir() {
-        targets.push(home.join(".codex/skills/twapp"));
-    }
+    install_skills_in(&dirs::home_dir().unwrap_or_default())
+}
+
+fn install_skills_in(home: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let harnesses: [(&str, &[SkillFiles]); 2] = [
+        (".claude", &[SESSION_SKILL, SWITCH_LOGIN_SKILL]),
+        (".codex", &[SESSION_SKILL]),
+    ];
     let mut written = Vec::new();
-    for dir in targets {
-        let file = dir.join("SKILL.md");
-        if std::fs::read_to_string(&file).is_ok_and(|current| current == SKILL) {
+    for (harness, skills) in harnesses {
+        if !home.join(harness).is_dir() {
             continue;
         }
-        std::fs::create_dir_all(&dir)
-            .and_then(|_| std::fs::write(&file, SKILL))
-            .map_err(|e| format!("writing {}: {}", file.display(), e))?;
-        written.push(file);
+        for (name, content) in skills.iter().copied().flatten() {
+            let file = home.join(harness).join("skills").join(name);
+            if std::fs::read_to_string(&file).is_ok_and(|current| current == *content) {
+                continue;
+            }
+            file.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|_| std::fs::write(&file, content))
+                .map_err(|e| format!("writing {}: {}", file.display(), e))?;
+            written.push(file);
+        }
     }
     Ok(written)
 }
@@ -2402,7 +2418,7 @@ pub fn install_skill() -> Result<Vec<std::path::PathBuf>, String> {
 fn cmd_install_skill() -> i32 {
     match install_skill() {
         Ok(written) if written.is_empty() => {
-            println!("The twapp skill is current.");
+            println!("The twapp skills are current.");
             0
         }
         Ok(written) => {
@@ -3035,5 +3051,56 @@ mod wake_tests {
         assert_eq!(format_kb(900), "900 KB");
         assert_eq!(format_kb(312_000), "305 MB");
         assert_eq!(format_kb(1_572_864), "1.5 GB");
+    }
+}
+
+#[cfg(test)]
+mod install_skill_tests {
+    use super::*;
+
+    fn home(harnesses: &[&str]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("twapp-skills-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for harness in harnesses {
+            std::fs::create_dir(dir.join(harness)).unwrap();
+        }
+        dir
+    }
+
+    fn installed(home: &std::path::Path) -> Vec<String> {
+        install_skills_in(home)
+            .unwrap()
+            .iter()
+            .map(|f| f.strip_prefix(home).unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn each_harness_gets_its_skills_and_a_matching_file_is_left_alone() {
+        let home = home(&[".claude", ".codex"]);
+        assert_eq!(
+            installed(&home),
+            [
+                ".claude/skills/twapp/SKILL.md",
+                ".claude/skills/twapp-switch-login/SKILL.md",
+                ".claude/skills/twapp-switch-login/stopped.py",
+                ".codex/skills/twapp/SKILL.md",
+            ]
+        );
+        assert!(installed(&home).is_empty());
+
+        let script = home.join(".claude/skills/twapp-switch-login/stopped.py");
+        std::fs::write(&script, "an older version").unwrap();
+        assert_eq!(installed(&home), [".claude/skills/twapp-switch-login/stopped.py"]);
+        assert!(std::fs::read_to_string(&script).unwrap().contains("twapp status --json"));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_harness_that_is_not_installed_gets_nothing() {
+        let home = home(&[".codex"]);
+        assert_eq!(installed(&home), [".codex/skills/twapp/SKILL.md"]);
+        assert!(!home.join(".claude").exists());
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }

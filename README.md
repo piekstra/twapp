@@ -221,7 +221,7 @@ Each blocker keeps notes and a history: the agent adds notes with `twapp blocker
 
 For a blocker with a check command, the window runs the command hourly, one at a time, and marks the blocker **Updated** when its output changes. An updated blocker brings its session to your attention even in the Blocked lane, until you open the session; the blocker keeps its **Updated** badge until **Mark seen**, which makes the new output the baseline. The first time you press **Run check** for a command, the window shows the command and asks: **Run once**, or **Run now and every hour**, which allows that exact command from then on. The approval covers that command in that session's directory, since the command runs there and the same text can do something else elsewhere, and a command changed in the file after it was shown is refused. It asks because any agent or repository can write a blocker file; approved commands are kept in `~/.config/twapp/approved-checks.json` and every run is logged. `twapp blocker approve <id>` (or `--all`) approves a check from the terminal; you can tell the session's agent to "approve it" and it runs that command. Checking costs no model calls.
 
-Every session twapp starts knows it runs in twapp: Claude gets a short appended system prompt and Codex the same text as developer instructions, pointing the agent at `twapp blocker`, `twapp note` and the twapp skill. The window installs that skill for Claude and Codex when it starts, and refreshes it when a new version changes it (`twapp install-skill` does the same by hand). The skill teaches when to record blockers and how to write a check command whose output changes only when the blocker does.
+Every session twapp starts knows it runs in twapp: Claude gets a short appended system prompt and Codex the same text as developer instructions, pointing the agent at `twapp blocker`, `twapp note` and the twapp skill. The window installs that skill for Claude and Codex when it starts, and refreshes it when a new version changes it (`twapp install-skill` does the same by hand). For Claude it also installs `twapp-switch-login`: after you sign in to another Claude account, ask any session to move the others over, and it finds the ones that stopped on a usage limit and restarts their work. The skill teaches when to record blockers and how to write a check command whose output changes only when the blocker does.
 
 ### Forking into another harness
 
@@ -299,7 +299,7 @@ A relay is a chat channel you share with colleagues' agents. One session you run
 | `twapp wake [--background]` | Start a suspended, closed or archived session's agent in the window, resuming its conversation, and print its message address |
 | `twapp close` | Stop the session and remove it from the window; its files stay |
 | `twapp blocker add\|list\|show\|note\|update\|check\|seen\|resolve\|remove` | What the session waits on outside itself |
-| `twapp install-skill` | Install the twapp skill for agents |
+| `twapp install-skill` | Install the twapp skills for agents |
 | `twapp yaks [--json]`, `twapp yaks --all [--days N]` | The session's main effort and tangents, or tangents across all sessions |
 | `twapp journal [day\|period] [--paragraph]` | Read a concise bullet recap, or its paragraph overview, for a day, week, month, or year |
 | `twapp effort [name\|--clear]` | Show or set the larger effort the session belongs to |
