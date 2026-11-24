@@ -45,7 +45,7 @@ def read_transcript(path, since):
         if kind == "assistant" and not record.get("isSidechain"):
             limited = record.get("isApiErrorMessage") and record.get("error") == "rate_limit"
             stopped_at = record.get("timestamp") if limited else None
-        elif kind == "queue-operation" and record.get("timestamp", "") >= since:
+        elif kind == "queue-operation" and str(record.get("timestamp") or "") >= since:
             operation, content = record.get("operation"), record.get("content")
             if operation == "enqueue":
                 queued.append(content)
@@ -101,16 +101,18 @@ def main():
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         sys.exit(f"twapp status: {e}")
     sessions = window.get("sessions", []) if isinstance(window, dict) else window
-    stopped = []
+    stopped, unchecked = [], []
     for session in sessions:
+        # One session that does not read as expected must not hide the others.
         try:
             found = stopped_session(session)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
-            print(f"{session.get('name')}: not checked: {e}", file=sys.stderr)
+        except (AttributeError, OSError, TypeError, ValueError, subprocess.TimeoutExpired) as e:
+            name = session.get("name") if isinstance(session, dict) else None
+            unchecked.append({"name": name, "why": f"{type(e).__name__}: {e}"})
             continue
         if found:
             stopped.append(found)
-    json.dump(stopped, sys.stdout, indent=2, ensure_ascii=False)
+    json.dump({"stopped": stopped, "unchecked": unchecked}, sys.stdout, indent=2, ensure_ascii=False)
     print()
 
 

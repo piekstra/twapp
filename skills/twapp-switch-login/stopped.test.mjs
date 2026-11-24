@@ -22,7 +22,9 @@ function stopped(script) {
 /** The window fixture, its running sessions hosted by this process. */
 function fixtureWindow() {
   const window = JSON.parse(readFileSync(join(here, "fixtures/status.json"), "utf8"));
-  for (const { status } of window.sessions) {
+  for (const session of window.sessions) {
+    const status = session?.status;
+    if (typeof status !== "object") continue;
     status.transcript_path = join(here, "fixtures", status.transcript_path);
     if (status.harness_pid === undefined) status.harness_pid = process.pid;
   }
@@ -40,7 +42,7 @@ describe("stopped.py", () => {
   it("lists only sessions whose last reply hit a limit, and how each restarts", () => {
     const run = stopped(fixtureWindow());
     expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual([
+    expect(JSON.parse(run.stdout).stopped).toEqual([
       {
         name: "Stopped at the dialog",
         dir: "/work/dialog",
@@ -60,8 +62,10 @@ describe("stopped.py", () => {
     ]);
   });
 
-  it("names a session it could not check", () => {
-    expect(stopped(fixtureWindow()).stderr).toMatch(/^No transcript: not checked: /);
+  it("names each session it could not check, and why, without losing the rest", () => {
+    const { unchecked } = JSON.parse(stopped(fixtureWindow()).stdout);
+    expect(unchecked.map((u) => u.name)).toEqual(["No transcript", "Malformed", null]);
+    expect(unchecked[0].why).toMatch(/^FileNotFoundError: /);
   });
 
   it("fails when the window does not answer, rather than listing nothing", () => {

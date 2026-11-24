@@ -27,7 +27,7 @@ The user runs `/login` in one session. Do not repeat it in the others, and never
 python3 -I ~/.claude/skills/twapp-switch-login/stopped.py
 ```
 
-It only reads. It lists each session running in the window whose last reply is a usage-limit error, as JSON. A session it could not check is named on stderr; look at that one yourself.
+It only reads. It prints JSON: `stopped` lists each session running in the window whose last reply is a usage-limit error, and `unchecked` names the sessions it could not read, with why. An unchecked session may be stopped too: look at it with `twapp status` before you count it out. For each stopped session:
 
 | Field | Meaning |
 |---|---|
@@ -75,7 +75,7 @@ Do not name the account in it; sessions post to pull requests and chats.
 
 ## 5. Check, then report
 
-Run `stopped.py` again until it lists nothing. `twapp status` can show a relaunched session as errored until its first reply.
+Run `stopped.py` again until `stopped` is empty and you have looked at everything in `unchecked`. `twapp status` can show a relaunched session as errored until its first reply.
 
 Tell the user which sessions were restarted and how, which were proven to use the login and which only share it, what each relaunch ended or lost, and which sessions still wait on them for something else.
 
