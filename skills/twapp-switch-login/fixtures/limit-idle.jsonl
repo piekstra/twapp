@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2099-01-01T10:00:00.000Z","isSidechain":false,"isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"message":{"content":[{"type":"text","text":"You've hit your session limit · resets 8:40pm"}]}}
+{"type":"system","subtype":"turn_duration","timestamp":"2099-01-01T10:00:00.100Z"}

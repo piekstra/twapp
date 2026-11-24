@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2099-01-01T10:00:00.000Z","isSidechain":false,"isApiErrorMessage":true,"error":"rate_limit","apiErrorStatus":429,"message":{"content":[{"type":"text","text":"You've hit your weekly limit · resets Jan 5 at 6am"}]}}
+{"type":"assistant","timestamp":"2099-01-01T10:10:00.000Z","isSidechain":false,"message":{"content":[{"type":"text","text":"Continuing."}]}}
